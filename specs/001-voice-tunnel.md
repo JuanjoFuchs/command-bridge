@@ -1,6 +1,7 @@
 # 001 — The voice tunnel
 
-**Status:** in progress
+**Status:** ✅ accepted (2026-07-28) — 66 unit tests, 29 end-to-end checks, three consecutive
+clean runs. The one criterion a machine cannot close is a real phone with a real microphone.
 **Outcome:** an agent runs one command, opens a page on an Android phone, and holds a spoken
 conversation with that agent — hands-free after the initial tap, wake-word gated.
 
@@ -59,6 +60,26 @@ Each is objectively checkable. `AC-E*` are the end-to-end gate.
 
 Tailscale provisioning is documented, not automated — it is a one-time operator step and the
 localhost path is a secure context, so it is not on the critical path for acceptance.
+
+## Result
+
+Every criterion above is exercised by an automated check. `scripts/e2e.py` prints one line per
+criterion and exits non-zero on the first failure.
+
+**What the harness proved:** capture → WebSocket → resample → VAD segmentation → Whisper →
+wake gate → JSONL log → cursor → TTS → Web Audio playback → acknowledgement, and the same loop
+again through the CLI. Observed transcript: `"what is the status of the deploy?"` from spoken
+audio, `addressed: true`, wake phrase stripped.
+
+**What it does not prove:** the OS microphone driver. Chrome's fake-capture flags deliver
+silence on this machine (measured, see `ai-docs/reference/browser.md`), so the e2e substitutes
+the device layer with a real `MediaStream` built from a WAV. Everything above the driver is
+genuine. A phone in a hand is the remaining gap, and it is a gap no headless run could close.
+
+**Bugs this spec's acceptance criteria caught that the unit tests did not:** a
+`ScriptProcessorNode` created with zero output channels (never pulled by the audio graph, so the
+mic silently sent nothing), and a segmenter that reset its trailing-silence counter before the
+minimum-length check read it (so a 50 ms click was emitted as a turn).
 
 ## Verification strategy
 
