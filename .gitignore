@@ -1,0 +1,27 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+.pytest_cache/
+
+# Runtime state — session turn logs, captured audio, TLS material
+sessions/
+*.wav
+*.jsonl
+certs/
+*.pem
+
+# Models (downloaded, not vendored)
+models/
+
+# Test artifacts
+tests/artifacts/
+
+# OS
+Thumbs.db
+.DS_Store
