@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark light" />
+<title>voice-mode</title>
+<style>
+  :root { --bg:#0b0d10; --fg:#e7ecf2; --dim:#8b97a6; --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --card:#151a21; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f6f7f9; --fg:#12161c; --dim:#5b6675; --card:#fff; }
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body {
+    background:var(--bg); color:var(--fg); font:16px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.25rem; padding:1.5rem;
+    -webkit-tap-highlight-color:transparent;
+  }
+  h1 { font-size:1rem; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); margin:0; }
+  #orb {
+    width:min(52vw,220px); aspect-ratio:1; border-radius:50%; border:none; cursor:pointer;
+    background:radial-gradient(circle at 38% 32%, #2b3a4d, #131922 70%);
+    color:var(--fg); font-size:1.05rem; font-weight:600; letter-spacing:.02em;
+    box-shadow:0 0 0 1px #ffffff14, 0 18px 50px #0008; transition:transform .12s ease, box-shadow .25s ease;
+  }
+  #orb:active { transform:scale(.97); }
+  #orb.live { box-shadow:0 0 0 1px #ffffff1f, 0 0 0 var(--ring,0px) #4ade8033, 0 18px 50px #0008; }
+  #orb.speaking { background:radial-gradient(circle at 38% 32%, #2f4a3a, #14201a 70%); }
+  #state { font-size:.9rem; color:var(--dim); min-height:1.4em; text-align:center; }
+  #log { width:min(100%,560px); max-height:36vh; overflow-y:auto; background:var(--card);
+         border-radius:14px; padding:.85rem 1rem; font-size:.9rem; box-shadow:0 0 0 1px #ffffff10; }
+  #log:empty { display:none; }
+  .row { padding:.3rem 0; border-bottom:1px solid #ffffff0d; }
+  .row:last-child { border-bottom:0; }
+  .row .tag { font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin-right:.5rem; }
+  .row.addressed .tag { color:var(--ok); }
+  .err { color:var(--err); }
+</style>
+</head>
+<body>
+  <h1>voice&#8209;mode</h1>
+  <button id="orb">Tap to start</button>
+  <div id="state">idle</div>
+  <div id="log" role="log" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $orb = document.getElementById("orb");
+  const $state = document.getElementById("state");
+  const $log = document.getElementById("log");
+
+  const token = new URLSearchParams(location.search).get("token") || "";
+  let ws = null, ctx = null, micStream = null, node = null, source = null;
+  let wakeLock = null, running = false, pendingClip = null;
+
+  // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
+  const diag = window.__vm = { connected:false, framesSent:0, turns:[], played:[], errors:[] };
+
+  const setState = (t, cls) => { $state.textContent = t; $state.className = cls || ""; };
+
+  function addRow(tag, text, addressed) {
+    const d = document.createElement("div");
+    d.className = "row" + (addressed ? " addressed" : "");
+    const s = document.createElement("span");
+    s.className = "tag"; s.textContent = tag;
+    d.appendChild(s); d.appendChild(document.createTextNode(text));
+    $log.appendChild(d); $log.scrollTop = $log.scrollHeight;
+  }
+
+  // --- Screen Wake Lock -----------------------------------------------------
+  // Replaces installing a Caffeine-type app: the page keeps the screen alive itself.
+  // The lock is auto-released whenever the document goes inactive, so it MUST be
+  // re-acquired on visibilitychange or the screen sleeps on the first glance away.
+  async function acquireWakeLock() {
+    if (!("wakeLock" in navigator)) return;
+    try { wakeLock = await navigator.wakeLock.request("screen"); }
+    catch (e) { diag.errors.push("wakeLock: " + e.message); }
+  }
+  document.addEventListener("visibilitychange", async () => {
+    if (running && wakeLock !== null && document.visibilityState === "visible") {
+      await acquireWakeLock();
+    }
+  });
+
+  // --- capture --------------------------------------------------------------
+  function floatToPCM16(f32) {
+    const out = new Int16Array(f32.length);
+    for (let i = 0; i < f32.length; i++) {
+      const s = Math.max(-1, Math.min(1, f32[i]));
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return out;
+  }
+
+  async function start() {
+    if (running) return stop();
+    setState("requesting microphone…");
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount:1, echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+      });
+    } catch (e) {
+      // On a LAN IP navigator.mediaDevices is undefined and this is a TypeError. That is not
+      // a bug to fix here — it is the secure-context rule. See ai-docs/reference/browser.md.
+      const msg = (navigator.mediaDevices ? e.message : "insecure origin — needs HTTPS or localhost");
+      diag.errors.push("getUserMedia: " + msg);
+      setState("microphone unavailable: " + msg, "err");
+      return;
+    }
+
+    // Created inside the click handler so the autoplay policy unlocks playback too.
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === "suspended") await ctx.resume();
+
+    await openSocket(ctx.sampleRate);
+
+    source = ctx.createMediaStreamSource(micStream);
+    // ScriptProcessorNode is deprecated but universally present, including headless Chrome.
+    // For one local user at 4096 frames the main-thread cost is irrelevant, and it removes a
+    // whole class of AudioWorklet module-loading failure from the critical path.
+    node = ctx.createScriptProcessor(4096, 1, 0);
+    node.onaudioprocess = (ev) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const pcm = floatToPCM16(ev.inputBuffer.getChannelData(0));
+      ws.send(pcm.buffer);
+      diag.framesSent++;
+    };
+    source.connect(node);
+    // ScriptProcessor with 0 outputs still needs a graph connection to be pulled.
+    const sink = ctx.createGain(); sink.gain.value = 0;
+    node.connect(sink); sink.connect(ctx.destination);
+
+    running = true;
+    await acquireWakeLock();
+    $orb.textContent = "Listening";
+    $orb.classList.add("live");
+    setState('say "hey claude…"');
+  }
+
+  async function stop() {
+    running = false;
+    try { if (node) node.disconnect(); } catch {}
+    try { if (source) source.disconnect(); } catch {}
+    try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch {}
+    try { if (ws) ws.close(); } catch {}
+    try { if (wakeLock) { await wakeLock.release(); wakeLock = null; } } catch {}
+    $orb.textContent = "Tap to start";
+    $orb.classList.remove("live", "speaking");
+    setState("stopped");
+  }
+
+  function openSocket(sampleRate) {
+    return new Promise((resolve) => {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`);
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => {
+        diag.connected = true;
+        ws.send(JSON.stringify({ type:"hello", sample_rate: sampleRate }));
+        resolve();
+      };
+      ws.onclose = () => { diag.connected = false; if (running) setState("disconnected", "err"); };
+      ws.onerror = () => { diag.errors.push("websocket error"); resolve(); };
+      ws.onmessage = onMessage;
+    });
+  }
+
+  async function onMessage(ev) {
+    if (typeof ev.data === "string") {
+      let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === "turn") {
+        diag.turns.push(msg);
+        addRow(msg.addressed ? "you → claude" : "heard", msg.text, msg.addressed);
+      } else if (msg.type === "audio_header") {
+        pendingClip = msg;                       // the bytes follow in the next frame
+      } else if (msg.type === "ready") {
+        setState('connected — say "hey claude…"');
+      }
+      return;
+    }
+    if (pendingClip) { await playClip(pendingClip, ev.data); pendingClip = null; }
+  }
+
+  async function playClip(header, buf) {
+    try {
+      const pcm = new Int16Array(buf);
+      const f32 = new Float32Array(pcm.length);
+      for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+      const audio = ctx.createBuffer(1, f32.length, header.sample_rate);
+      audio.getChannelData(0).set(f32);
+      const src = ctx.createBufferSource();
+      src.buffer = audio; src.connect(ctx.destination);
+      $orb.classList.add("speaking");
+      addRow("claude", header.text || "", false);
+      await new Promise((res) => { src.onended = res; src.start(); });
+      $orb.classList.remove("speaking");
+      diag.played.push(header.id);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type:"played", id: header.id }));
+      }
+    } catch (e) {
+      diag.errors.push("playback: " + e.message);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type:"client_error", message:"playback: " + e.message }));
+      }
+    }
+  }
+
+  $orb.addEventListener("click", start);
+  if (!token) setState("no token in URL — append ?token=…", "err");
+})();
+</script>
+</body>
+</html>

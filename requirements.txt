@@ -1,0 +1,8 @@
+# Runtime
+aiohttp>=3.9          # the tunnel: HTTP + WebSocket, one dependency for both
+numpy>=1.24           # audio buffers
+faster-whisper>=1.0   # ASR (CTranslate2 backend; no torch)
+
+# Development / verification
+pytest>=8.0
+playwright>=1.40      # drives real Chrome for the end-to-end acceptance test

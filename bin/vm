@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# PATH shim — resolves the repo venv so `vm` works from any directory with no cd.
+set -euo pipefail
+VM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -x "$VM_ROOT/venv/Scripts/python.exe" ]; then
+  VM_PY="$VM_ROOT/venv/Scripts/python.exe"
+elif [ -x "$VM_ROOT/venv/bin/python" ]; then
+  VM_PY="$VM_ROOT/venv/bin/python"
+else
+  VM_PY="python"
+fi
+exec "$VM_PY" -c "import sys; sys.path.insert(0, r'$VM_ROOT'); from vm.cli import main; raise SystemExit(main())" "$@"
