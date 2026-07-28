@@ -296,10 +296,15 @@ def run(
         )
 
     app = build_app(session, token, gate_enabled)
-    print(f"voice-mode serving   http://{host}:{port}/?token={token}")
-    print(f"  session            {session}")
-    print(f"  log                {store.log_path(session)}")
-    print(f"  tts                {tts.available()}")
-    print(f"  allowlist          {', '.join(security.allowed_cidrs())}")
-    print("  (a phone needs HTTPS: `tailscale serve` this port — a LAN IP will NOT work)")
+    # flush=True: without it the banner sits in the pipe buffer when serve is launched
+    # detached (which is the normal way an agent runs it), so the operator never sees the URL.
+    print(f"voice-mode serving   http://{host}:{port}/?token={token}", flush=True)
+    print(f"  session            {session}", flush=True)
+    print(f"  log                {store.log_path(session)}", flush=True)
+    print(f"  tts                {tts.available()}", flush=True)
+    print(f"  allowlist          {', '.join(security.allowed_cidrs())}", flush=True)
+    print(
+        "  (a phone needs HTTPS: `tailscale serve` this port — a LAN IP will NOT work)",
+        flush=True,
+    )
     web.run_app(app, host=host, port=port, print=None)
