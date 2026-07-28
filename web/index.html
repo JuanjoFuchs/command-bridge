@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="dark light" />
 <title>voice-mode</title>
+<link rel="icon" href="data:," /><!-- suppress the favicon 404; there is no icon to serve -->
 <style>
   :root { --bg:#0b0d10; --fg:#e7ecf2; --dim:#8b97a6; --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --card:#151a21; }
   @media (prefers-color-scheme: light) {
@@ -56,7 +57,11 @@
   let wakeLock = null, running = false, pendingClip = null;
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
-  const diag = window.__vm = { connected:false, framesSent:0, turns:[], played:[], errors:[] };
+  // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
+  // dropped my audio" look identical from outside, and that ambiguity costs hours.
+  const diag = window.__vm = {
+    connected:false, framesSent:0, peakRms:0, turns:[], played:[], errors:[]
+  };
 
   const setState = (t, cls) => { $state.textContent = t; $state.className = cls || ""; };
 
@@ -120,16 +125,22 @@
     // ScriptProcessorNode is deprecated but universally present, including headless Chrome.
     // For one local user at 4096 frames the main-thread cost is irrelevant, and it removes a
     // whole class of AudioWorklet module-loading failure from the critical path.
-    node = ctx.createScriptProcessor(4096, 1, 0);
+    // MUST declare 1 output channel, not 0. A ScriptProcessorNode with zero outputs is never
+    // pulled by the graph, so onaudioprocess simply never fires and the mic silently produces
+    // nothing. Its output is muted through a zero-gain node instead.
+    node = ctx.createScriptProcessor(4096, 1, 1);
     node.onaudioprocess = (ev) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      const pcm = floatToPCM16(ev.inputBuffer.getChannelData(0));
-      ws.send(pcm.buffer);
+      const ch = ev.inputBuffer.getChannelData(0);
+      let sum = 0;
+      for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+      const r = Math.sqrt(sum / ch.length);
+      if (r > diag.peakRms) diag.peakRms = r;
+      ws.send(floatToPCM16(ch).buffer);
       diag.framesSent++;
     };
     source.connect(node);
-    // ScriptProcessor with 0 outputs still needs a graph connection to be pulled.
-    const sink = ctx.createGain(); sink.gain.value = 0;
+    const sink = ctx.createGain(); sink.gain.value = 0;   // pull the graph without audible echo
     node.connect(sink); sink.connect(ctx.destination);
 
     running = true;

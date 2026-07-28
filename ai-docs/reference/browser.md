@@ -69,6 +69,41 @@ Nearly every session here is Bluetooth (earbuds, headset audio), so:
 Without this the wake acknowledgement and the first syllable of every reply get eaten, and it
 presents as "the TTS is broken" — a bug that costs a week if you don't know to look here.
 
+## ScriptProcessorNode must declare an output channel
+
+`ctx.createScriptProcessor(4096, 1, 0)` — zero outputs — is never pulled by the audio graph, so
+`onaudioprocess` **never fires** and the microphone silently produces nothing. Use
+`(4096, 1, 1)` and mute it through a zero-gain node into `destination`.
+
+The node is deprecated in favour of `AudioWorkletNode` and Chrome logs a warning. It stays
+because it is universally present including headless, and for one local user at 4096 frames the
+main-thread cost is irrelevant — swapping it in would add a module-loading failure mode to the
+critical path in exchange for nothing.
+
+## Chrome's fake audio capture does not work here (verified)
+
+`--use-fake-device-for-media-capture` and `--use-file-for-fake-audio-capture=<wav>` deliver
+**pure silence** on this machine. Measured with `scripts/probe_capture.py`: even the built-in
+beep, with no file involved at all, reads a peak RMS of 0.00015 across both installed Chrome and
+Playwright's bundled Chromium. It is not the WAV, the sample rate, the path separator, or the
+audio constraints — all were tested and eliminated.
+
+So `scripts/e2e.py` substitutes the **device layer only**: an init script replaces
+`getUserMedia` with a genuine `MediaStream` built from the WAV via
+`AudioContext.createMediaStreamDestination()`. Everything above the OS driver stays real — the
+same `createMediaStreamSource` → `ScriptProcessor` → Int16 → WebSocket path the phone uses, the
+real server, real Whisper, real TTS, real Web Audio playback.
+
+**Be honest about what that does and does not prove.** It exercises the entire application
+pipeline. It does not exercise the operating system's microphone driver — which a headless
+browser could never reach anyway. The one thing still requiring a human is a real phone with a
+real microphone.
+
+> **The diagnostic that made this findable:** the client tracks `window.__vm.peakRms`, and the
+> e2e asserts on it before waiting for a transcript. Without that, "the mic is delivering
+> silence" and "the server dropped my audio" are indistinguishable from outside, and you debug
+> the wrong half for hours. Keep that assertion.
+
 ## Audio format on the wire
 
 The browser captures at the device rate (typically 48 kHz) and the ASR wants 16 kHz mono
