@@ -60,9 +60,16 @@
   #state { font-size:.88rem; color:var(--dim); min-height:1.4em; text-align:center;
            letter-spacing:.01em; }
   #state.err { color:var(--err); }
-  #lag { font-size:.72rem; color:#fbbf24; letter-spacing:.02em; min-height:1em;
-         font-variant-numeric:tabular-nums; }
-  #lag.ok { color:var(--dim); }
+  /* The read boundary, sitting in the log where claude has consumed to. */
+  .divider {
+    display:flex; align-items:center; gap:.6rem; margin:.1rem .9rem;
+    font-size:.62rem; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap;
+  }
+  .divider::before, .divider::after {
+    content:""; flex:1; height:1px; background:currentColor; opacity:.3;
+  }
+  .divider.behind { color:#fbbf24; }
   #orb.thinking { animation:pulse 1.15s ease-in-out infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.62} }
   @media (prefers-reduced-motion:reduce) { #orb.thinking { animation:none; } }
@@ -90,7 +97,6 @@
   <h1>voice&#8209;mode</h1>
   <div id="orbwrap"><div id="ring"></div><button id="orb">Tap to start</button></div>
   <div id="state">idle</div>
-  <div id="lag"></div>
   <div id="log" role="log" aria-live="polite"></div>
 
 <script>
@@ -98,12 +104,11 @@
   "use strict";
   const $orb = document.getElementById("orb");
   const $state = document.getElementById("state");
-  const $lag = document.getElementById("lag");
   const $log = document.getElementById("log");
 
   const token = new URLSearchParams(location.search).get("token") || "";
   let ws = null, ctx = null, micStream = null, node = null, source = null;
-  let wakeLock = null, running = false, pendingClip = null, $partial = null;
+  let wakeLock = null, running = false, pendingClip = null, $partial = null, $divider = null;
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
@@ -114,15 +119,37 @@
 
   const setState = (t, cls) => { $state.textContent = t; $state.className = cls || ""; };
 
-  function addRow(tag, text, cls) {
+  function addRow(tag, text, cls, id) {
     const d = document.createElement("div");
     d.className = "row" + (cls ? " " + cls : "");
+    if (id !== undefined) d.dataset.id = String(id);
     const s = document.createElement("span");
     s.className = "tag"; s.textContent = tag;
     const t = document.createElement("span");
     t.textContent = text;
     d.appendChild(s); d.appendChild(t);
     $log.appendChild(d); $log.scrollTop = $log.scrollHeight;
+  }
+
+  // The read boundary lives INSIDE the log, sitting after the last turn claude has consumed —
+  // so anything below the line is visibly still unread. Same idea as mc view's
+  // "agent consumed through #N" divider: a position in the transcript says more than a count
+  // floating above it, because you can see WHICH turns are still waiting.
+  function placeDivider() {
+    const cursor = diag.consumed;
+    if (cursor === undefined || cursor < 0) { if ($divider) $divider.remove(); return; }
+    if (!$divider) {
+      $divider = document.createElement("div");
+      $divider.className = "divider";
+    }
+    const pending = diag.pending || 0;
+    $divider.textContent = pending > 0
+      ? `claude has read to here — ${pending} more below`
+      : "claude has read to here";
+    $divider.classList.toggle("behind", pending > 0);
+    const anchor = $log.querySelector(`.row[data-id="${cursor}"]`);
+    if (anchor) anchor.after($divider);
+    else $log.appendChild($divider);
   }
 
   // Live level -> CSS variable, smoothed and painted once per frame rather than per audio
@@ -250,7 +277,9 @@
       if (msg.type === "turn") {
         diag.turns.push(msg);
         if ($partial) { $partial.remove(); $partial = null; }   // the final supersedes it
-        addRow(msg.addressed ? "you" : "heard", msg.text, msg.addressed ? "addressed" : "");
+        addRow(msg.addressed ? "you" : "heard", msg.text,
+               msg.addressed ? "addressed" : "", msg.id);
+        placeDivider();
       } else if (msg.type === "audio_header") {
         pendingClip = msg;                       // the bytes follow in the next frame
       } else if (msg.type === "ready") {
@@ -287,12 +316,8 @@
         $log.scrollTop = $log.scrollHeight;
       } else if (msg.type === "consumed") {
         diag.consumed = msg.cursor;
-        // The gap between what you have said and what the agent has actually read — the
-        // read-lag gauge, same idea as mc view's "consumed through #N" divider.
-        $lag.textContent = msg.pending > 0
-          ? `② ${msg.pending} turn${msg.pending === 1 ? "" : "s"} logged, not yet read by claude`
-          : (msg.cursor >= 0 ? `② claude has read through turn #${msg.cursor}` : "");
-        $lag.classList.toggle("ok", msg.pending === 0 && msg.cursor >= 0);
+        diag.pending = msg.pending;
+        placeDivider();
       }
       return;
     }
