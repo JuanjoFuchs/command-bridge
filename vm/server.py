@@ -16,7 +16,10 @@ import asyncio
 import json
 import os
 import time
+import wave
 from typing import Any, Dict, Optional, Set
+
+import numpy as np
 
 from aiohttp import WSMsgType, web
 
@@ -49,6 +52,29 @@ class TunnelState:
         self.partial_busy: bool = False
         self.last_partial_at: float = 0.0
         self.partial_text: str = ""
+        # Failsafe capture: everything the server actually received, at 16 kHz. Borrowed from
+        # meeting-copilot, where it repeatedly turned "the ASR is bad" into a question you can
+        # answer by listening — is the audio quiet, clipped, or fine and the model just wrong?
+        self._wav: Optional[wave.Wave_write] = None
+
+    def capture(self, samples) -> None:
+        """Append to the failsafe WAV, opening it on first audio."""
+        if self._wav is None:
+            path = os.path.join(config.session_dir(), f"{self.session}.wav")
+            os.makedirs(config.session_dir(), exist_ok=True)
+            self._wav = wave.open(path, "wb")
+            self._wav.setnchannels(1)
+            self._wav.setsampwidth(2)
+            self._wav.setframerate(config.TARGET_SR)
+        clipped = np.clip(samples, -1.0, 1.0)
+        self._wav.writeframes((clipped * 32767).astype("<i2").tobytes())
+
+    def close_capture(self) -> None:
+        if self._wav is not None:
+            try:
+                self._wav.close()
+            finally:
+                self._wav = None
 
     def snapshot(self) -> Dict[str, Any]:
         return {
@@ -69,6 +95,7 @@ class TunnelState:
             "tts_backend": tts.available(),
             "asr_model": self.recognizer.model_name,
             "log": store.log_path(self.session),
+            "capture_wav": os.path.join(config.session_dir(), f"{self.session}.wav"),
         }
 
 
@@ -318,6 +345,7 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
             await _flush(state, loop)
         except Exception as exc:
             state.last_error = f"flush failed: {exc}"
+        state.close_capture()
     return ws
 
 
@@ -343,6 +371,10 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
         samples = asr_mod.resample_linear(samples, state.client_sr, config.TARGET_SR)
     state.frames_received += 1
     state.samples_received += samples.size
+    try:
+        state.capture(samples)
+    except Exception as exc:  # never let diagnostics break the session
+        state.last_error = f"capture: {exc}"
 
     completed = state.buffer.feed(samples)
     if completed is None:

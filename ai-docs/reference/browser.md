@@ -69,7 +69,39 @@ Nearly every session here is Bluetooth (earbuds, headset audio), so:
 Without this the wake acknowledgement and the first syllable of every reply get eaten, and it
 presents as "the TTS is broken" — a bug that costs a week if you don't know to look here.
 
-## ScriptProcessorNode must declare an output channel
+## Use AudioWorklet — ScriptProcessorNode dies in a background tab
+
+**Measured 2026-07-29, and it is the single worst bug found in this project.**
+`ScriptProcessorNode` runs its callback on the **main thread**, and Chrome throttles main-thread
+timers in a backgrounded tab. Switching to another window produced **14 seconds of exact digital
+zero** in the server's failsafe capture — `peak=0.000`, not a quiet room, no audio at all — and
+every word spoken in that window was lost silently. The page still said "Listening".
+
+Since the entire point is to talk *while doing something else*, that is fatal. `AudioWorklet`
+runs on the audio rendering thread and keeps delivering while backgrounded — verified at 2325
+frames in 6 seconds with the tab behind another window.
+
+Two things to keep right:
+- **Batch in the worklet.** It receives a 128-sample render quantum, ~375/sec at 48 kHz. Posting
+  each one is 375 WebSocket messages a second of mostly header. Accumulate ~40 ms first.
+- **Keep the ScriptProcessor fallback**, and record which one is live in `window.__vm.capture`
+  — otherwise "is my audio even flowing" becomes unanswerable again.
+
+> The failsafe WAV is what made this findable. Levels-over-time showed speech, then a block of
+> exact zeros, then speech — a shape no amount of reasoning about ASR accuracy would have
+> produced. **When transcription looks wrong, listen to what actually arrived first.**
+
+## Audio processing: NS and AGC off, EC on
+
+Chrome's WebRTC processing is tuned for telephony, not recognition. `noiseSuppression` gates and
+spectrally subtracts; `autoGainControl` **ramps over the first second or two**, which is the best
+explanation for a first utterance transcribing worse than later ones. Dictation tools that beat
+us here (Handy) read the raw device.
+
+`echoCancellation` stays **on**: the reply plays out of the speakers into this same microphone,
+and without EC the agent transcribes itself. Override per session with `?ns=1&agc=1&ec=0`.
+
+## ScriptProcessorNode must declare an output channel (fallback path only)
 
 `ctx.createScriptProcessor(4096, 1, 0)` — zero outputs — is never pulled by the audio graph, so
 `onaudioprocess` **never fires** and the microphone silently produces nothing. Use

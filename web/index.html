@@ -193,9 +193,26 @@
     if (running) return stop();
     setState("requesting microphone…");
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount:1, echoCancellation:true, noiseSuppression:true, autoGainControl:true }
-      });
+      // Chrome's WebRTC audio processing is tuned for TELEPHONY — making speech intelligible
+      // to a human ear over a bad line — not for a speech recognizer. Noise suppression gates
+      // and spectrally subtracts, and AGC ramps its gain over the first second or two, which
+      // is very likely why the FIRST utterance of a session transcribes worst and later ones
+      // are fine. Dictation tools that outperform us here (Handy) read the raw device.
+      //
+      // So: NS and AGC off by default. Echo cancellation stays ON — the reply plays out of
+      // the speakers into this same microphone, and without EC the agent transcribes itself.
+      // Override per-session with ?ns=1&agc=1&ec=0 to A/B it.
+      const q = new URLSearchParams(location.search);
+      const flag = (name, dflt) => q.has(name) ? q.get(name) === "1" : dflt;
+      const constraints = {
+        channelCount: 1,
+        echoCancellation: flag("ec", true),
+        noiseSuppression: flag("ns", false),
+        autoGainControl:  flag("agc", false),
+      };
+      diag.constraints = constraints;
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+      diag.settings = micStream.getAudioTracks()[0].getSettings();
     } catch (e) {
       // On a LAN IP navigator.mediaDevices is undefined and this is a TypeError. That is not
       // a bug to fix here — it is the secure-context rule. See ai-docs/reference/browser.md.
@@ -215,13 +232,46 @@
     // ScriptProcessorNode is deprecated but universally present, including headless Chrome.
     // For one local user at 4096 frames the main-thread cost is irrelevant, and it removes a
     // whole class of AudioWorklet module-loading failure from the critical path.
-    // MUST declare 1 output channel, not 0. A ScriptProcessorNode with zero outputs is never
-    // pulled by the graph, so onaudioprocess simply never fires and the mic silently produces
-    // nothing. Its output is muted through a zero-gain node instead.
-    node = ctx.createScriptProcessor(4096, 1, 1);
-    node.onaudioprocess = (ev) => {
+    // AudioWorklet, NOT ScriptProcessorNode.
+    //
+    // ScriptProcessorNode runs its callback on the MAIN THREAD, and Chrome throttles main-thread
+    // timers in a backgrounded tab. Measured 2026-07-29: switching to another window produced
+    // 14 seconds of EXACT digital zero in the server's capture — not a quiet room, no audio at
+    // all — and every word spoken in that window was lost. Since the whole point is to talk
+    // while doing something else, that is fatal.
+    //
+    // AudioWorklet runs on the audio rendering thread and keeps delivering while the tab is
+    // backgrounded. ScriptProcessor remains as a fallback for browsers without it.
+    // The worklet is handed a 128-sample block per render quantum — ~375 per second at 48 kHz.
+    // Posting each one individually would mean 375 WebSocket messages a second, nearly all
+    // header overhead. Batch into ~40 ms chunks first: same audio, ~15 messages/sec.
+    const batchSize = Math.round(ctx.sampleRate * 0.04);
+    const workletSrc = `
+      class Cap extends AudioWorkletProcessor {
+        constructor(o) {
+          super();
+          this.size = (o.processorOptions && o.processorOptions.batchSize) || 1920;
+          this.buf = new Float32Array(this.size);
+          this.n = 0;
+        }
+        process(inputs) {
+          const ch = inputs[0] && inputs[0][0];
+          if (ch && ch.length) {
+            for (let i = 0; i < ch.length; i++) {
+              this.buf[this.n++] = ch[i];
+              if (this.n === this.size) {
+                this.port.postMessage(this.buf.slice(0));
+                this.n = 0;
+              }
+            }
+          }
+          return true;   // keep running even when the input is momentarily silent
+        }
+      }
+      registerProcessor('cap', Cap);
+    `;
+    const onChunk = (ch) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      const ch = ev.inputBuffer.getChannelData(0);
       let sum = 0;
       for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
       const r = Math.sqrt(sum / ch.length);
@@ -232,9 +282,32 @@
       ws.send(floatToPCM16(ch).buffer);
       diag.framesSent++;
     };
-    source.connect(node);
-    const sink = ctx.createGain(); sink.gain.value = 0;   // pull the graph without audible echo
-    node.connect(sink); sink.connect(ctx.destination);
+
+    let usedWorklet = false;
+    if (ctx.audioWorklet) {
+      try {
+        const url = URL.createObjectURL(new Blob([workletSrc], { type: "text/javascript" }));
+        await ctx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+        node = new AudioWorkletNode(ctx, "cap", {
+          numberOfOutputs: 0,
+          processorOptions: { batchSize },
+        });
+        node.port.onmessage = (e) => onChunk(e.data);
+        source.connect(node);
+        usedWorklet = true;
+      } catch (e) {
+        diag.errors.push("audioWorklet: " + e.message);
+      }
+    }
+    if (!usedWorklet) {
+      node = ctx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = (ev) => onChunk(ev.inputBuffer.getChannelData(0));
+      source.connect(node);
+      const sink = ctx.createGain(); sink.gain.value = 0;  // pull the graph, stay silent
+      node.connect(sink); sink.connect(ctx.destination);
+    }
+    diag.capture = usedWorklet ? "audioworklet" : "scriptprocessor";
 
     running = true;
     await acquireWakeLock();
