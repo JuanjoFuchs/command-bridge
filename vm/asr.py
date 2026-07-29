@@ -170,7 +170,8 @@ class UtteranceBuffer:
         # measuring the whole buffer instead of just the speech lets a 50 ms click through
         # as a turn (regression: test_a_click_shorter_than_the_minimum_is_discarded).
         trailing = self._trailing_silence if ended else 0
-        onset = self._utterance_start_sample - self._buf_start_total
+        buf_start = self._buf_start_total          # capture BEFORE reset overwrites it
+        onset = self._utterance_start_sample - buf_start
         self._reset_buffer()
 
         speech_samples = out.size - trailing
@@ -184,7 +185,11 @@ class UtteranceBuffer:
         cut = max(0, min(onset - self.preroll_samples, out.size - self.min_samples))
         if cut > 0:
             out = out[cut:]
-            t_start += cut / float(self.sr)
+            # t_start must be the absolute time of the FIRST SAMPLE IN `out`, which is
+            # buffer-start + cut. Adding `cut` to the speech-onset time instead double-counts
+            # the offset and produced t_start > t_end — inverted ranges that silently yielded
+            # empty slices in every downstream time-based analysis.
+            t_start = (buf_start + cut) / float(self.sr)
         return out, t_start, t_end
 
     def _reset_buffer(self) -> None:

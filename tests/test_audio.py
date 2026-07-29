@@ -210,3 +210,23 @@ def test_try_transcribe_ignores_silence_without_touching_the_model():
     r = asr.Recognizer()
     assert r.try_transcribe(_silence(config.TARGET_SR)) is None
     assert r._model is None
+
+
+def test_turn_timestamps_are_ordered_and_match_the_returned_audio():
+    """Regression: the pre-roll trim added `cut` to a t_start that was already absolute,
+    producing t_start > t_end. Inverted ranges slice to nothing, so every downstream analysis
+    silently found no audio instead of failing loudly."""
+    b = asr.UtteranceBuffer()
+    sr = config.TARGET_SR
+    b.feed(_silence(int(sr * 3.0)))          # long runway, forces a trim
+    b.feed(_speech(int(sr * 1.5)))
+    out = None
+    for _ in range(30):
+        out = b.feed(_silence(int(sr * 0.1)))
+        if out is not None:
+            break
+    assert out is not None
+    samples, t_start, t_end = out
+    assert t_start < t_end, f"inverted range: {t_start} .. {t_end}"
+    # The window must be at least as long as the audio it describes.
+    assert (t_end - t_start) >= samples.size / sr - 0.05

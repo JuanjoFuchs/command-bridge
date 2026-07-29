@@ -40,7 +40,10 @@
   }
   #orb {
     position:relative; width:76%; aspect-ratio:1; border-radius:50%; border:none;
-    cursor:pointer; color:var(--fg); font-size:1rem; font-weight:600; letter-spacing:.01em;
+    /* The orb is a dark sphere in BOTH themes, so its label must be light in both. Inheriting
+       --fg made it dark-on-dark and unreadable in light mode — invisible on this machine
+       because the browser was in dark mode, and only caught by a headless screenshot. */
+    cursor:pointer; color:#eef3fa; font-size:1rem; font-weight:600; letter-spacing:.01em;
     background:radial-gradient(circle at 38% 30%, #223044, #0c1118 72%);
     box-shadow:0 0 0 1px var(--edge), 0 20px 60px #000a;
     transition:transform .14s cubic-bezier(.34,1.56,.64,1), background .3s ease;
@@ -113,8 +116,11 @@
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
   // dropped my audio" look identical from outside, and that ambiguity costs hours.
+  // `states` and `partials` are recorded, not just rendered, so an automated harness can assert
+  // that the UI actually SHOWED a stage rather than merely that the server sent it.
   const diag = window.__vm = {
-    connected:false, framesSent:0, peakRms:0, turns:[], played:[], errors:[]
+    connected:false, framesSent:0, peakRms:0, liveLevel:0,
+    turns:[], played:[], states:[], partials:[], errors:[]
   };
 
   const setState = (t, cls) => { $state.textContent = t; $state.className = cls || ""; };
@@ -160,6 +166,7 @@
     // Fast attack, slow release — matches how a level meter should feel: it jumps to your
     // voice instantly but decays gently instead of strobing on every syllable gap.
     level += (levelTarget - level) * (levelTarget > level ? 0.5 : 0.08);
+    diag.liveLevel = level;
     document.documentElement.style.setProperty("--level", level.toFixed(3));
     requestAnimationFrame(paint);
   })();
@@ -210,9 +217,32 @@
         noiseSuppression: flag("ns", false),
         autoGainControl:  flag("agc", false),
       };
+      // ?device=<substring> picks a specific microphone by label instead of the system default.
+      // Needed so an automated harness can point the page at a virtual audio cable without
+      // changing the machine's default recording device, and useful on its own when the
+      // default is the wrong mic. Labels are only populated once permission is granted, so
+      // this takes two getUserMedia calls on the first run.
+      const want = q.get("device");
+      if (want) {
+        try {
+          const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+          probe.getTracks().forEach((t) => t.stop());
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const match = devices.find(
+            (d) => d.kind === "audioinput" &&
+                   d.label.toLowerCase().includes(want.toLowerCase())
+          );
+          if (match) constraints.deviceId = { exact: match.deviceId };
+          else diag.errors.push("no audio input matching " + want);
+        } catch (e) {
+          diag.errors.push("device select: " + e.message);
+        }
+      }
+
       diag.constraints = constraints;
       micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
       diag.settings = micStream.getAudioTracks()[0].getSettings();
+      diag.deviceLabel = micStream.getAudioTracks()[0].label;
     } catch (e) {
       // On a LAN IP navigator.mediaDevices is undefined and this is a TypeError. That is not
       // a bug to fix here — it is the secure-context rule. See ai-docs/reference/browser.md.
@@ -384,6 +414,7 @@
           waiting:      "⏸ ready to reply — letting you finish",
           speaking:     "⑤ claude is speaking",
         }[msg.state];
+        diag.states.push(msg.state);
         if (label) setState(label);
         const busy = ["transcribing", "thinking", "synthesizing", "waiting"].includes(msg.state);
         $orb.classList.toggle("thinking", busy);
@@ -392,6 +423,7 @@
         // when the final turn lands — so it reads as one sentence firming up rather than a
         // pile of near-duplicate rows.
         diag.partial = msg.text;
+        diag.partials.push(msg.text);
         if (!$partial) {
           $partial = document.createElement("div");
           $partial.className = "row partial";
