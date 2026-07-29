@@ -130,3 +130,38 @@ def test_ended_defaults_to_now_for_simple_callers():
     g = WakeGate(window_s=30.0)
     assert g.evaluate("hey claude hi", now=10.0)[0] is True
     assert g.evaluate("follow up", now=20.0)[0] is True
+
+
+# --- robustness to mistranscribed names --------------------------------------
+# Live 2026-07-29: Parakeet rendered JJ's "hey Claude" as "hey grab" / "hey grub", so the gate
+# correctly matched nothing and he spent a whole session talking to nobody.
+
+def test_mangled_name_after_a_greeting_still_wakes():
+    for utterance in ["hey grab I have a question",
+                      "hey grub what is the status",
+                      "hi clod are you there",
+                      "okay cloud lets keep going"]:
+        addressed, _ = WakeGate().evaluate(utterance, now=1.0)
+        assert addressed is True, f"should wake on {utterance!r}"
+
+
+def test_a_near_miss_on_the_name_is_stripped_but_a_wild_miss_is_not():
+    # "clod" is plausibly the name -> safe to remove.
+    _, text = WakeGate().evaluate("hey clod what is the status", now=1.0)
+    assert text == "what is the status"
+    # "grab" is not recoverable as the name -> wake, but leave the words alone.
+    _, text = WakeGate().evaluate("hey grab what is the status", now=1.0)
+    assert text == "hey grab what is the status"
+
+
+def test_a_greeting_alone_does_not_mangle_an_ordinary_sentence():
+    addressed, text = WakeGate().evaluate("hey look at everything in this list", now=1.0)
+    assert addressed is True          # generous: a greeting opens an address
+    assert text == "hey look at everything in this list"   # but nothing is edited
+
+
+def test_ordinary_words_are_not_mistaken_for_the_name():
+    for word in ["cloud9", "close", "could", "loud", "code", "clown"]:
+        g = WakeGate()
+        addressed, _ = g.evaluate(f"the {word} is over there", now=1.0)
+        assert addressed is False, f"{word!r} should not wake mid-sentence"

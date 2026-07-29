@@ -5,6 +5,18 @@ hands-free, two-way voice channel to that agent. Nothing else.
 
 **Read the routed doc BEFORE acting.** This file is an index, not a manual.
 
+## If you just started `serve`, your next command is `watch`
+
+**`serve` and `watch` are one action, not two.** `watch` blocks until the user speaks — it is
+the driver, not a poll. An agent that starts the server and then does anything else has left
+the user talking to a tool nobody is reading, and from their side that is indistinguishable
+from a crash.
+
+**Never end a turn without either sitting in a blocking `watch` or saying out loud that you
+stopped listening.** And when `watch` returns, **drain the cursor** — one thought routinely
+arrives as several turns, so re-watch until it comes back empty before you reply. Answering the
+first fragment answers the wrong question.
+
 ## The one rule that governs every change
 
 **This tool is DUMB and holds no LLM.** It moves audio and appends turns to a log. Every ounce

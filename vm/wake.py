@@ -17,9 +17,29 @@ STDLIB ONLY — pure logic, unit-testable with no audio.
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from typing import Iterable, Optional, Tuple
 
 from . import config
+
+
+GREETINGS = ("hey", "hi", "ok", "okay", "yo", "hello")
+"""Openers that mark an utterance as a summons even when the name that follows was garbled."""
+
+_NAME = "claude"
+
+_RATIO_AFTER_GREETING = 0.55
+"""Threshold when the token directly follows a greeting.
+
+Loose on purpose: "hey ___" already establishes that someone is being addressed, so the only
+question is whether the garbled token is the name. Accepts clod / cloud / claud."""
+
+_RATIO_BARE = 0.80
+"""Threshold for a token standing alone mid-sentence, with no greeting to disambiguate.
+
+Strict on purpose: without context, "the cloud is over there" and "cloud9 is down" would
+otherwise wake the agent constantly. Context is what buys leniency; absent it, demand a close
+match."""
 
 
 def _norm(text: str) -> str:
@@ -27,6 +47,15 @@ def _norm(text: str) -> str:
     t = text.lower()
     t = re.sub(r"[^\w\s]", " ", t)
     return re.sub(r"\s+", " ", t).strip()
+
+
+def _is_nameish(word: str, threshold: float = _RATIO_BARE) -> bool:
+    """True if `word` is plausibly a mangled "claude" at the given confidence."""
+    if not word:
+        return False
+    if word == _NAME:
+        return True
+    return SequenceMatcher(None, word, _NAME).ratio() >= threshold
 
 
 class WakeGate:
@@ -68,12 +97,38 @@ class WakeGate:
         nothing, while removing one the speaker meant to keep corrupts the request. When in
         doubt, do not edit the user's words.
         """
+        # 1. An exact configured phrase, leading — the clean case, safe to strip.
         for p in self.phrases:
             if normalized == p or normalized.startswith(p + " "):
                 return p, True
+
+        words = normalized.split()
+
+        # 2. A greeting followed by something close enough to "claude" that ASR probably
+        #    mangled the name. Still safe to strip: the intent is unambiguous.
+        if (
+            len(words) >= 2
+            and words[0] in GREETINGS
+            and _is_nameish(words[1], _RATIO_AFTER_GREETING)
+        ):
+            return " ".join(words[:2]), True
+
+        # 3. A greeting opening the utterance, whatever follows. WAKE but DO NOT STRIP.
+        #    Parakeet turned "hey Claude" into "hey grab" and "hey grub", which no fuzzy match
+        #    on the name can recover — the sound simply isn't there any more. In a session the
+        #    user deliberately opened and tapped into, an utterance that opens with a greeting
+        #    is addressed to the only other participant. Waking wrongly costs a wasted read;
+        #    staying silent costs him talking to nobody, which is far worse.
+        if len(words) >= 2 and words[0] in GREETINGS:
+            return words[0], False
+
+        # 4. A mangled name anywhere else — wake, but never edit their words.
         for p in self.phrases:
             if (" " + p + " ") in (" " + normalized + " "):
                 return p, False
+        for w in words:
+            if _is_nameish(w):
+                return w, False
         return None, False
 
     def evaluate(self, text: str, now: float, ended: Optional[float] = None) -> Tuple[bool, str]:
