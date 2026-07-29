@@ -44,6 +44,8 @@ class TunnelState:
         self.last_played: Optional[str] = None
         self.last_error: Optional[str] = None
         self.client_sr: int = config.TARGET_SR
+        self.consumed_cursor: int = -1
+        self.agent_state: str = "idle"
 
     def snapshot(self) -> Dict[str, Any]:
         return {
@@ -53,6 +55,10 @@ class TunnelState:
             "frames_received": self.frames_received,
             "audio_seconds": round(self.samples_received / float(config.TARGET_SR), 2),
             "turns_logged": self.turns_logged,
+            "consumed_cursor": self.consumed_cursor,
+            "pending_turns": max(0, self.turns_logged - 1 - self.consumed_cursor),
+            "agent_state": self.agent_state,
+            "speech_active": self.buffer.speech_active,
             "last_played": self.last_played,
             "last_error": self.last_error,
             "wake_enabled": self.wake.enabled,
@@ -86,6 +92,17 @@ def _check(request: web.Request, state: TunnelState) -> tuple[bool, str]:
         _request_token(request),
         request.headers.get("X-Forwarded-For"),
     )
+
+
+async def _set_agent_state(state: TunnelState, value: str) -> None:
+    """Publish what the agent is doing: idle | thinking | waiting | speaking.
+
+    The point is that silence is ambiguous. Without this the user cannot tell "it did not hear
+    me" from "it heard me and is working" from "it is holding back so as not to interrupt" —
+    and all three look like a broken tool.
+    """
+    state.agent_state = value
+    await _broadcast_json(state, {"type": "agent_state", "state": value})
 
 
 async def _broadcast_json(state: TunnelState, payload: Dict[str, Any]) -> None:
@@ -150,6 +167,19 @@ async def handle_say(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
     clip_id = f"clip-{int(time.time() * 1000)}"
+
+    # Do not talk over the speaker. Synthesis is done, but if they are mid-utterance, hold the
+    # audio until they finish. JJ, live 2026-07-29: a batch of voice auditions cut across him
+    # mid-sentence, which is the difference between a conversation and a machine that shouts.
+    # Bounded so a stuck VAD can never silence the agent permanently.
+    waited = 0.0
+    if state.buffer.speech_active:
+        await _set_agent_state(state, "waiting")
+        while state.buffer.speech_active and waited < 15.0:
+            await asyncio.sleep(0.1)
+            waited += 0.1
+    await _set_agent_state(state, "speaking")
+
     # Header first so the client knows how to interpret the bytes that follow.
     await _broadcast_json(
         state,
@@ -159,6 +189,7 @@ async def handle_say(request: web.Request) -> web.Response:
             "sample_rate": rate,
             "bytes": len(pcm),
             "text": text,
+            "held_for": round(waited, 1),
         },
     )
     for ws in list(state.clients):
@@ -167,8 +198,42 @@ async def handle_say(request: web.Request) -> web.Response:
         except Exception:
             state.clients.discard(ws)
     return web.json_response(
-        {"queued": True, "id": clip_id, "seconds": round(len(pcm) / 2 / rate, 2)}
+        {
+            "queued": True,
+            "id": clip_id,
+            "seconds": round(len(pcm) / 2 / rate, 2),
+            "held_for": round(waited, 1),
+        }
     )
+
+
+async def handle_consumed(request: web.Request) -> web.Response:
+    """The agent reports how far it has read — mirrors `mc consumed`.
+
+    This is what turns the page from a transcript into a status display: the user can see the
+    gap between what they have said and what the agent has actually processed, instead of
+    guessing whether they are talking into a void.
+    """
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    try:
+        cursor = int((body or {}).get("cursor", -1))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "cursor must be an int"}, status=400)
+    state.consumed_cursor = cursor
+    agent_state = str((body or {}).get("state") or "thinking")
+    await _broadcast_json(
+        state,
+        {"type": "consumed", "cursor": cursor, "pending": max(0, state.turns_logged - 1 - cursor)},
+    )
+    await _set_agent_state(state, agent_state)
+    return web.json_response({"consumed": cursor, "state": agent_state})
 
 
 async def handle_ws(request: web.Request) -> web.StreamResponse:
@@ -252,7 +317,10 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     if not text:
         return  # silence or a hallucination artifact — never a turn (AC-1)
 
-    addressed, agent_text = state.wake.evaluate(text, time.time())
+    # Session-relative audio time, not wall clock: it is monotonic, it matches the timestamps
+    # written to the log, and it lets the gate compare "silence between turns" rather than
+    # "time since the last transcription finished".
+    addressed, agent_text = state.wake.evaluate(text, now=t_start, ended=t_end)
     turn = store.append_turn(
         session=state.session,
         text=agent_text,
@@ -273,6 +341,7 @@ def build_app(session: str, token: Optional[str], gate_enabled: bool = True) -> 
             web.get("/health", handle_health),
             web.get("/status", handle_status),
             web.post("/say", handle_say),
+            web.post("/consumed", handle_consumed),
             web.get("/ws", handle_ws),
         ]
     )

@@ -7,42 +7,82 @@
 <title>voice-mode</title>
 <link rel="icon" href="data:," /><!-- suppress the favicon 404; there is no icon to serve -->
 <style>
-  :root { --bg:#0b0d10; --fg:#e7ecf2; --dim:#8b97a6; --ok:#4ade80; --warn:#fbbf24; --err:#f87171; --card:#151a21; }
+  :root {
+    --bg:#07090c; --fg:#e9eef5; --dim:#7d8899; --ok:#5eead4; --err:#fb7185;
+    --card:#0e1319; --edge:#ffffff12; --level:0;
+  }
   @media (prefers-color-scheme: light) {
-    :root { --bg:#f6f7f9; --fg:#12161c; --dim:#5b6675; --card:#fff; }
+    :root { --bg:#f4f6f8; --fg:#0d1117; --dim:#5b6675; --card:#ffffff; --edge:#0000000f; }
   }
   * { box-sizing:border-box; }
   html,body { height:100%; margin:0; }
   body {
-    background:var(--bg); color:var(--fg); font:16px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.25rem; padding:1.5rem;
-    -webkit-tap-highlight-color:transparent;
+    background:var(--bg); color:var(--fg);
+    font:16px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:1.5rem; padding:1.5rem; -webkit-tap-highlight-color:transparent; overflow:hidden;
   }
-  h1 { font-size:1rem; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); margin:0; }
+  h1 { font-size:.72rem; font-weight:600; letter-spacing:.24em; text-transform:uppercase;
+       color:var(--dim); margin:0; }
+
+  /* The orb is the whole interface. It has to answer "is it hearing me?" from across a room,
+     so every state is a distinct colour AND a distinct motion — colour alone fails outdoors
+     and for colour-blind users. */
+  #orbwrap { position:relative; display:grid; place-items:center;
+             width:min(58vw,240px); aspect-ratio:1; }
+  #ring {
+    position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    /* scale is driven live by microphone RMS — this is the "when I speak" feedback */
+    transform:scale(calc(1 + var(--level) * 0.45));
+    background:radial-gradient(circle, transparent 58%, color-mix(in srgb, var(--ok) 45%, transparent) 72%, transparent 76%);
+    opacity:calc(0.15 + var(--level) * 0.85);
+    transition:opacity .09s linear, transform .09s linear;
+  }
   #orb {
-    width:min(52vw,220px); aspect-ratio:1; border-radius:50%; border:none; cursor:pointer;
-    background:radial-gradient(circle at 38% 32%, #2b3a4d, #131922 70%);
-    color:var(--fg); font-size:1.05rem; font-weight:600; letter-spacing:.02em;
-    box-shadow:0 0 0 1px #ffffff14, 0 18px 50px #0008; transition:transform .12s ease, box-shadow .25s ease;
+    position:relative; width:76%; aspect-ratio:1; border-radius:50%; border:none;
+    cursor:pointer; color:var(--fg); font-size:1rem; font-weight:600; letter-spacing:.01em;
+    background:radial-gradient(circle at 38% 30%, #223044, #0c1118 72%);
+    box-shadow:0 0 0 1px var(--edge), 0 20px 60px #000a;
+    transition:transform .14s cubic-bezier(.34,1.56,.64,1), background .3s ease;
   }
-  #orb:active { transform:scale(.97); }
-  #orb.live { box-shadow:0 0 0 1px #ffffff1f, 0 0 0 var(--ring,0px) #4ade8033, 0 18px 50px #0008; }
-  #orb.speaking { background:radial-gradient(circle at 38% 32%, #2f4a3a, #14201a 70%); }
-  #state { font-size:.9rem; color:var(--dim); min-height:1.4em; text-align:center; }
-  #log { width:min(100%,560px); max-height:36vh; overflow-y:auto; background:var(--card);
-         border-radius:14px; padding:.85rem 1rem; font-size:.9rem; box-shadow:0 0 0 1px #ffffff10; }
+  #orb:active { transform:scale(.96); }
+  #orb.live   { background:radial-gradient(circle at 38% 30%, #1d3a3a, #0a1414 72%); }
+  #orb.speaking {
+    background:radial-gradient(circle at 38% 30%, #2b3f5c, #0d1420 72%);
+    animation:breathe 1.6s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.045)} }
+  @media (prefers-reduced-motion:reduce) {
+    #orb.speaking { animation:none; }
+    #ring { transition:none; }
+  }
+
+  #state { font-size:.88rem; color:var(--dim); min-height:1.4em; text-align:center;
+           letter-spacing:.01em; }
+  #state.err { color:var(--err); }
+  #lag { font-size:.72rem; color:#fbbf24; letter-spacing:.02em; min-height:1em; }
+  #orb.thinking { animation:pulse 1.15s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.62} }
+  @media (prefers-reduced-motion:reduce) { #orb.thinking { animation:none; } }
+
+  #log { width:min(100%,600px); max-height:34vh; overflow-y:auto; background:var(--card);
+         border-radius:16px; padding:.5rem .25rem; font-size:.92rem;
+         box-shadow:0 0 0 1px var(--edge); }
   #log:empty { display:none; }
-  .row { padding:.3rem 0; border-bottom:1px solid #ffffff0d; }
-  .row:last-child { border-bottom:0; }
-  .row .tag { font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin-right:.5rem; }
+  .row { padding:.5rem .9rem; display:flex; gap:.7rem; align-items:baseline; }
+  .row + .row { border-top:1px solid var(--edge); }
+  .row .tag { flex:0 0 auto; font-size:.62rem; letter-spacing:.1em; text-transform:uppercase;
+              color:var(--dim); font-weight:600; padding-top:.15rem; }
   .row.addressed .tag { color:var(--ok); }
-  .err { color:var(--err); }
+  .row.claude { color:var(--dim); font-style:italic; }
+  .row.claude .tag { color:#93b4ff; font-style:normal; }
 </style>
 </head>
 <body>
   <h1>voice&#8209;mode</h1>
-  <button id="orb">Tap to start</button>
+  <div id="orbwrap"><div id="ring"></div><button id="orb">Tap to start</button></div>
   <div id="state">idle</div>
+  <div id="lag"></div>
   <div id="log" role="log" aria-live="polite"></div>
 
 <script>
@@ -50,6 +90,7 @@
   "use strict";
   const $orb = document.getElementById("orb");
   const $state = document.getElementById("state");
+  const $lag = document.getElementById("lag");
   const $log = document.getElementById("log");
 
   const token = new URLSearchParams(location.search).get("token") || "";
@@ -65,14 +106,28 @@
 
   const setState = (t, cls) => { $state.textContent = t; $state.className = cls || ""; };
 
-  function addRow(tag, text, addressed) {
+  function addRow(tag, text, cls) {
     const d = document.createElement("div");
-    d.className = "row" + (addressed ? " addressed" : "");
+    d.className = "row" + (cls ? " " + cls : "");
     const s = document.createElement("span");
     s.className = "tag"; s.textContent = tag;
-    d.appendChild(s); d.appendChild(document.createTextNode(text));
+    const t = document.createElement("span");
+    t.textContent = text;
+    d.appendChild(s); d.appendChild(t);
     $log.appendChild(d); $log.scrollTop = $log.scrollHeight;
   }
+
+  // Live level -> CSS variable, smoothed and painted once per frame rather than per audio
+  // callback. Writing a style on every 4096-sample block (~12/s) is wasteful and jittery;
+  // rAF gives smooth motion decoupled from the audio rate.
+  let level = 0, levelTarget = 0;
+  (function paint() {
+    // Fast attack, slow release — matches how a level meter should feel: it jumps to your
+    // voice instantly but decays gently instead of strobing on every syllable gap.
+    level += (levelTarget - level) * (levelTarget > level ? 0.5 : 0.08);
+    document.documentElement.style.setProperty("--level", level.toFixed(3));
+    requestAnimationFrame(paint);
+  })();
 
   // --- Screen Wake Lock -----------------------------------------------------
   // Replaces installing a Caffeine-type app: the page keeps the screen alive itself.
@@ -136,6 +191,9 @@
       for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
       const r = Math.sqrt(sum / ch.length);
       if (r > diag.peakRms) diag.peakRms = r;
+      // Normalise against a typical speaking level (~0.15 RMS) so the ring uses its full
+      // range on ordinary speech instead of only reacting to shouting.
+      levelTarget = Math.min(1, r / 0.15);
       ws.send(floatToPCM16(ch).buffer);
       diag.framesSent++;
     };
@@ -183,11 +241,29 @@
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === "turn") {
         diag.turns.push(msg);
-        addRow(msg.addressed ? "you → claude" : "heard", msg.text, msg.addressed);
+        addRow(msg.addressed ? "you" : "heard", msg.text, msg.addressed ? "addressed" : "");
       } else if (msg.type === "audio_header") {
         pendingClip = msg;                       // the bytes follow in the next frame
       } else if (msg.type === "ready") {
         setState('connected — say "hey claude…"');
+      } else if (msg.type === "agent_state") {
+        // Silence is ambiguous. Naming the state is what separates "it did not hear me" from
+        // "it heard me and is working" from "it is holding back so as not to cut me off".
+        const label = {
+          idle:     'say "hey claude…"',
+          thinking: "claude is thinking…",
+          waiting:  "claude is ready — finishing your sentence first",
+          speaking: "claude is speaking",
+        }[msg.state];
+        if (label) setState(label);
+        $orb.classList.toggle("thinking", msg.state === "thinking" || msg.state === "waiting");
+      } else if (msg.type === "consumed") {
+        diag.consumed = msg.cursor;
+        // The gap between what you have said and what the agent has actually read — the
+        // read-lag gauge, same idea as mc view's "consumed through #N" divider.
+        $lag.textContent = msg.pending > 0
+          ? `${msg.pending} turn${msg.pending === 1 ? "" : "s"} not read yet`
+          : "";
       }
       return;
     }
@@ -204,9 +280,13 @@
       const src = ctx.createBufferSource();
       src.buffer = audio; src.connect(ctx.destination);
       $orb.classList.add("speaking");
-      addRow("claude", header.text || "", false);
+      $orb.textContent = "Speaking";
+      setState("");
+      addRow("claude", header.text || "", "claude");
       await new Promise((res) => { src.onended = res; src.start(); });
       $orb.classList.remove("speaking");
+      $orb.textContent = running ? "Listening" : "Tap to start";
+      if (running) setState('say "hey claude…"');
       diag.played.push(header.id);
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type:"played", id: header.id }));

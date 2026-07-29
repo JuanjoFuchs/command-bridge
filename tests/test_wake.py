@@ -102,3 +102,31 @@ def test_reset_clears_the_conversation_window():
     g.evaluate("hey claude hi", now=100.0)
     g.reset()
     assert g.evaluate("follow up", now=105.0)[0] is False
+
+
+def test_a_long_monologue_does_not_time_itself_out():
+    """Regression (JJ, live 2026-07-29): a ~60 s continuous turn came back addressed=False.
+
+    The window was measured from the previous turn's END to this turn's END, so talking for a
+    long time looked identical to staying silent for a long time. The gap that matters is the
+    SILENCE between turns: previous end -> this start.
+    """
+    g = WakeGate(window_s=30.0)
+    assert g.evaluate("hey claude here is the situation", now=0.0, ended=5.0)[0] is True
+    # Starts 2 s after the last one ended, but runs for a full minute.
+    addressed, _ = g.evaluate("a very long continuous thought", now=7.0, ended=67.0)
+    assert addressed is True, "talking for a long time is not the same as going quiet"
+    # And the next turn, starting soon after that one ended, is still in the conversation.
+    assert g.evaluate("still going", now=69.0, ended=72.0)[0] is True
+
+
+def test_a_real_silence_gap_still_closes_the_window():
+    g = WakeGate(window_s=30.0)
+    g.evaluate("hey claude hello", now=0.0, ended=5.0)
+    assert g.evaluate("much later", now=90.0, ended=93.0)[0] is False
+
+
+def test_ended_defaults_to_now_for_simple_callers():
+    g = WakeGate(window_s=30.0)
+    assert g.evaluate("hey claude hi", now=10.0)[0] is True
+    assert g.evaluate("follow up", now=20.0)[0] is True

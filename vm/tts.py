@@ -130,8 +130,17 @@ def _synth_piper(text: str, voice_path: Optional[str] = None) -> Tuple[bytes, in
     fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
+        try:
+            length_scale = float(
+                os.environ.get("VM_PIPER_LENGTH_SCALE") or config.PIPER_LENGTH_SCALE
+            )
+        except ValueError:
+            length_scale = config.PIPER_LENGTH_SCALE
         proc = subprocess.run(
-            [binary, "--model", voice, "--output_file", path],
+            [
+                binary, "--model", voice, "--output_file", path,
+                "--length-scale", str(length_scale),
+            ],
             input=text,
             capture_output=True,
             text=True,

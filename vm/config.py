@@ -77,6 +77,14 @@ essentially every session is Bluetooth."""
 CHIME_TRAILING_SILENCE_S = 0.2
 """Pad the tail for the same reason — without it the sink cuts the final syllable."""
 
+PIPER_LENGTH_SCALE = 0.85
+"""Speech rate for Piper. Lower is faster; 1.0 is the model's native pace.
+
+Set to 0.85 because en_GB-alan-medium — the voice JJ picked — reads noticeably slowly at
+native pace ("I kind of liked Alan, it's just he speaks too slowly"). This scales duration, not
+pitch, so the voice keeps its character. Below ~0.75 it starts clipping consonants and sounding
+rushed. Override per-deployment with VM_PIPER_LENGTH_SCALE."""
+
 TTS_SR = 22050
 """Output rate for synthesized audio. SAPI and Piper both produce this comfortably."""
 

@@ -105,6 +105,16 @@ class UtteranceBuffer:
     def seconds_buffered(self) -> float:
         return self._buf.size / float(self.sr)
 
+    @property
+    def speech_active(self) -> bool:
+        """True when someone is mid-utterance — speech has started and the end-of-utterance
+        silence has not yet elapsed.
+
+        Used to hold synthesized audio back rather than talking over the speaker, which is the
+        difference between a conversation and a dictation machine that shouts.
+        """
+        return self._seen_speech and self._trailing_silence < self.end_silence_samples
+
     def feed(self, samples: np.ndarray) -> Optional[Tuple[np.ndarray, float, float]]:
         """Add audio. Returns `(samples, t_start, t_end)` when an utterance completes."""
         if samples is None or samples.size == 0:

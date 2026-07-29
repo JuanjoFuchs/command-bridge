@@ -76,15 +76,23 @@ class WakeGate:
                 return p, False
         return None, False
 
-    def evaluate(self, text: str, now: float) -> Tuple[bool, str]:
+    def evaluate(self, text: str, now: float, ended: Optional[float] = None) -> Tuple[bool, str]:
         """Return `(addressed, text_for_the_agent)`.
 
         A **leading** wake phrase is stripped, because the agent should receive the request
         ("what is the status") and not the summons ("hey claude what is the status"). A
         mid-sentence mention still wakes but is left intact — see :meth:`_find_phrase`.
+
+        `now` is when this utterance STARTED and `ended` when it finished, both on one monotonic
+        clock. The distinction is load-bearing: measuring the conversation window to the *end*
+        of an utterance means a long monologue looks like a long silence, and the speaker gets
+        dropped out of the conversation for talking too much. Reported live by JJ, 2026-07-29:
+        a ~60 s continuous turn came back `addressed: false` while he was still mid-flow.
+        The gap that matters is silence between turns — previous end to this start.
         """
+        ended = now if ended is None else ended
         if not self.enabled:
-            self._last_addressed_at = now
+            self._last_addressed_at = ended
             return True, text.strip()
 
         normalized = _norm(text)
@@ -93,16 +101,17 @@ class WakeGate:
 
         phrase, at_start = self._find_phrase(normalized)
         if phrase is not None:
-            self._last_addressed_at = now
+            self._last_addressed_at = ended
             # Strip only a leading summons; leave a mid-sentence mention intact.
             return True, (_strip_phrase(text, phrase) if at_start else text.strip())
 
-        # No phrase — still addressed if we are inside the conversation window (AC-6).
+        # No phrase — still addressed if this utterance BEGAN within the window of the last
+        # one ending. Comparing starts-to-ends is what stops a long turn from timing itself out.
         if (
             self._last_addressed_at is not None
             and (now - self._last_addressed_at) <= self.window_s
         ):
-            self._last_addressed_at = now  # each exchange extends the window
+            self._last_addressed_at = ended  # each exchange extends the window
             return True, text.strip()
 
         return False, text.strip()

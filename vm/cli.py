@@ -178,6 +178,12 @@ def cmd_say(args) -> Dict[str, Any]:
     return _request(args.session, "/say", payload)
 
 
+def cmd_consumed(args) -> Dict[str, Any]:
+    return _request(
+        args.session, "/consumed", {"cursor": args.cursor, "state": args.state}
+    )
+
+
 def cmd_voices(_args) -> Dict[str, Any]:
     from . import tts
 
@@ -221,6 +227,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("voices", help="list installed piper voices")
 
+    c = sub.add_parser("consumed", help="tell the client how far you have read (mc-style)")
+    c.add_argument("--session", default="dev")
+    c.add_argument("--cursor", type=int, required=True)
+    c.add_argument(
+        "--state", default="thinking", choices=["idle", "thinking", "waiting", "speaking"]
+    )
+
     t = sub.add_parser("status", help="live server state")
     t.add_argument("--session", default="dev")
 
@@ -241,6 +254,7 @@ def main(argv=None) -> int:
         "status": cmd_status,
         "turns": cmd_turns,
         "voices": cmd_voices,
+        "consumed": cmd_consumed,
     }
     try:
         result = handlers[args.cmd](args)
