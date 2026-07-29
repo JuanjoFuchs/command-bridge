@@ -125,7 +125,16 @@ async def handle_index(request: web.Request) -> web.StreamResponse:
     path = os.path.join(WEB_DIR, "index.html")
     if not os.path.exists(path):
         return web.Response(status=500, text="web/index.html missing")
-    return web.FileResponse(path)
+    # Never cache the client. The page is edited constantly during development and a stale copy
+    # is the worst kind of bug to chase: the server has the fix, the user reloads, and nothing
+    # changes — so you conclude the fix did not work and go break something else.
+    return web.FileResponse(
+        path,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 async def handle_health(request: web.Request) -> web.Response:
