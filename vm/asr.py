@@ -169,45 +169,92 @@ class UtteranceBuffer:
 
 
 class Recognizer:
-    """Wraps faster-whisper. The model loads on first use, never at import, so the CLI stays
-    fast for commands that never touch audio."""
+    """One utterance in, text out. Two engines behind a single method.
+
+    Engine choice is automatic: Parakeet when its model is on disk (8x faster than whisper
+    small.en, see config.parakeet_dir), whisper otherwise so a fresh clone still works. Either
+    way the model loads on first use, never at import, so CLI commands that never touch audio
+    stay instant.
+
+    The silence gate runs BEFORE either model is touched, which is what makes "a silent room
+    emits zero turns" a guarantee rather than a property of whichever engine is loaded.
+    """
 
     def __init__(
         self,
         model_name: Optional[str] = None,
         device: str = "cpu",
         compute_type: str = "int8",
+        engine: Optional[str] = None,
     ) -> None:
-        self.model_name = model_name or config.whisper_model()
+        self.engine = (engine or config.asr_engine()).lower()
+        self.model_name = model_name or (
+            "parakeet-tdt-0.6b-v2" if self.engine == "parakeet" else config.whisper_model()
+        )
         self.device = device
         self.compute_type = compute_type
         self._model = None
 
-    def _ensure_model(self):
+    # -- engines ------------------------------------------------------------
+    def _ensure_whisper(self):
         if self._model is None:
-            from faster_whisper import WhisperModel  # imported lazily on purpose
+            from faster_whisper import WhisperModel  # lazy on purpose
 
             self._model = WhisperModel(
-                self.model_name, device=self.device, compute_type=self.compute_type
+                config.whisper_model(), device=self.device, compute_type=self.compute_type
             )
         return self._model
 
+    def _ensure_parakeet(self):
+        if self._model is None:
+            import os
+
+            import sherpa_onnx  # lazy on purpose
+
+            d = config.parakeet_dir()
+            if not d:
+                raise RuntimeError("parakeet engine selected but no model directory found")
+            self._model = sherpa_onnx.OfflineRecognizer.from_transducer(
+                encoder=os.path.join(d, "encoder.int8.onnx"),
+                decoder=os.path.join(d, "decoder.int8.onnx"),
+                joiner=os.path.join(d, "joiner.int8.onnx"),
+                tokens=os.path.join(d, "tokens.txt"),
+                num_threads=config.asr_threads(),
+                model_type="nemo_transducer",
+            )
+        return self._model
+
+    def _transcribe_whisper(self, samples: np.ndarray) -> str:
+        model = self._ensure_whisper()
+        segments, _info = model.transcribe(
+            samples,
+            language="en",
+            beam_size=config.asr_beam_size(),
+            temperature=0.0,
+            vad_filter=True,
+            condition_on_previous_text=False,
+        )
+        return " ".join(s.text.strip() for s in segments if s.text and s.text.strip())
+
+    def _transcribe_parakeet(self, samples: np.ndarray) -> str:
+        model = self._ensure_parakeet()
+        stream = model.create_stream()
+        stream.accept_waveform(config.TARGET_SR, samples)
+        model.decode_stream(stream)
+        return stream.result.text or ""
+
+    # -- the interface ------------------------------------------------------
     def transcribe(self, samples: np.ndarray) -> str:
         """Transcribe one complete utterance at 16 kHz. Returns '' for silence/artifacts."""
         if samples is None or samples.size == 0:
             return ""
         if is_silent(samples):
             return ""
-        model = self._ensure_model()
-        segments, _info = model.transcribe(
-            np.asarray(samples, dtype=np.float32),
-            language="en",
-            beam_size=5,
-            temperature=0.0,
-            vad_filter=True,
-            condition_on_previous_text=False,
-        )
-        text = " ".join(s.text.strip() for s in segments if s.text and s.text.strip())
+        samples = np.asarray(samples, dtype=np.float32)
+        if self.engine == "parakeet":
+            text = self._transcribe_parakeet(samples)
+        else:
+            text = self._transcribe_whisper(samples)
         text = " ".join(text.split())
         if not text or is_hallucination(text):
             return ""

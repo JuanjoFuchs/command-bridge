@@ -58,10 +58,31 @@ def test_bare_claude_still_wakes_but_longest_phrase_wins_for_stripping():
     assert text == "status please"
 
 
-def test_mid_sentence_mention_wakes():
+def test_mid_sentence_mention_wakes_but_is_not_stripped():
+    """Detection is generous, stripping is conservative.
+
+    Regression for a live bug (JJ, 2026-07-29): "and do I need to say hey Claude every time?"
+    became "and do I need to say every time?" — he was REFERRING to the phrase, not using it,
+    and stripping changed what he asked. Leaving a stray phrase costs the agent nothing;
+    removing one the speaker meant to keep corrupts the request.
+    """
     addressed, text = WakeGate().evaluate("so hey claude can you check that", now=1.0)
     assert addressed is True
-    assert "claude" not in text.lower()
+    assert text == "so hey claude can you check that"
+
+
+def test_referring_to_the_phrase_does_not_mangle_the_sentence():
+    addressed, text = WakeGate().evaluate(
+        "and do I need to say hey Claude every time?", now=1.0
+    )
+    assert addressed is True
+    assert text == "and do I need to say hey Claude every time?"
+
+
+def test_leading_phrase_is_still_stripped():
+    addressed, text = WakeGate().evaluate("hey claude do I need to say it every time?", now=1.0)
+    assert addressed is True
+    assert text == "do I need to say it every time?"
 
 
 def test_disabled_gate_addresses_everything():

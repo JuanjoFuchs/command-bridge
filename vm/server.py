@@ -135,6 +135,7 @@ async def handle_say(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "body must be JSON"}, status=400)
     text = (body or {}).get("text", "")
+    voice = (body or {}).get("voice") or None
     if not isinstance(text, str) or not text.strip():
         return web.json_response({"error": "text is required"}, status=400)
     if not state.clients:
@@ -142,7 +143,7 @@ async def handle_say(request: web.Request) -> web.Response:
 
     try:
         pcm, rate = await asyncio.get_running_loop().run_in_executor(
-            None, tts.synthesize, text
+            None, lambda: tts.synthesize(text, voice=voice)
         )
     except tts.TTSError as exc:
         state.last_error = str(exc)

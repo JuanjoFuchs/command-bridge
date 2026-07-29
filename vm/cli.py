@@ -172,7 +172,16 @@ def cmd_watch(args) -> Dict[str, Any]:
 
 
 def cmd_say(args) -> Dict[str, Any]:
-    return _request(args.session, "/say", {"text": args.text})
+    payload: Dict[str, Any] = {"text": args.text}
+    if getattr(args, "voice", None):
+        payload["voice"] = args.voice
+    return _request(args.session, "/say", payload)
+
+
+def cmd_voices(_args) -> Dict[str, Any]:
+    from . import tts
+
+    return {"voices": tts.list_voices(), "backend": tts.available()}
 
 
 def cmd_status(args) -> Dict[str, Any]:
@@ -207,7 +216,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     y = sub.add_parser("say", help="speak text to the connected client")
     y.add_argument("--session", default="dev")
+    y.add_argument("--voice", default=None, help="piper voice NAME (see `vm voices`)")
     y.add_argument("text")
+
+    sub.add_parser("voices", help="list installed piper voices")
 
     t = sub.add_parser("status", help="live server state")
     t.add_argument("--session", default="dev")
@@ -228,6 +240,7 @@ def main(argv=None) -> int:
         "say": cmd_say,
         "status": cmd_status,
         "turns": cmd_turns,
+        "voices": cmd_voices,
     }
     try:
         result = handlers[args.cmd](args)

@@ -56,19 +56,32 @@ class WakeGate:
     def reset(self) -> None:
         self._last_addressed_at = None
 
-    def _find_phrase(self, normalized: str) -> Optional[str]:
+    def _find_phrase(self, normalized: str) -> Tuple[Optional[str], bool]:
+        """Return `(phrase, at_start)`. Detection is generous; stripping is not.
+
+        A phrase anywhere wakes the agent, but only a phrase at the START is a summons we may
+        safely remove. Mid-sentence, the speaker is usually *referring* to the phrase rather
+        than using it — JJ, live, 2026-07-29: "and do I need to say hey Claude every time?"
+        became "and do I need to say every time?", which changes what he asked.
+
+        The asymmetry is deliberate: leaving a stray wake phrase in the text costs the agent
+        nothing, while removing one the speaker meant to keep corrupts the request. When in
+        doubt, do not edit the user's words.
+        """
         for p in self.phrases:
             if normalized == p or normalized.startswith(p + " "):
-                return p
+                return p, True
+        for p in self.phrases:
             if (" " + p + " ") in (" " + normalized + " "):
-                return p
-        return None
+                return p, False
+        return None, False
 
     def evaluate(self, text: str, now: float) -> Tuple[bool, str]:
         """Return `(addressed, text_for_the_agent)`.
 
-        When the wake phrase is present it is stripped, because the agent should receive the
-        request ("what is the status") and not the summons ("hey claude what is the status").
+        A **leading** wake phrase is stripped, because the agent should receive the request
+        ("what is the status") and not the summons ("hey claude what is the status"). A
+        mid-sentence mention still wakes but is left intact — see :meth:`_find_phrase`.
         """
         if not self.enabled:
             self._last_addressed_at = now
@@ -78,10 +91,11 @@ class WakeGate:
         if not normalized:
             return False, text.strip()
 
-        phrase = self._find_phrase(normalized)
+        phrase, at_start = self._find_phrase(normalized)
         if phrase is not None:
             self._last_addressed_at = now
-            return True, _strip_phrase(text, phrase)
+            # Strip only a leading summons; leave a mid-sentence mention intact.
+            return True, (_strip_phrase(text, phrase) if at_start else text.strip())
 
         # No phrase — still addressed if we are inside the conversation window (AC-6).
         if (

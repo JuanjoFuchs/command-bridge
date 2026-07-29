@@ -21,7 +21,7 @@ import struct
 import subprocess
 import tempfile
 import wave
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 from . import config
 
@@ -98,9 +98,33 @@ def _synth_sapi(text: str) -> Tuple[bytes, int]:
             pass
 
 
-def _synth_piper(text: str) -> Tuple[bytes, int]:
+def list_voices() -> list:
+    """Piper voices available in the models dir, by name."""
+    d = config.models_dir()
+    if not os.path.isdir(d):
+        return []
+    return sorted(f[:-5] for f in os.listdir(d) if f.endswith(".onnx"))
+
+
+def resolve_voice(name: Optional[str]) -> Optional[str]:
+    """Map a voice NAME to its model path inside the models dir.
+
+    Deliberately not an arbitrary path: `/say` is reachable over the tunnel, and letting a
+    caller name any file on disk turns a text-to-speech endpoint into a file probe. A name that
+    doesn't resolve is rejected rather than falling back silently.
+    """
+    if not name:
+        return None
+    if name not in list_voices():
+        raise TTSError(
+            f"unknown voice {name!r}; available: {', '.join(list_voices()) or '(none)'}"
+        )
+    return os.path.join(config.models_dir(), f"{name}.onnx")
+
+
+def _synth_piper(text: str, voice_path: Optional[str] = None) -> Tuple[bytes, int]:
     binary = os.environ.get("VM_PIPER_BIN") or shutil.which("piper")
-    voice = os.environ.get("VM_PIPER_VOICE")
+    voice = voice_path or os.environ.get("VM_PIPER_VOICE")
     if not binary or not voice:
         raise TTSError("piper backend needs VM_PIPER_BIN and VM_PIPER_VOICE")
     fd, path = tempfile.mkstemp(suffix=".wav")
@@ -129,15 +153,20 @@ def _synth_none(text: str) -> Tuple[bytes, int]:
     return b"\x00\x00" * int(config.TTS_SR * seconds), config.TTS_SR
 
 
-def synthesize(text: str, backend: str | None = None) -> Tuple[bytes, int]:
-    """Return `(padded mono 16-bit PCM, sample_rate)`. Raises TTSError on failure."""
+def synthesize(
+    text: str, backend: str | None = None, voice: Optional[str] = None
+) -> Tuple[bytes, int]:
+    """Return `(padded mono 16-bit PCM, sample_rate)`. Raises TTSError on failure.
+
+    `voice` is a NAME from :func:`list_voices`, not a path — see :func:`resolve_voice`.
+    """
     if not text or not text.strip():
         raise TTSError("nothing to speak")
     backend = (backend or config.tts_backend()).lower()
     if backend == "sapi":
         pcm, rate = _synth_sapi(text)
     elif backend == "piper":
-        pcm, rate = _synth_piper(text)
+        pcm, rate = _synth_piper(text, resolve_voice(voice))
     elif backend == "none":
         pcm, rate = _synth_none(text)
     else:
