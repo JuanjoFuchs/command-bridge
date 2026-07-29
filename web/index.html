@@ -238,6 +238,22 @@
 
     running = true;
     await acquireWakeLock();
+
+    // Do NOT claim to be listening until audio is actually arriving. Between tapping and the
+    // first frames there is socket setup plus the mic's own warm-up, and a page that says
+    // "Listening" during that window invites you to start talking into a gap — which is very
+    // likely why JJ's first utterance after a reload came back garbled.
+    $orb.textContent = "Warming up";
+    setState("opening the microphone…");
+    const framesAtStart = diag.framesSent;
+    await new Promise((res) => {
+      const t0 = Date.now();
+      (function check() {
+        if (diag.framesSent > framesAtStart + 2 || Date.now() - t0 > 4000) return res();
+        setTimeout(check, 60);
+      })();
+    });
+
     $orb.textContent = "Listening";
     $orb.classList.add("live");
     setState('say "hey claude…"');
