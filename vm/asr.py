@@ -19,6 +19,7 @@ unit-testable without faster-whisper installed.
 """
 from __future__ import annotations
 
+import threading
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -100,6 +101,10 @@ class UtteranceBuffer:
         self._seen_speech = False
         self._total_fed = 0
         self._utterance_start_sample = 0
+        self._buf_start_total = 0
+        self.preroll_samples = int(sr * 0.2)
+        """Audio kept before detected speech onset. Enough to protect a soft first consonant,
+        which the energy gate can miss, without handing the model a long silent runway."""
 
     @property
     def seconds_buffered(self) -> float:
@@ -165,17 +170,28 @@ class UtteranceBuffer:
         # measuring the whole buffer instead of just the speech lets a 50 ms click through
         # as a turn (regression: test_a_click_shorter_than_the_minimum_is_discarded).
         trailing = self._trailing_silence if ended else 0
+        onset = self._utterance_start_sample - self._buf_start_total
         self._reset_buffer()
 
         speech_samples = out.size - trailing
         if speech_samples < self.min_samples or is_silent(out, self.silence_floor):
             return None  # too short, or nothing but noise — not a turn
+
+        # Trim the silent runway ahead of speech. Measured 2026-07-29: the first utterance of a
+        # session carried ~1.7 s of leading silence and transcribed noticeably worse than the
+        # same audio re-transcribed from its speech onset. Later utterances start near speech
+        # and were always fine — which is what made the first one look like an ASR problem.
+        cut = max(0, min(onset - self.preroll_samples, out.size - self.min_samples))
+        if cut > 0:
+            out = out[cut:]
+            t_start += cut / float(self.sr)
         return out, t_start, t_end
 
     def _reset_buffer(self) -> None:
         self._buf = np.zeros(0, dtype=np.float32)
         self._trailing_silence = 0
         self._seen_speech = False
+        self._buf_start_total = self._total_fed
 
     def flush(self) -> Optional[Tuple[np.ndarray, float, float]]:
         """End of stream: emit whatever is buffered if it looks like speech."""
@@ -215,6 +231,13 @@ class Recognizer:
         self.device = device
         self.compute_type = compute_type
         self._model = None
+        # One recognizer, potentially two callers: the live partial preview and the real
+        # end-of-utterance transcription, both dispatched to a thread pool. Neither
+        # sherpa-onnx nor faster-whisper promises thread safety on a shared model, and
+        # concurrent decodes were measurably corrupting output — re-transcribing a turn's own
+        # captured audio offline produced BETTER text than the live pass on the same bytes.
+        # Serialize. Finals block; partials skip (see try_transcribe).
+        self._lock = threading.Lock()
 
     # -- engines ------------------------------------------------------------
     def _ensure_whisper(self):
@@ -265,13 +288,7 @@ class Recognizer:
         return stream.result.text or ""
 
     # -- the interface ------------------------------------------------------
-    def transcribe(self, samples: np.ndarray) -> str:
-        """Transcribe one complete utterance at 16 kHz. Returns '' for silence/artifacts."""
-        if samples is None or samples.size == 0:
-            return ""
-        if is_silent(samples):
-            return ""
-        samples = np.asarray(samples, dtype=np.float32)
+    def _run(self, samples: np.ndarray) -> str:
         if self.engine == "parakeet":
             text = self._transcribe_parakeet(samples)
         else:
@@ -280,3 +297,31 @@ class Recognizer:
         if not text or is_hallucination(text):
             return ""
         return text
+
+    def transcribe(self, samples: np.ndarray) -> str:
+        """Transcribe one complete utterance at 16 kHz. Returns '' for silence/artifacts.
+
+        Takes the model lock and waits: a real turn must never be dropped or degraded because
+        a preview happened to be running.
+        """
+        if samples is None or samples.size == 0 or is_silent(samples):
+            return ""
+        samples = np.asarray(samples, dtype=np.float32)
+        with self._lock:
+            return self._run(samples)
+
+    def try_transcribe(self, samples: np.ndarray) -> Optional[str]:
+        """Transcribe only if the model is free; return None if it is busy.
+
+        For the live partial preview. Skipping is the correct behaviour under contention — the
+        preview is disposable, and a partial that waits behind a final would be stale by the
+        time it rendered anyway.
+        """
+        if samples is None or samples.size == 0 or is_silent(samples):
+            return None
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            return self._run(np.asarray(samples, dtype=np.float32))
+        finally:
+            self._lock.release()

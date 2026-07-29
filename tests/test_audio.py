@@ -154,3 +154,59 @@ def test_empty_text_is_rejected():
 def test_unknown_backend_is_rejected():
     with pytest.raises(tts.TTSError):
         tts.synthesize("hello", backend="nonsense")
+
+
+# --- leading-silence trim and model serialization -----------------------------
+
+def test_leading_silence_is_trimmed_to_a_short_preroll():
+    """Measured 2026-07-29: the first utterance of a session carried ~1.7s of silent runway and
+    transcribed worse than the same audio sliced from its speech onset."""
+    b = asr.UtteranceBuffer()
+    sr = config.TARGET_SR
+    b.feed(_silence(int(sr * 2.0)))          # long silent runway before anyone speaks
+    b.feed(_speech(int(sr * 1.5)))
+    out = None
+    for _ in range(30):
+        out = b.feed(_silence(int(sr * 0.1)))
+        if out is not None:
+            break
+    assert out is not None
+    samples, t_start, _t_end = out
+    # Fed 2.0s silence + 1.5s speech + ~1.0s end-of-utterance silence = ~4.5s buffered.
+    # After trimming the runway we expect ~preroll + speech + trailing ~= 2.7s.
+    assert samples.size < int(sr * 3.0), "leading silence was not trimmed"
+    assert samples.size > int(sr * 2.0), "trimmed too aggressively — speech was cut"
+    assert t_start > 1.5, "t_start should move forward with the trim"
+
+
+def test_preroll_is_preserved_so_a_soft_first_consonant_survives():
+    b = asr.UtteranceBuffer()
+    sr = config.TARGET_SR
+    b.feed(_silence(int(sr * 1.0)))
+    b.feed(_speech(int(sr * 1.0)))
+    out = None
+    for _ in range(30):
+        out = b.feed(_silence(int(sr * 0.1)))
+        if out is not None:
+            break
+    assert out is not None
+    # Should keep roughly preroll + speech + trailing, not cut flush to the onset.
+    assert out[0].size >= int(sr * 1.0) + b.preroll_samples - int(sr * 0.05)
+
+
+def test_partials_skip_rather_than_race_the_final_transcription():
+    """One model, two callers. Concurrent decodes measurably corrupted output, so finals take
+    the lock and partials skip when it is held."""
+    r = asr.Recognizer()
+    loud = _speech(config.TARGET_SR)
+    r._lock.acquire()
+    try:
+        assert r.try_transcribe(loud) is None, "a partial must skip while the model is busy"
+    finally:
+        r._lock.release()
+
+
+def test_try_transcribe_ignores_silence_without_touching_the_model():
+    r = asr.Recognizer()
+    assert r.try_transcribe(_silence(config.TARGET_SR)) is None
+    assert r._model is None

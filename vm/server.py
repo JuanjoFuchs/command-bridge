@@ -406,7 +406,7 @@ def _maybe_partial(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
 
     async def run() -> None:
         try:
-            text = await loop.run_in_executor(None, state.recognizer.transcribe, audio)
+            text = await loop.run_in_executor(None, state.recognizer.try_transcribe, audio)
             if text and text != state.partial_text:
                 state.partial_text = text
                 await _broadcast_json(state, {"type": "partial", "text": text})
