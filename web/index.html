@@ -60,7 +60,9 @@
   #state { font-size:.88rem; color:var(--dim); min-height:1.4em; text-align:center;
            letter-spacing:.01em; }
   #state.err { color:var(--err); }
-  #lag { font-size:.72rem; color:#fbbf24; letter-spacing:.02em; min-height:1em; }
+  #lag { font-size:.72rem; color:#fbbf24; letter-spacing:.02em; min-height:1em;
+         font-variant-numeric:tabular-nums; }
+  #lag.ok { color:var(--dim); }
   #orb.thinking { animation:pulse 1.15s ease-in-out infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.62} }
   @media (prefers-reduced-motion:reduce) { #orb.thinking { animation:none; } }
@@ -250,20 +252,24 @@
         // Silence is ambiguous. Naming the state is what separates "it did not hear me" from
         // "it heard me and is working" from "it is holding back so as not to cut me off".
         const label = {
-          idle:     'say "hey claude…"',
-          thinking: "claude is thinking…",
-          waiting:  "claude is ready — finishing your sentence first",
-          speaking: "claude is speaking",
+          idle:         'listening — say "hey claude…"',
+          transcribing: "① transcribing what you said…",
+          thinking:     "③ claude is thinking…",
+          synthesizing: "④ generating speech…",
+          waiting:      "⏸ ready to reply — letting you finish",
+          speaking:     "⑤ claude is speaking",
         }[msg.state];
         if (label) setState(label);
-        $orb.classList.toggle("thinking", msg.state === "thinking" || msg.state === "waiting");
+        const busy = ["transcribing", "thinking", "synthesizing", "waiting"].includes(msg.state);
+        $orb.classList.toggle("thinking", busy);
       } else if (msg.type === "consumed") {
         diag.consumed = msg.cursor;
         // The gap between what you have said and what the agent has actually read — the
         // read-lag gauge, same idea as mc view's "consumed through #N" divider.
         $lag.textContent = msg.pending > 0
-          ? `${msg.pending} turn${msg.pending === 1 ? "" : "s"} not read yet`
-          : "";
+          ? `② ${msg.pending} turn${msg.pending === 1 ? "" : "s"} logged, not yet read by claude`
+          : (msg.cursor >= 0 ? `② claude has read through turn #${msg.cursor}` : "");
+        $lag.classList.toggle("ok", msg.pending === 0 && msg.cursor >= 0);
       }
       return;
     }

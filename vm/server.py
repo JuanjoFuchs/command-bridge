@@ -158,12 +158,14 @@ async def handle_say(request: web.Request) -> web.Response:
     if not state.clients:
         return web.json_response({"error": "no client connected"}, status=409)
 
+    await _set_agent_state(state, "synthesizing")
     try:
         pcm, rate = await asyncio.get_running_loop().run_in_executor(
             None, lambda: tts.synthesize(text, voice=voice)
         )
     except tts.TTSError as exc:
         state.last_error = str(exc)
+        await _set_agent_state(state, "idle")
         return web.json_response({"error": str(exc)}, status=500)
 
     clip_id = f"clip-{int(time.time() * 1000)}"
@@ -312,9 +314,13 @@ async def _flush(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
 async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) -> None:
     """Transcribe a completed utterance, gate it, log it, and tell the client."""
     samples, t_start, t_end = completed
-    # Whisper is CPU-bound; keep it off the event loop or audio ingest stalls.
+    # Announce each stage. The user cannot see any of this from outside, and an unexplained
+    # pause is the difference between "it's working" and "it's broken" to someone waiting.
+    await _set_agent_state(state, "transcribing")
+    # ASR is CPU-bound; keep it off the event loop or audio ingest stalls.
     text = await loop.run_in_executor(None, state.recognizer.transcribe, samples)
     if not text:
+        await _set_agent_state(state, "idle")
         return  # silence or a hallucination artifact — never a turn (AC-1)
 
     # Session-relative audio time, not wall clock: it is monotonic, it matches the timestamps
@@ -330,6 +336,17 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     )
     state.turns_logged += 1
     await _broadcast_json(state, {"type": "turn", **turn})
+    # Republish the read-lag so the gap between "said" and "read by the agent" stays visible
+    # without the agent having to report anything.
+    await _broadcast_json(
+        state,
+        {
+            "type": "consumed",
+            "cursor": state.consumed_cursor,
+            "pending": max(0, state.turns_logged - 1 - state.consumed_cursor),
+        },
+    )
+    await _set_agent_state(state, "idle")
 
 
 def build_app(session: str, token: Optional[str], gate_enabled: bool = True) -> web.Application:
