@@ -188,6 +188,8 @@ def cmd_say(args) -> Dict[str, Any]:
     payload: Dict[str, Any] = {"text": args.text}
     if getattr(args, "voice", None):
         payload["voice"] = args.voice
+    if getattr(args, "now", False):
+        payload["async"] = True
     return _request(args.session, "/say", payload)
 
 
@@ -236,6 +238,12 @@ def build_parser() -> argparse.ArgumentParser:
     y = sub.add_parser("say", help="speak text to the connected client")
     y.add_argument("--session", default="dev")
     y.add_argument("--voice", default=None, help="piper voice NAME (see `vm voices`)")
+    y.add_argument(
+        "--now",
+        action="store_true",
+        help="return immediately, synthesize in the background — use for a quick ack so you "
+        "can keep working while it speaks",
+    )
     y.add_argument("text")
 
     sub.add_parser("voices", help="list installed piper voices")

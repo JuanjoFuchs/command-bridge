@@ -76,6 +76,12 @@
   .row .tag { flex:0 0 auto; font-size:.62rem; letter-spacing:.1em; text-transform:uppercase;
               color:var(--dim); font-weight:600; padding-top:.15rem; }
   .row.addressed .tag { color:var(--ok); }
+  .row.partial { color:var(--dim); }
+  .row.partial .tag { color:var(--ok); }
+  .row.partial span:last-child::after {
+    content:"▌"; margin-left:.15em; animation:blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity:0 } }
   .row.claude { color:var(--dim); font-style:italic; }
   .row.claude .tag { color:#93b4ff; font-style:normal; }
 </style>
@@ -97,7 +103,7 @@
 
   const token = new URLSearchParams(location.search).get("token") || "";
   let ws = null, ctx = null, micStream = null, node = null, source = null;
-  let wakeLock = null, running = false, pendingClip = null;
+  let wakeLock = null, running = false, pendingClip = null, $partial = null;
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
@@ -243,6 +249,7 @@
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === "turn") {
         diag.turns.push(msg);
+        if ($partial) { $partial.remove(); $partial = null; }   // the final supersedes it
         addRow(msg.addressed ? "you" : "heard", msg.text, msg.addressed ? "addressed" : "");
       } else if (msg.type === "audio_header") {
         pendingClip = msg;                       // the bytes follow in the next frame
@@ -262,6 +269,22 @@
         if (label) setState(label);
         const busy = ["transcribing", "thinking", "synthesizing", "waiting"].includes(msg.state);
         $orb.classList.toggle("thinking", busy);
+      } else if (msg.type === "partial") {
+        // Live preview of the utterance still being spoken. Replaced in place, then removed
+        // when the final turn lands — so it reads as one sentence firming up rather than a
+        // pile of near-duplicate rows.
+        diag.partial = msg.text;
+        if (!$partial) {
+          $partial = document.createElement("div");
+          $partial.className = "row partial";
+          const s = document.createElement("span");
+          s.className = "tag"; s.textContent = "…";
+          $partial.appendChild(s);
+          $partial.appendChild(document.createElement("span"));
+          $log.appendChild($partial);
+        }
+        $partial.lastChild.textContent = msg.text;
+        $log.scrollTop = $log.scrollHeight;
       } else if (msg.type === "consumed") {
         diag.consumed = msg.cursor;
         // The gap between what you have said and what the agent has actually read — the

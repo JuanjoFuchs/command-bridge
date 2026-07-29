@@ -105,6 +105,17 @@ class UtteranceBuffer:
     def seconds_buffered(self) -> float:
         return self._buf.size / float(self.sr)
 
+    def snapshot(self) -> Optional[np.ndarray]:
+        """A copy of the audio buffered so far, or None if there isn't speech in it yet.
+
+        For live partial transcription: the in-flight utterance can be transcribed repeatedly
+        while it is still being spoken, without disturbing the buffer that will become the
+        final turn.
+        """
+        if not self._seen_speech or self._buf.size == 0:
+            return None
+        return self._buf.copy()
+
     @property
     def speech_active(self) -> bool:
         """True when someone is mid-utterance — speech has started and the end-of-utterance

@@ -51,6 +51,25 @@ INITIAL_GRACE_MS = 1000
 """Grace period after the session opens before end-of-utterance logic can fire, so the very
 first turn is not closed before the speaker starts."""
 
+SPEAK_GRACE_S = 0.8
+"""Extra pause before speaking, after the speaker appears to have stopped.
+
+The mid-utterance hold is not enough on its own: a pause longer than END_OF_UTTERANCE_MS closes
+the turn, so someone who is merely thinking looks exactly like someone who has finished. JJ,
+live 2026-07-29: "actually, you did interrupt me because I was not done speaking" — the hold had
+released and he resumed a moment later.
+
+So after the hold clears, wait this long and re-check. If they started again, hold again. Costs
+0.8 s on every reply; buys not talking over the person you are meant to be listening to."""
+
+PARTIAL_INTERVAL_S = 0.7
+"""How often to re-transcribe the in-flight utterance for the live preview.
+
+Only affordable because Parakeet runs at RTF ~0.08 — at whisper small.en's 0.88 this would eat
+the CPU the real transcription needs. A partial is skipped entirely if the previous one is still
+running, so the preview degrades to "less frequent" rather than falling behind or stalling
+audio ingest. Set 0 to disable."""
+
 MAX_UTTERANCE_MS = 120_000
 """Hard ceiling on a single turn. A stuck VAD must not buffer forever."""
 

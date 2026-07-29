@@ -46,6 +46,9 @@ class TunnelState:
         self.client_sr: int = config.TARGET_SR
         self.consumed_cursor: int = -1
         self.agent_state: str = "idle"
+        self.partial_busy: bool = False
+        self.last_partial_at: float = 0.0
+        self.partial_text: str = ""
 
     def snapshot(self) -> Dict[str, Any]:
         return {
@@ -153,11 +156,31 @@ async def handle_say(request: web.Request) -> web.Response:
         return web.json_response({"error": "body must be JSON"}, status=400)
     text = (body or {}).get("text", "")
     voice = (body or {}).get("voice") or None
+    fire_and_forget = bool((body or {}).get("async"))
     if not isinstance(text, str) or not text.strip():
         return web.json_response({"error": "text is required"}, status=400)
     if not state.clients:
         return web.json_response({"error": "no client connected"}, status=409)
 
+    if fire_and_forget:
+        # Return before synthesis so the agent can acknowledge and keep working in parallel,
+        # instead of the user waiting out a TTS round trip before anything else starts.
+        asyncio.get_running_loop().create_task(_speak(state, text, voice))
+        return web.json_response({"queued": True, "async": True})
+
+    try:
+        result = await _speak(state, text, voice)
+    except tts.TTSError as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response(result)
+
+
+async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[str, Any]:
+    """Synthesize, hold if the speaker is mid-sentence, then push the audio.
+
+    Shared by the blocking and fire-and-forget paths so the interruption guard cannot be
+    bypassed by choosing the async one.
+    """
     await _set_agent_state(state, "synthesizing")
     try:
         pcm, rate = await asyncio.get_running_loop().run_in_executor(
@@ -166,7 +189,7 @@ async def handle_say(request: web.Request) -> web.Response:
     except tts.TTSError as exc:
         state.last_error = str(exc)
         await _set_agent_state(state, "idle")
-        return web.json_response({"error": str(exc)}, status=500)
+        raise
 
     clip_id = f"clip-{int(time.time() * 1000)}"
 
@@ -175,11 +198,26 @@ async def handle_say(request: web.Request) -> web.Response:
     # mid-sentence, which is the difference between a conversation and a machine that shouts.
     # Bounded so a stuck VAD can never silence the agent permanently.
     waited = 0.0
-    if state.buffer.speech_active:
-        await _set_agent_state(state, "waiting")
-        while state.buffer.speech_active and waited < 15.0:
+    announced = False
+    while waited < 15.0:
+        if state.buffer.speech_active:
+            if not announced:
+                await _set_agent_state(state, "waiting")
+                announced = True
             await asyncio.sleep(0.1)
             waited += 0.1
+            continue
+        # Quiet — but a pause longer than END_OF_UTTERANCE_MS closes the turn, so "thinking"
+        # and "finished" look identical from here. Wait a beat and re-check before committing.
+        grace = 0.0
+        while grace < config.SPEAK_GRACE_S:
+            await asyncio.sleep(0.1)
+            grace += 0.1
+            waited += 0.1
+            if state.buffer.speech_active:
+                break
+        if not state.buffer.speech_active:
+            break
     await _set_agent_state(state, "speaking")
 
     # Header first so the client knows how to interpret the bytes that follow.
@@ -199,14 +237,12 @@ async def handle_say(request: web.Request) -> web.Response:
             await ws.send_bytes(pcm)
         except Exception:
             state.clients.discard(ws)
-    return web.json_response(
-        {
-            "queued": True,
-            "id": clip_id,
-            "seconds": round(len(pcm) / 2 / rate, 2),
-            "held_for": round(waited, 1),
-        }
-    )
+    return {
+        "queued": True,
+        "id": clip_id,
+        "seconds": round(len(pcm) / 2 / rate, 2),
+        "held_for": round(waited, 1),
+    }
 
 
 async def handle_consumed(request: web.Request) -> web.Response:
@@ -301,8 +337,44 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
 
     completed = state.buffer.feed(samples)
     if completed is None:
+        _maybe_partial(state, loop)
         return
     await _emit(state, completed, loop)
+
+
+def _maybe_partial(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
+    """Fire a live preview transcription of the in-flight utterance, if one isn't already running.
+
+    Scheduled rather than awaited: audio ingest must never block on ASR, or the buffer falls
+    behind the microphone and turns arrive late. If a previous partial is still running this
+    one is simply skipped — the preview gets sparser under load instead of queueing up work
+    that will be stale by the time it finishes.
+    """
+    if config.PARTIAL_INTERVAL_S <= 0 or state.partial_busy:
+        return
+    now = time.monotonic()
+    if now - state.last_partial_at < config.PARTIAL_INTERVAL_S:
+        return
+    if not state.buffer.speech_active:
+        return
+    audio = state.buffer.snapshot()
+    if audio is None or audio.size == 0:
+        return
+    state.partial_busy = True
+    state.last_partial_at = now
+
+    async def run() -> None:
+        try:
+            text = await loop.run_in_executor(None, state.recognizer.transcribe, audio)
+            if text and text != state.partial_text:
+                state.partial_text = text
+                await _broadcast_json(state, {"type": "partial", "text": text})
+        except Exception as exc:  # a preview failing must never break the session
+            state.last_error = f"partial: {exc}"
+        finally:
+            state.partial_busy = False
+
+    loop.create_task(run())
 
 
 async def _flush(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
@@ -335,6 +407,7 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         addressed=addressed,
     )
     state.turns_logged += 1
+    state.partial_text = ""  # the final turn supersedes any live preview
     await _broadcast_json(state, {"type": "turn", **turn})
     # Republish the read-lag so the gap between "said" and "read by the agent" stays visible
     # without the agent having to report anything.
