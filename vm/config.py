@@ -153,18 +153,20 @@ CHIME_TRAILING_SILENCE_S = 0.2
 """Pad the tail for the same reason — without it the sink cuts the final syllable."""
 
 SENTENCE_SILENCE_S = 0.5
-"""Silence Piper inserts between sentences.
+"""Default silence between sentences. Overridable live and persisted — see `sentence_pause`.
 
-Piper defaults to a value that runs sentences together, which is fine for one remark and bad for
-a list. JJ, live from the phone 2026-07-31: "you read this list back to back and it was hard to
-understand." Speech has no scrollback — the listener cannot re-read item two while item three is
-arriving, so the pause IS the punctuation.
+Piper defaults to 0.0, which runs sentences together: fine for one remark, bad for a list. JJ,
+live from the phone 2026-07-31: "you read this list back to back and it was hard to understand."
+Speech has no scrollback — the listener cannot re-read item two while item three is arriving, so
+the pause IS the punctuation.
 
-0.28 s, not longer. A phone's output AGC ramps its gain during a gap of true digital silence and
-amplifies the noise floor — JJ, live from the phone: "that whatever thing you added started
-sounding like very loud white noise instead of silence." Measured: the WAV's gaps really are
-silent (0.00001 RMS), so the hiss is the DEVICE chasing the silence, not the file. A shorter gap
-still marks the boundary without giving the gain time to climb."""
+**0.5 s, and the shorter value tried here was a mistake.** The hiss JJ reported in the same
+session ("started sounding like very loud white noise instead of silence") was CLIPPING, not the
+gap — piper measured at peak 1.000, and clipping generates exactly the broadband harmonics that
+sound like white noise (see PEAK_CEILING). The gaps themselves measured silent at 0.00001 RMS.
+Shortening the pause was an over-correction shipped in the same edit as the clipping fix, so
+neither of us could attribute the improvement, and it made pacing worse on its own. When the only
+instrument is a person's ear, change one thing at a time."""
 
 PEAK_CEILING = 0.89
 """Synthesized audio is scaled to this peak before it is sent.
@@ -174,13 +176,67 @@ exactly what "white noise" sounds like, and speeding the voice up makes it worse
 transients per second. Leaving ~1 dB of headroom costs nothing audible and removes a whole class
 of distortion that is easy to misdiagnose as a bad model or a bad connection."""
 
-PIPER_LENGTH_SCALE = 0.85
-"""Speech rate for Piper. Lower is faster; 1.0 is the model's native pace.
+SPEECH_SPEED = 1.18
+"""How fast the agent talks, as a multiple of the voice's native pace. Higher is faster.
 
-Set to 0.85 because en_GB-alan-medium — the voice JJ picked — reads noticeably slowly at
+**SPEED is the unit this codebase speaks, everywhere** — settings file, `vm rate`, the `/rate`
+endpoint, `status`. Piper's own knob is `length_scale`, which is INVERTED (lower is faster), and
+letting that leak out was a real defect: JJ asked for 2.0 expecting twice as fast and got half
+speed. The inversion now exists in exactly one line, `length_scale_for` below, and nothing above
+the piper boundary ever sees it.
+
+1.18 (= 1/0.85) because en_GB-alan-medium — the voice JJ picked — reads noticeably slowly at
 native pace ("I kind of liked Alan, it's just he speaks too slowly"). This scales duration, not
-pitch, so the voice keeps its character. Below ~0.75 it starts clipping consonants and sounding
-rushed. Override per-deployment with VM_PIPER_LENGTH_SCALE."""
+pitch, so the voice keeps its character. Above ~1.33 it starts clipping consonants and sounding
+rushed. Override with VM_SPEECH_SPEED, or live and persistently with `vm rate --speed`."""
+
+SPEED_MIN, SPEED_MAX = 0.5, 2.5
+"""Accepted speed range: half speed to 2.5x. Bounded because a speed of 0 divides by zero on the
+way to length_scale, and anything past ~2.5 is not speech any more."""
+
+PAUSE_MAX = 1.5
+"""Longest accepted sentence pause. Past this a reply stops sounding like one thought."""
+
+
+def length_scale_for(speed: float) -> float:
+    """Convert SPEED (higher is faster) to piper's length_scale (lower is faster).
+
+    THE ONLY PLACE THE INVERSION EXISTS. Every caller above the piper boundary passes speed."""
+    return 1.0 / max(SPEED_MIN, min(SPEED_MAX, float(speed)))
+
+
+def speech_speed() -> float:
+    """Persisted speech speed, so a preference tuned by ear survives a restart.
+
+    JJ had to re-set this on every server start, which meant the value that was right for him
+    lived only in a running process — the definition of a setting that will be lost."""
+    raw = _env("VM_SPEECH_SPEED")
+    if raw:
+        try:
+            return max(SPEED_MIN, min(SPEED_MAX, float(raw)))
+        except ValueError:
+            pass
+    # Backwards compatibility: honour a hand-written length_scale, converted. Retired because a
+    # persisted setting in the inverted unit re-creates the exact confusion SPEECH_SPEED removes.
+    legacy = _env("VM_PIPER_LENGTH_SCALE")
+    if legacy:
+        try:
+            return max(SPEED_MIN, min(SPEED_MAX, 1.0 / float(legacy)))
+        except (ValueError, ZeroDivisionError):
+            pass
+    return SPEECH_SPEED
+
+
+def sentence_pause() -> float:
+    """Persisted pause between sentences. Same reason as speech_speed: tuned by ear, so it has
+    to outlive the process that was tuned."""
+    raw = _env("VM_SENTENCE_PAUSE")
+    if raw:
+        try:
+            return max(0.0, min(PAUSE_MAX, float(raw)))
+        except ValueError:
+            pass
+    return SENTENCE_SILENCE_S
 
 TTS_SR = 22050
 """Output rate for synthesized audio. SAPI and Piper both produce this comfortably."""
@@ -188,7 +244,7 @@ TTS_SR = 22050
 DEFAULT_PIPER_VOICE = "en_GB-alan-medium"
 """Which voice piper uses when nothing names one.
 
-Alan is the voice JJ picked ("I kind of liked Alan") — the same choice PIPER_LENGTH_SCALE above
+Alan is the voice JJ picked ("I kind of liked Alan") — the same choice SPEECH_SPEED above
 was tuned for. Naming a default here is what lets `VM_TTS=piper` be the ONLY setting a piper
 session needs: with no default the backend refused to start unless the caller also threaded
 VM_PIPER_VOICE through every invocation, which is precisely the env-var tax this file exists to
@@ -357,6 +413,24 @@ def piper_bin() -> str:
         if os.path.isfile(candidate):
             return candidate
     return shutil.which("piper") or ""
+
+
+def piper_inprocess() -> bool:
+    """Load the piper voice into THIS process instead of spawning `piper.exe` per reply.
+
+    On by default because the subprocess was the slowest thing in the whole loop by an order of
+    magnitude. Measured on this machine, same voice, same text:
+
+        subprocess   3.6 - 4.3 s   (a near-constant tax; ~3.5 s of it is process + model startup)
+        in-process   0.17 - 0.58 s (scales with text length, which is the real synthesis cost)
+
+    That is 7-26x, and it made TTS slower than transcription by more than 10x — Parakeet does its
+    half in 0.23 s. The model loads once and is reused, so the tax is paid at `serve` time.
+
+    Set VM_PIPER_INPROCESS=0 to go back to spawning the binary. Kept as an escape hatch because
+    VM_PIPER_BIN may point at a non-Python piper (the C++ releases), for which the resident path
+    is a different implementation, not the same one held open."""
+    return (_env("VM_PIPER_INPROCESS", "1") or "1") not in ("0", "false", "no", "off")
 
 
 def piper_voice() -> str:
@@ -632,8 +706,17 @@ SETTINGS: tuple = (
     _setting("VM_PIPER_BIN", "piper executable; auto-found in the repo venv or on PATH",
              piper_bin),
     _setting("VM_PIPER_VOICE", "default .onnx voice; auto-found in the models dir", piper_voice),
-    _setting("VM_PIPER_LENGTH_SCALE", "piper speech rate; lower is faster",
-             lambda: _env("VM_PIPER_LENGTH_SCALE") or str(PIPER_LENGTH_SCALE)),
+    _setting("VM_PIPER_INPROCESS",
+             "1 | 0 — hold the voice model in this process (7-26x faster than spawning piper)",
+             lambda: "1" if piper_inprocess() else "0"),
+    _setting("VM_SPEECH_SPEED",
+             f"how fast the agent talks; 1.0 is native pace, higher is faster "
+             f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `vm rate --speed`",
+             lambda: str(speech_speed())),
+    _setting("VM_SENTENCE_PAUSE",
+             f"seconds of silence between sentences (0-{PAUSE_MAX}); the pause IS the "
+             f"punctuation in speech. Set it live with `vm rate --pause`",
+             lambda: str(sentence_pause())),
     _setting("VM_ASR", "parakeet | whisper (auto-selects parakeet when its model is present)",
              asr_engine),
     _setting("VM_PARAKEET_DIR", "sherpa-onnx Parakeet model dir", parakeet_dir),

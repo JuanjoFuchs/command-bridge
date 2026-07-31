@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 import wave
 from typing import Any, Dict, Optional, Set
@@ -50,12 +51,15 @@ class TunnelState:
         self.consumed_cursor: int = -1
         self.agent_state: str = "idle"
         self.cues_enabled: bool = config.cues_enabled()
-        self.speech_rate: float = config.PIPER_LENGTH_SCALE
-        self.sentence_pause: float = config.SENTENCE_SILENCE_S
-        """Live too, for the same reason as speed: this is a pacing preference tuned by ear, and
-        restarting the conversation to hear a different value is absurd."""
-        """Live speech rate. Held in server state, not read from env per call, so "talk faster"
-        can be honoured mid-conversation instead of requiring a restart."""
+        self.speech_speed: float = config.speech_speed()
+        """Live speech speed, in the SPEED unit (higher is faster). Held in server state rather
+        than read from env per call, so "talk faster" can be honoured mid-conversation instead of
+        requiring a restart — and seeded from the settings file, so the value tuned by ear last
+        session is the value this session starts with."""
+        self.sentence_pause: float = config.sentence_pause()
+        """Live too, and persisted for the same reason: this is a pacing preference tuned by ear,
+        and re-setting it on every server start meant the right value lived only in a running
+        process."""
         self.embedder = voiceprint.Embedder()
         self.voice_samples: int = 0
         self.partial_busy: bool = False
@@ -104,7 +108,7 @@ class TunnelState:
             "voiceprint_available": self.embedder.available,
             "wake_phrases": list(self.wake.phrases),
             "tts_backend": tts.available(),
-            "speech_speed": round(1.0 / self.speech_rate, 2),
+            "speech_speed": round(self.speech_speed, 2),
             "sentence_pause": self.sentence_pause,
             "asr_model": self.recognizer.model_name,
             "log": store.log_path(self.session),
@@ -235,7 +239,7 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
         pcm, rate = await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: tts.synthesize(
-                text, voice=voice, rate=state.speech_rate, pause=state.sentence_pause
+                text, voice=voice, speed=state.speech_speed, pause=state.sentence_pause
             ),
         )
     except tts.TTSError as exc:
@@ -337,12 +341,16 @@ async def handle_cue(request: web.Request) -> web.Response:
 
 
 async def handle_rate(request: web.Request) -> web.Response:
-    """Set the speech rate at runtime.
+    """Set speech speed and/or sentence pause at runtime. Either may be omitted.
 
     JJ asked whether "talk faster" could take effect mid-conversation or would need a code
-    change. Holding the rate in server state rather than reading an env var per call is what
-    makes the former possible — a preference the user expresses out loud should not require
-    restarting the conversation to apply.
+    change. Holding these in server state rather than reading env per call is what makes the
+    former possible — a preference the user expresses out loud should not require restarting the
+    conversation to apply.
+
+    **This endpoint does not write the settings file.** Persistence belongs to `vm rate`, which
+    writes `.env` and then calls this. A long-running server that edits config on disk is a
+    process racing every other `vm config set`, for no behaviour anyone needs.
     """
     state: TunnelState = request.app["state"]
     ok, reason = _check(request, state)
@@ -350,29 +358,44 @@ async def handle_rate(request: web.Request) -> web.Response:
         return web.json_response({"error": reason}, status=403)
     try:
         body = await request.json()
-        value = float((body or {}).get("value"))
-    except (TypeError, ValueError, Exception):
-        return web.json_response({"error": "value must be a number"}, status=400)
-    # SPEED, not duration. Piper's own length_scale is inverted — lower means faster — and
-    # exposing that leaked straight through to the user: JJ asked for 2.0 expecting twice as
-    # fast and got half speed. An API that contradicts the plain meaning of its own parameter
-    # name is a defect, so the inversion is hidden here and speed is what crosses the boundary.
-    if not (0.5 <= value <= 2.5):
-        return web.json_response(
-            {"error": "speed must be between 0.5 (half speed) and 2.5 (2.5x faster)"},
-            status=400,
-        )
-    previous = round(1.0 / state.speech_rate, 2)
-    state.speech_rate = 1.0 / value
-    pause = (body or {}).get("pause")
-    if pause is not None:
+    except Exception:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    body = body or {}
+    previous = {"speed": round(state.speech_speed, 2), "pause": state.sentence_pause}
+
+    # SPEED, not duration. Piper's length_scale is inverted — lower means faster — and exposing
+    # that leaked straight through: JJ asked for 2.0 expecting twice as fast and got half speed.
+    # An API that contradicts the plain meaning of its own parameter name is a defect, so speed
+    # is what crosses this boundary and the inversion lives in config.length_scale_for alone.
+    raw_speed = body.get("speed", body.get("value"))     # `value` kept: the original field name
+    if raw_speed is not None:
         try:
-            state.sentence_pause = max(0.0, min(1.5, float(pause)))
+            speed = float(raw_speed)
         except (TypeError, ValueError):
-            pass
+            return web.json_response({"error": "speed must be a number"}, status=400)
+        if not (config.SPEED_MIN <= speed <= config.SPEED_MAX):
+            return web.json_response(
+                {"error": f"speed must be between {config.SPEED_MIN} (half speed) and "
+                          f"{config.SPEED_MAX} ({config.SPEED_MAX}x faster)"},
+                status=400,
+            )
+        state.speech_speed = speed
+
+    raw_pause = body.get("pause")
+    if raw_pause is not None:
+        try:
+            pause = float(raw_pause)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "pause must be a number"}, status=400)
+        if not (0.0 <= pause <= config.PAUSE_MAX):
+            return web.json_response(
+                {"error": f"pause must be between 0 and {config.PAUSE_MAX} seconds"}, status=400
+            )
+        state.sentence_pause = pause
+
     return web.json_response(
-        {"speed": value, "previous": previous, "length_scale": round(state.speech_rate, 3),
-         "sentence_pause": state.sentence_pause}
+        {"speed": round(state.speech_speed, 2), "pause": state.sentence_pause,
+         "previous": previous}
     )
 
 
@@ -622,12 +645,24 @@ def run(
         )
 
     app = build_app(session, token, gate_enabled)
+
+    # Load the voice model NOW, on a background thread, so the ~4 s load does not land on the
+    # first thing the agent says. That is the worst possible place for it: the user has just
+    # spoken and is waiting to learn whether any of this works. Backgrounded rather than awaited
+    # so the URL is printable and the socket is accepting connections while it loads.
+    threading.Thread(target=tts.warm, name="tts-warm", daemon=True).start()
+
     # flush=True: without it the banner sits in the pipe buffer when serve is launched
     # detached (which is the normal way an agent runs it), so the operator never sees the URL.
     print(f"voice-mode serving   http://{host}:{port}/?token={token}", flush=True)
     print(f"  session            {session}", flush=True)
     print(f"  log                {store.log_path(session)}", flush=True)
     print(f"  tts                {tts.available()}", flush=True)
+    print(
+        f"  voice              speed {config.speech_speed()}x, "
+        f"{config.sentence_pause()}s between sentences  (`vm rate` to change and persist)",
+        flush=True,
+    )
     print(f"  allowlist          {', '.join(security.allowed_cidrs())}", flush=True)
     print(
         "  (a phone needs HTTPS: `tailscale serve` this port — a LAN IP will NOT work)",

@@ -158,6 +158,21 @@ DESCRIBE: Dict[str, Any] = {
                      "state by hand, e.g. back to 'idle' if you decide not to reply.",
         },
         "voices": {"args": [], "returns": "installed piper voices for `say --voice`"},
+        "rate": {
+            "args": {
+                "--session": "session id",
+                "--speed": "multiple of native pace; HIGHER IS FASTER (0.5-2.5). Omit to read",
+                "--pause": "seconds of silence between sentences (0-1.5). Omit to read",
+                "--no-save": "apply to the running server only, do not persist",
+            },
+            "returns": {"speed": "float", "pause": "float", "persisted": "{KEY: value} or null",
+                        "applied_live": "bool"},
+            "notes": "PERSISTS BY DEFAULT and applies immediately — no restart. Speed is a "
+                     "MULTIPLE (2.0 = twice as fast); piper's inverted length_scale is not "
+                     "exposed anywhere. Works with no server running: it saves, and the value "
+                     "is picked up by the next `serve`. Raise --pause when reading a list "
+                     "aloud — speech has no scrollback, so the pause is the punctuation.",
+        },
         # Was registered in the parser but missing from this block until a test started
         # asserting the two agree — the exact silent drift AGENTS.md convention 3 warns about.
         "cue": {
@@ -337,6 +352,73 @@ def cmd_say(args) -> Dict[str, Any]:
     if getattr(args, "now", False):
         payload["async"] = True
     return _request(args.session, "/say", payload)
+
+
+def cmd_rate(args) -> Dict[str, Any]:
+    """Read or change how fast the agent talks — and make the change survive a restart.
+
+    PERSISTS BY DEFAULT, which is the whole point. These are preferences tuned by ear over a live
+    conversation ("you speak too slowly", "that list ran together"), and before this they lived
+    only in the running server: every restart threw away the value that was actually right and
+    JJ had to find it again. `--no-save` is there for a one-off experiment.
+
+    Writes the file FIRST, then applies live. That order matters — with no server running the
+    persist still has to succeed, because "set it now, start the tunnel next" is a normal thing
+    to do and failing the whole command over a missing server would lose the setting.
+    """
+    speed, pause = getattr(args, "speed", None), getattr(args, "pause", None)
+
+    if speed is None and pause is None:
+        live = _request(args.session, "/rate", {})
+        persisted = {
+            "speed": config.speech_speed(),
+            "pause": config.sentence_pause(),
+            "file": config.env_file_path(),
+        }
+        if live.get("running") is False:
+            return {"persisted": persisted, "live": None, "note": live.get("error")}
+        return {"persisted": persisted, "live": {"speed": live.get("speed"),
+                                                 "pause": live.get("pause")}}
+
+    # Validate here rather than only server-side: with no server running there is nothing to
+    # reject a bad value, and a nonsense number would be written to the settings file and then
+    # silently clamped on every future start.
+    if speed is not None and not (config.SPEED_MIN <= speed <= config.SPEED_MAX):
+        raise ValueError(
+            f"--speed must be between {config.SPEED_MIN} (half speed) and {config.SPEED_MAX}; "
+            f"1.0 is the voice's native pace and higher is faster"
+        )
+    if pause is not None and not (0.0 <= pause <= config.PAUSE_MAX):
+        raise ValueError(
+            f"--pause must be between 0 and {config.PAUSE_MAX} seconds — it is the silence "
+            f"between sentences, which is what makes a spoken list parseable"
+        )
+
+    written = {}
+    if not args.no_save:
+        if speed is not None:
+            config.write_setting("VM_SPEECH_SPEED", str(speed))
+            written["VM_SPEECH_SPEED"] = str(speed)
+        if pause is not None:
+            config.write_setting("VM_SENTENCE_PAUSE", str(pause))
+            written["VM_SENTENCE_PAUSE"] = str(pause)
+
+    payload = {k: v for k, v in (("speed", speed), ("pause", pause)) if v is not None}
+    live = _request(args.session, "/rate", payload)
+    applied = live.get("running") is not False and not live.get("error")
+    return {
+        "speed": speed if speed is not None else config.speech_speed(),
+        "pause": pause if pause is not None else config.sentence_pause(),
+        "persisted": written if written else None,
+        "file": config.env_file_path() if written else None,
+        "applied_live": applied,
+        # Not an error: persisting with no server running is a normal thing to do. Say what
+        # happened so nobody concludes the setting was lost.
+        "note": None if applied else (
+            f"saved, and it applies the next time you `vm serve --session {args.session}` "
+            f"— no server is running to change right now"
+        ),
+    }
 
 
 def cmd_consumed(args) -> Dict[str, Any]:
@@ -625,6 +707,16 @@ def build_parser() -> argparse.ArgumentParser:
     vpp.add_argument("--channel", type=int, default=0,
                      help="0 = mic/left (you), 1 = system/right (everyone else)")
 
+    r = sub.add_parser("rate", help="how fast the agent talks; persists across restarts")
+    r.add_argument("--session", default="dev")
+    r.add_argument("--speed", type=float, default=None,
+                   help=f"multiple of native pace, {config.SPEED_MIN}-{config.SPEED_MAX}; "
+                        f"higher is FASTER")
+    r.add_argument("--pause", type=float, default=None,
+                   help=f"seconds of silence between sentences, 0-{config.PAUSE_MAX}")
+    r.add_argument("--no-save", action="store_true",
+                   help="apply to the running server only; do not persist to .env")
+
     c = sub.add_parser("consumed", help="tell the client how far you have read (mc-style)")
     c.add_argument("--session", default="dev")
     c.add_argument("--cursor", type=int, required=True)
@@ -663,6 +755,7 @@ def main(argv=None) -> int:
         "consumed": cmd_consumed,
         "voiceprint": cmd_voiceprint,
         "cue": cmd_cue,
+        "rate": cmd_rate,
     }
     try:
         result = handlers[args.cmd](args)

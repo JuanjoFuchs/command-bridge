@@ -39,6 +39,7 @@ Then, from anywhere:
 ```bash
 vm watch  --session dev --since -1      # blocks until you speak; returns turns + a cursor
 vm say    --session dev "All green."    # speaks back
+vm rate   --session dev --speed 1.3     # talk faster, now and every session after
 vm status --session dev
 vm describe                             # the live contract — read this first
 ```
@@ -61,6 +62,41 @@ Precedence is **process env > `.env` > built-in default**, so a one-off override
 prefix: `VM_TTS=none vm say --session dev "hi"`. Piper's binary and voice are discovered from the
 checkout (`venv/Scripts/piper.exe`, `models/en_GB-alan-medium.onnx`), so `VM_TTS=piper` is
 usually the only setting a piper session needs. `.env.example` documents every variable.
+
+### How it sounds
+
+Speed and sentence pause are tuned by ear during a live conversation, so `vm rate` changes them
+**immediately and permanently** — no restart, and the value is still there next session:
+
+```bash
+vm rate --session dev --speed 1.4      # a MULTIPLE of native pace; higher is faster
+vm rate --session dev --pause 0.6      # silence between sentences
+vm rate --session dev                  # what is it now
+```
+
+Speed is deliberately not piper's `length_scale`, which is inverted — asking for 2.0 and getting
+half speed is a defect, not a quirk, so the inversion lives in exactly one function and nothing
+above it ever sees it. Raise `--pause` before reading a list aloud: speech has no scrollback, so
+the pause is the punctuation.
+
+### Why replies are fast
+
+The piper voice is **loaded once into the server process**, not spawned per reply. Measured on
+this machine through the live server, same text, same voice:
+
+| | spawning `piper.exe` | resident |
+|---|---|---|
+| "All green." | 4.39 s | 1.20 s |
+| one sentence | 4.43 s | 1.29 s |
+| three sentences | 5.45 s | 1.59 s |
+
+Nearly all of the old cost was startup — interpreter, onnxruntime, and the ONNX model — re-paid
+on every sentence spoken, which had made TTS more than 10x slower than transcription without
+anyone measuring it. The remaining ~0.8 s is `SPEAK_GRACE_S`, the deliberate pause that keeps the
+agent from talking over you. The model is warmed on a background thread at `serve` time so the
+first reply is not the slow one. `VM_PIPER_INPROCESS=0` goes back to spawning; `vm status` says
+which path is live, because a silent fall back is a 20x regression that only presents as "it
+feels slow again".
 
 ## Putting it on your phone
 

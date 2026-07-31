@@ -20,6 +20,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import threading
 import wave
 from typing import List, Optional, Tuple
 
@@ -147,44 +148,167 @@ def resolve_voice(name: Optional[str]) -> Optional[str]:
     return os.path.join(config.models_dir(), f"{name}.onnx")
 
 
-def _synth_piper(text: str, voice_path: Optional[str] = None,
-                 rate: Optional[float] = None,
-                 pause: Optional[float] = None) -> Tuple[bytes, int]:
-    # Resolution moved into config: the binary is findable in the repo venv and the voice is
-    # findable in the models dir, so `VM_TTS=piper` is now the ONLY setting a piper session
-    # needs. Requiring all three to be exported on every call is what produced the wall of
-    # env-var prefixes this refactor exists to delete.
+class _ResidentVoice:
+    """A piper voice loaded once into THIS process and reused for every reply.
+
+    **This is the single biggest latency win in the tool.** Spawning `piper.exe` per reply cost
+    3.6-4.3 s of which ~3.5 s was pure startup — interpreter, onnxruntime, and the ONNX model,
+    re-paid on every sentence the agent spoke. Held resident, the same synthesis takes 0.17-0.58 s
+    and scales with text length, which is the work actually being done. Before this, TTS was more
+    than 10x slower than transcription (Parakeet: 0.23 s) and nobody had measured it.
+
+    Serialized under a lock, deliberately. Piper phonemizes through espeak-ng, a C library with
+    global state that is not safe to call from several threads at once, and the server hands
+    synthesis to an executor thread. There is one speaker on one tunnel, so serializing costs
+    nothing real and removes a class of crash that would look like a random audio glitch.
+
+    A load failure is sticky and falls back to the subprocess forever after: if the library is not
+    importable or the model will not load, retrying it per reply just pays the failure repeatedly.
+    A *synthesis* failure is NOT caught here — the subprocess runs the same code on the same text
+    and would fail the same way, so masking it would only hide a real bug.
+    """
+
+    def __init__(self) -> None:
+        self._voice = None
+        self._path: Optional[str] = None
+        self._lock = threading.Lock()
+        self.unavailable_reason: Optional[str] = None
+
+    @property
+    def loaded(self) -> bool:
+        return self._voice is not None
+
+    def _load(self, voice_path: str):
+        """Return a loaded voice for `voice_path`, or None if the resident path cannot be used."""
+        if self.unavailable_reason:
+            return None
+        if self._voice is not None and self._path == voice_path:
+            return self._voice
+        try:
+            from piper import PiperVoice
+        except ImportError as exc:
+            self.unavailable_reason = f"the piper python package is not importable ({exc})"
+            return None
+        try:
+            self._voice = PiperVoice.load(voice_path)
+            self._path = voice_path
+        except Exception as exc:      # a corrupt model, a missing sidecar, an onnxruntime fault
+            self.unavailable_reason = f"{os.path.basename(voice_path)} would not load ({exc})"
+            self._voice = None
+            self._path = None
+            return None
+        return self._voice
+
+    def synthesize(
+        self, text: str, voice_path: str, length_scale: float, pause: float
+    ) -> Optional[Tuple[bytes, int]]:
+        """Mono 16-bit PCM, or None if the resident path is unusable and the caller should spawn.
+
+        Sentence silence is inserted BETWEEN chunks and never after the last one, matching
+        `piper --sentence-silence` exactly — piper yields one audio chunk per sentence, so this
+        is the same seam its CLI writes into, not an approximation of it.
+        """
+        from piper import SynthesisConfig
+
+        with self._lock:
+            voice = self._load(voice_path)
+            if voice is None:
+                return None
+            syn = SynthesisConfig(length_scale=length_scale)
+            sample_rate = voice.config.sample_rate
+            silence = bytes(int(sample_rate * pause * 2))
+            parts = []
+            for i, chunk in enumerate(voice.synthesize(text, syn)):
+                if i:
+                    parts.append(silence)
+                parts.append(chunk.audio_int16_bytes)
+        if not parts:
+            raise TTSError("piper produced no audio")
+        return b"".join(parts), sample_rate
+
+
+_RESIDENT = _ResidentVoice()
+
+
+def warm() -> dict:
+    """Load the voice model NOW, so the first reply is not the slow one.
+
+    Called at `serve` time on a background thread. Without it the ~4 s model load lands on
+    whatever the agent says first, which is the worst possible place for it: the user has just
+    spoken and is waiting to find out whether the thing works at all.
+    """
+    if config.tts_backend() != "piper" or not config.piper_inprocess():
+        return {"warmed": False, "reason": "not using the resident piper backend"}
+    voice = config.piper_voice()
+    if not voice:
+        return {"warmed": False, "reason": "no voice is configured"}
+    with _RESIDENT._lock:
+        ok = _RESIDENT._load(voice) is not None
+    return {
+        "warmed": ok,
+        "voice": os.path.basename(voice),
+        "reason": _RESIDENT.unavailable_reason if not ok else None,
+    }
+
+
+def _piper_paths(voice_path: Optional[str]) -> Tuple[str, str]:
+    """Resolve (binary, voice), raising a TTSError that names the remedy if either is missing.
+
+    Resolution lives in config: the binary is findable in the repo venv and the voice in the
+    models dir, so `VM_TTS=piper` is the ONLY setting a piper session needs. Requiring all three
+    on every call is what produced the wall of env-var prefixes this design exists to delete.
+    """
     binary = config.piper_bin()
     voice = voice_path or config.piper_voice()
-    if not binary or not voice:
+    # The binary is only needed for the subprocess path; a resident voice needs the .onnx alone.
+    need_binary = not (config.piper_inprocess() and voice)
+    if (need_binary and not binary) or not voice:
         missing = " and ".join(
-            [n for n, v in (("a piper binary", binary), ("an .onnx voice", voice)) if not v]
+            [n for n, v in (("a piper binary", binary if need_binary else "-"),
+                            ("an .onnx voice", voice)) if not v]
         )
         raise TTSError(
             f"the piper backend cannot start: no {missing}. Run `vm doctor` for the exact "
             f"remedy, or set it explicitly: `vm config set VM_PIPER_BIN <path>` / "
             f"`vm config set VM_PIPER_VOICE <path>` (see `vm voices`)."
         )
+    return binary, voice
+
+
+def _synth_piper(text: str, voice_path: Optional[str] = None,
+                 speed: Optional[float] = None,
+                 pause: Optional[float] = None) -> Tuple[bytes, int]:
+    binary, voice = _piper_paths(voice_path)
+    # THE ONE PLACE the inversion happens. Everything above here speaks SPEED (higher is faster);
+    # piper wants length_scale (lower is faster). See config.length_scale_for.
+    length_scale = config.length_scale_for(
+        config.speech_speed() if speed is None else speed
+    )
+    pause = config.sentence_pause() if pause is None else pause
+
+    if config.piper_inprocess():
+        result = _RESIDENT.synthesize(text, voice, length_scale, pause)
+        if result is not None:
+            return result
+        # Fell through: the resident path is unusable, so spawn. Not silent — `available()`
+        # reports the reason, because "piper is mysteriously slow again" is exactly the symptom
+        # this would otherwise present as.
+
+    if not binary:
+        raise TTSError(
+            f"piper cannot run in-process ({_RESIDENT.unavailable_reason}) and no piper binary "
+            f"was found to fall back to. Run `vm doctor`."
+        )
     fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
-        if rate is not None:
-            length_scale = rate
-        else:
-            try:
-                length_scale = float(
-                    os.environ.get("VM_PIPER_LENGTH_SCALE") or config.PIPER_LENGTH_SCALE
-                )
-            except ValueError:
-                length_scale = config.PIPER_LENGTH_SCALE
         proc = subprocess.run(
             [
                 binary, "--model", voice, "--output_file", path,
                 "--length-scale", str(length_scale),
                 # The pause between sentences is what makes a spoken list parseable — speech
                 # has no scrollback, so the boundary has to be audible.
-                "--sentence-silence",
-                str(config.SENTENCE_SILENCE_S if pause is None else pause),
+                "--sentence-silence", str(pause),
             ],
             input=text,
             capture_output=True,
@@ -209,22 +333,25 @@ def _synth_none(text: str) -> Tuple[bytes, int]:
 
 def synthesize(
     text: str, backend: str | None = None, voice: Optional[str] = None,
-    rate: Optional[float] = None, pause: Optional[float] = None,
+    speed: Optional[float] = None, pause: Optional[float] = None,
 ) -> Tuple[bytes, int]:
     """Return `(padded mono 16-bit PCM, sample_rate)`. Raises TTSError on failure.
 
     `voice` is a NAME from :func:`list_voices`, not a path — see :func:`resolve_voice`.
+
+    `speed` is a MULTIPLE OF NATIVE PACE: higher is faster. It is deliberately not piper's
+    `length_scale`, which is inverted — that inversion leaked out once already and produced half
+    speed when JJ asked for double.
     """
     if not text or not text.strip():
         raise TTSError("nothing to speak")
     backend = (backend or config.tts_backend()).lower()
-    # `sr`, not `rate`: `rate` is the SPEECH rate parameter and reusing the name for the
-    # returned SAMPLE rate shadows it — a trap that would silently ignore the caller's speed
-    # the moment anyone reordered these lines.
+    # `sr`, not `rate`: the returned SAMPLE rate would shadow a speech-rate name — a trap that
+    # would silently ignore the caller's speed the moment anyone reordered these lines.
     if backend == "sapi":
         pcm, sr = _synth_sapi(text)
     elif backend == "piper":
-        pcm, sr = _synth_piper(text, resolve_voice(voice), rate=rate, pause=pause)
+        pcm, sr = _synth_piper(text, resolve_voice(voice), speed=speed, pause=pause)
     elif backend == "none":
         pcm, sr = _synth_none(text)
     else:
@@ -243,15 +370,28 @@ def write_wav(path: str, pcm: bytes, sample_rate: int) -> str:
 
 
 def available() -> str:
-    """Which backend would actually work right now — for `status` / `describe`."""
+    """Which backend would actually work right now, and how fast — for `status` / `describe`.
+
+    Says WHICH piper path is live, not just "piper". A silent fall back from the resident voice
+    to spawning the binary is a 20x latency regression whose only symptom is "it feels slow
+    again", so it has to be visible in the one place someone already looks.
+    """
     backend = config.tts_backend()
     if backend == "sapi" and os.name == "nt":
         return "sapi"
-    # Both halves, not just the binary: piper with no voice fails at the first `say`, and a
-    # status line that said "piper" while synthesis was impossible sent you looking at the
-    # network layer.
-    if backend == "piper" and config.piper_bin() and config.piper_voice():
-        return "piper"
+    if backend == "piper":
+        voice = config.piper_voice()
+        binary = config.piper_bin()
+        # The voice matters more than the binary now: resident synthesis needs only the .onnx.
+        # A status line saying "piper" while synthesis was impossible sent you to the network
+        # layer once already, so both halves are still checked — just per path.
+        if config.piper_inprocess() and voice:
+            if _RESIDENT.unavailable_reason:
+                return (f"piper (spawning per call — resident load failed: "
+                        f"{_RESIDENT.unavailable_reason})")
+            return "piper (resident)" if _RESIDENT.loaded else "piper (resident, not yet loaded)"
+        if binary and voice:
+            return "piper (per-call subprocess)"
     if backend == "none":
         return "none"
     return f"{backend} (unavailable)"

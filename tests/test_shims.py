@@ -53,10 +53,30 @@ def test_the_launcher_puts_this_checkout_first_on_sys_path():
     assert "sys.path.insert(0" in source
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="no bash on this machine")
+def _git_bash():
+    """The bash `bin/vm` actually targets: Git Bash / MSYS, where `cygpath` exists.
+
+    Explicitly NOT WSL's bash. On Windows `shutil.which("bash")` regularly resolves to
+    C:\\Windows\\System32\\bash.exe, which is a Linux environment with a different filesystem
+    view — it cannot even open `D:\\...\\bin\\vm` and exits 127. Handing that to this test made
+    it fail on a perfectly good shim, purely as a function of PATH order.
+    """
+    if os.name != "nt":
+        return shutil.which("bash")
+    candidates = []
+    git = shutil.which("git")
+    if git:  # Git for Windows ships bash a sibling directory over from git.exe
+        candidates.append(os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe"))
+    found = shutil.which("bash")
+    if found and "system32" not in found.lower():
+        candidates.append(found)
+    return next((c for c in candidates if os.path.isfile(c)), None)
+
+
+@pytest.mark.skipif(_git_bash() is None, reason="no Git Bash on this machine (WSL bash is not it)")
 def test_the_bash_shim_works_from_an_unrelated_cwd(tmp_path):
     proc = subprocess.run(
-        [shutil.which("bash"), os.path.join(BIN, "vm"), "describe"],
+        [_git_bash(), os.path.join(BIN, "vm"), "describe"],
         cwd=str(tmp_path), capture_output=True, text=True, timeout=120,
     )
 
