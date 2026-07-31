@@ -30,6 +30,28 @@ class TTSError(RuntimeError):
     pass
 
 
+def normalize(pcm: bytes) -> bytes:
+    """Scale down to config.PEAK_CEILING if the audio is hotter than that.
+
+    Only ever attenuates — quiet speech is left alone rather than being pumped up, because
+    boosting also boosts whatever noise came with it.
+    """
+    import array
+
+    samples = array.array("h")
+    samples.frombytes(pcm)
+    if not samples:
+        return pcm
+    peak = max(abs(s) for s in samples)
+    ceiling = int(32767 * config.PEAK_CEILING)
+    if peak <= ceiling:
+        return pcm
+    scale = ceiling / peak
+    for i, v in enumerate(samples):
+        samples[i] = int(v * scale)
+    return samples.tobytes()
+
+
 def pad(pcm: bytes, sample_rate: int) -> bytes:
     """Prepend/append silence so a Bluetooth sink has time to wake and doesn't clip the tail."""
     lead = b"\x00\x00" * int(sample_rate * config.CHIME_LEADING_SILENCE_S)
@@ -126,7 +148,8 @@ def resolve_voice(name: Optional[str]) -> Optional[str]:
 
 
 def _synth_piper(text: str, voice_path: Optional[str] = None,
-                 rate: Optional[float] = None) -> Tuple[bytes, int]:
+                 rate: Optional[float] = None,
+                 pause: Optional[float] = None) -> Tuple[bytes, int]:
     # Resolution moved into config: the binary is findable in the repo venv and the voice is
     # findable in the models dir, so `VM_TTS=piper` is now the ONLY setting a piper session
     # needs. Requiring all three to be exported on every call is what produced the wall of
@@ -158,6 +181,10 @@ def _synth_piper(text: str, voice_path: Optional[str] = None,
             [
                 binary, "--model", voice, "--output_file", path,
                 "--length-scale", str(length_scale),
+                # The pause between sentences is what makes a spoken list parseable — speech
+                # has no scrollback, so the boundary has to be audible.
+                "--sentence-silence",
+                str(config.SENTENCE_SILENCE_S if pause is None else pause),
             ],
             input=text,
             capture_output=True,
@@ -182,7 +209,7 @@ def _synth_none(text: str) -> Tuple[bytes, int]:
 
 def synthesize(
     text: str, backend: str | None = None, voice: Optional[str] = None,
-    rate: Optional[float] = None,
+    rate: Optional[float] = None, pause: Optional[float] = None,
 ) -> Tuple[bytes, int]:
     """Return `(padded mono 16-bit PCM, sample_rate)`. Raises TTSError on failure.
 
@@ -197,12 +224,12 @@ def synthesize(
     if backend == "sapi":
         pcm, sr = _synth_sapi(text)
     elif backend == "piper":
-        pcm, sr = _synth_piper(text, resolve_voice(voice), rate=rate)
+        pcm, sr = _synth_piper(text, resolve_voice(voice), rate=rate, pause=pause)
     elif backend == "none":
         pcm, sr = _synth_none(text)
     else:
         raise TTSError(f"unknown TTS backend: {backend!r} (sapi|piper|none)")
-    return pad(pcm, sr), sr
+    return pad(normalize(pcm), sr), sr
 
 
 def write_wav(path: str, pcm: bytes, sample_rate: int) -> str:

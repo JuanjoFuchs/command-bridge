@@ -51,6 +51,9 @@ class TunnelState:
         self.agent_state: str = "idle"
         self.cues_enabled: bool = config.cues_enabled()
         self.speech_rate: float = config.PIPER_LENGTH_SCALE
+        self.sentence_pause: float = config.SENTENCE_SILENCE_S
+        """Live too, for the same reason as speed: this is a pacing preference tuned by ear, and
+        restarting the conversation to hear a different value is absurd."""
         """Live speech rate. Held in server state, not read from env per call, so "talk faster"
         can be honoured mid-conversation instead of requiring a restart."""
         self.embedder = voiceprint.Embedder()
@@ -102,6 +105,7 @@ class TunnelState:
             "wake_phrases": list(self.wake.phrases),
             "tts_backend": tts.available(),
             "speech_speed": round(1.0 / self.speech_rate, 2),
+            "sentence_pause": self.sentence_pause,
             "asr_model": self.recognizer.model_name,
             "log": store.log_path(self.session),
             "capture_wav": os.path.join(config.session_dir(), f"{self.session}.wav"),
@@ -229,7 +233,10 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
     await _set_agent_state(state, "synthesizing")
     try:
         pcm, rate = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: tts.synthesize(text, voice=voice, rate=state.speech_rate)
+            None,
+            lambda: tts.synthesize(
+                text, voice=voice, rate=state.speech_rate, pause=state.sentence_pause
+            ),
         )
     except tts.TTSError as exc:
         state.last_error = str(exc)
@@ -357,8 +364,15 @@ async def handle_rate(request: web.Request) -> web.Response:
         )
     previous = round(1.0 / state.speech_rate, 2)
     state.speech_rate = 1.0 / value
+    pause = (body or {}).get("pause")
+    if pause is not None:
+        try:
+            state.sentence_pause = max(0.0, min(1.5, float(pause)))
+        except (TypeError, ValueError):
+            pass
     return web.json_response(
-        {"speed": value, "previous": previous, "length_scale": round(state.speech_rate, 3)}
+        {"speed": value, "previous": previous, "length_scale": round(state.speech_rate, 3),
+         "sentence_pause": state.sentence_pause}
     )
 
 

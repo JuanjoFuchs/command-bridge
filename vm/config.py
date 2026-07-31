@@ -152,6 +152,28 @@ essentially every session is Bluetooth."""
 CHIME_TRAILING_SILENCE_S = 0.2
 """Pad the tail for the same reason — without it the sink cuts the final syllable."""
 
+SENTENCE_SILENCE_S = 0.5
+"""Silence Piper inserts between sentences.
+
+Piper defaults to a value that runs sentences together, which is fine for one remark and bad for
+a list. JJ, live from the phone 2026-07-31: "you read this list back to back and it was hard to
+understand." Speech has no scrollback — the listener cannot re-read item two while item three is
+arriving, so the pause IS the punctuation.
+
+0.28 s, not longer. A phone's output AGC ramps its gain during a gap of true digital silence and
+amplifies the noise floor — JJ, live from the phone: "that whatever thing you added started
+sounding like very loud white noise instead of silence." Measured: the WAV's gaps really are
+silent (0.00001 RMS), so the hiss is the DEVICE chasing the silence, not the file. A shorter gap
+still marks the boundary without giving the gain time to climb."""
+
+PEAK_CEILING = 0.89
+"""Synthesized audio is scaled to this peak before it is sent.
+
+Piper output measured at peak 1.000 — clipped. Clipping generates broadband harmonics, which is
+exactly what "white noise" sounds like, and speeding the voice up makes it worse by packing more
+transients per second. Leaving ~1 dB of headroom costs nothing audible and removes a whole class
+of distortion that is easy to misdiagnose as a bad model or a bad connection."""
+
 PIPER_LENGTH_SCALE = 0.85
 """Speech rate for Piper. Lower is faster; 1.0 is the model's native pace.
 
