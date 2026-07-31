@@ -83,7 +83,20 @@ def build_fake_mic(path: str) -> str:
     # The tail is also load-bearing: Chrome LOOPS this file, so without a gap longer than
     # END_OF_UTTERANCE_MS the speech runs back-to-back forever and no utterance ever closes.
     gap_s = (config.END_OF_UTTERANCE_MS / 1000.0) + 1.5
-    head = b"\x00\x00" * int(48000 * 0.3)
+
+    # And so is the head, for a reason nobody had written down. The buffer source starts the
+    # instant getUserMedia resolves, but frames only reach the server once the WebSocket is open
+    # and the audio processor is running. Everything that plays in between is lost — and since
+    # the file LOOPS, "lost" means the first utterance the segmenter sees starts partway in.
+    #
+    # At 0.3 s that margin held on an idle machine and collapsed on a busy one: with a second
+    # browser-driven suite running alongside this, four consecutive runs logged
+    # "What is the status of the deploy?" — the wake phrase eaten by startup, AC-5 failing on a
+    # capture race rather than on anything it tests. 3 s is ~3x the worst startup measured here
+    # and costs 3 s of wall clock, which is the cheapest possible fix for a check that otherwise
+    # fails for a reason unrelated to what it asserts.
+    head_s = 3.0
+    head = b"\x00\x00" * int(48000 * head_s)
     tail = b"\x00\x00" * int(48000 * gap_s)
     tts.write_wav(path, head + body + tail, 48000)
     return path

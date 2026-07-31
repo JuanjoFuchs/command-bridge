@@ -24,7 +24,11 @@ vm serve  ── the dumb half ────────────────�
 python -m venv venv
 venv/Scripts/python -m pip install -r requirements.txt
 
-venv/Scripts/python -m vm.cli serve --session dev
+# Put the shims on PATH once, and `vm` works from any directory with no venv activation.
+#   PowerShell:  [Environment]::SetEnvironmentVariable('Path', "$env:Path;$PWD\bin", 'User')
+#   bash:        export PATH="$PATH:$PWD/bin"
+vm doctor            # anything missing? every failing check names the command that fixes it
+vm serve --session dev
 # -> http://127.0.0.1:8765/?token=<generated>
 ```
 
@@ -38,6 +42,25 @@ vm say    --session dev "All green."    # speaks back
 vm status --session dev
 vm describe                             # the live contract — read this first
 ```
+
+`bin/vm` and `bin/vm.cmd` resolve the repo root and the venv themselves, from any cwd, under Git
+Bash and PowerShell alike. If `vm` is not on PATH, call the shim by absolute path — never reach
+for `python -c "import sys; sys.path.insert(...)"`.
+
+## Settings
+
+Anything you would otherwise re-export on every call lives in a gitignored `.env` at the repo
+root, loaded automatically by every command:
+
+```bash
+vm config set VM_TTS piper       # persist it once
+vm config show                   # every setting, its live value, and where it came from
+```
+
+Precedence is **process env > `.env` > built-in default**, so a one-off override is still just a
+prefix: `VM_TTS=none vm say --session dev "hi"`. Piper's binary and voice are discovered from the
+checkout (`venv/Scripts/piper.exe`, `models/en_GB-alan-medium.onnx`), so `VM_TTS=piper` is
+usually the only setting a piper session needs. `.env.example` documents every variable.
 
 ## Putting it on your phone
 
@@ -60,7 +83,7 @@ Screen Wake Lock so the screen stays on without installing anything.
 ## Verifying it
 
 ```bash
-venv/Scripts/python -m pytest tests/ -q     # 66 unit tests, no mic and no model
+venv/Scripts/python -m pytest tests/ -q     # unit tests, no mic and no model
 venv/Scripts/python scripts/e2e.py          # 29 checks through a real browser
 ```
 
@@ -83,5 +106,7 @@ real microphone is the one thing still needing a human.
 | `ai-docs/reference/` | security model, turn-log contract, browser constraints |
 | `scripts/e2e.py` | the acceptance gate |
 | `scripts/probe_capture.py` | diagnostic for "is the browser sending silence?" |
+| `bin/` | PATH shims — `vm` (bash), `vm.cmd` (PowerShell/cmd), both exec `vm-run.py` |
+| `.env.example` | every setting, with its default and the reason for it |
 
 Start at `AGENTS.md` if you are an agent, `PROJECT_UNDERSTANDING.md` if you are a person.

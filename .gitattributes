@@ -1,0 +1,21 @@
+# Line endings are part of the invocation contract here, not a formatting preference.
+#
+# This repo is developed on Windows, where `core.autocrlf=true` is the common default. Without
+# the rules below, a fresh clone gets CRLF in every text file -- and two of them stop working:
+#
+#   bin/vm      a bash script. `#!/usr/bin/env bash\r` makes the kernel look for an interpreter
+#               literally named "bash\r", and the shim dies with "bad interpreter: no such file
+#               or directory" on a machine where nothing is actually missing.
+#   bin/vm.cmd  cmd.exe parses a batch file by byte offset and wants CRLF. It is also why that
+#               file must stay pure ASCII -- see the comment at its top.
+#
+# Pinning both directions means the shims work the same on a clone as they do here, which is the
+# only thing that makes `vm <command>` a reliable instruction to give an agent.
+
+* text=auto
+
+bin/vm      text eol=lf
+*.sh        text eol=lf
+
+*.cmd       text eol=crlf
+*.bat       text eol=crlf

@@ -20,6 +20,49 @@ from . import __version__, config, store
 
 RUNTIME_SUFFIX = ".server.json"
 
+# ------------------------------------------------------------------ exit codes
+#
+# An agent branches on the exit code before it parses anything, so the codes have to mean
+# different things. The split that matters here is "the operation failed" vs "nothing is
+# listening" — the first calls for a different request, the second calls for `vm serve`, and
+# collapsing them into 1 (as this did) meant the only way to tell was string-matching the error.
+
+EXIT_OK = 0
+EXIT_ERROR = 1        # the command ran; the operation failed. Payload carries .error/.remedy.
+EXIT_USAGE = 2        # bad arguments or rejected input — argparse already exits 2, so match it.
+EXIT_NO_SERVER = 3    # nothing is serving this session: run `vm serve`, then retry.
+
+EXIT_CODES = {
+    "0": "ok",
+    "1": "the command ran and the operation failed — see .error and .remedy in the payload",
+    "2": "bad arguments or rejected input (argparse usage errors land here too)",
+    "3": "no server is running for that session — start `vm serve --session <s>` and retry",
+}
+
+ERROR_SHAPE = {
+    "error": "str — what went wrong, in one sentence",
+    "code": "str — stable slug to branch on: no_server | server_unreachable | invalid_input",
+    "remedy": "str — the command that fixes it. Present whenever one exists.",
+}
+
+INVOCATION = {
+    "run_it": "vm <command>            # bin/vm (bash) and bin/vm.cmd (PowerShell/cmd)",
+    "no_env_vars_needed": (
+        "Settings persist in a gitignored .env at the repo root and are loaded by every command. "
+        "`vm config set VM_TTS piper` once, not four exports per call. Process environment "
+        "variables still win over the file, so a one-off override is still one prefix."
+    ),
+    "no_python_dash_c": (
+        "Never invoke this as `python -c \"import sys; sys.path.insert(...)\"`. The shim resolves "
+        "the repo root and the venv for you, from any cwd, under Git Bash and PowerShell alike."
+    ),
+    "if_vm_is_not_found": (
+        "Put <repo>/bin on PATH, or call the shim by absolute path: "
+        "<repo>/bin/vm (bash) or <repo>\\bin\\vm.cmd (PowerShell). `vm doctor` checks this."
+    ),
+    "first_call": "vm doctor   # is anything missing, and what is the command that fixes it",
+}
+
 DESCRIBE: Dict[str, Any] = {
     "tool": "voice-mode",
     "version": __version__,
@@ -47,8 +90,31 @@ DESCRIBE: Dict[str, Any] = {
         "vm say --session <s> 'reply'      # speak back (held if they are mid-sentence)",
         "vm watch --session <s> --since <cursor>   # ALWAYS resume from the returned cursor",
     ],
+    "invocation": INVOCATION,
     "commands": {
         "describe": {"args": [], "returns": "this document"},
+        "doctor": {
+            "args": [],
+            "returns": {"ok": "bool", "checks": "[{name, ok, detail, remedy}]",
+                        "failed": "[name, ...]"},
+            "notes": "Preflight. Every failing check carries the command that fixes it. "
+                     "Run this FIRST when anything behaves oddly — it is cheaper than reading "
+                     "code and it exits 1 when something is actually wrong.",
+        },
+        "config": {
+            "args": {
+                "show": "every setting with its live value and whether it came from "
+                        "env / file / default (secrets redacted)",
+                "get <KEY>": "one setting's value and source (NOT redacted — an explicit ask)",
+                "set <KEY> <VALUE>": "persist it to the .env file",
+                "unset <KEY>": "remove it from the .env file",
+                "path": "where the settings file is",
+            },
+            "returns": "varies by subcommand; always JSON",
+            "notes": "This is why you do not need env vars on every call. Precedence is "
+                     "process env > .env file > built-in default, so an export still overrides "
+                     "for one invocation. `set` writes only VM_* keys.",
+        },
         "serve": {
             "args": {
                 "--session": "session id (default: dev)",
@@ -92,6 +158,19 @@ DESCRIBE: Dict[str, Any] = {
                      "state by hand, e.g. back to 'idle' if you decide not to reply.",
         },
         "voices": {"args": [], "returns": "installed piper voices for `say --voice`"},
+        # Was registered in the parser but missing from this block until a test started
+        # asserting the two agree — the exact silent drift AGENTS.md convention 3 warns about.
+        "cue": {
+            "args": {
+                "--session": "session id",
+                "name": "positional: heard (rising — your turn arrived) | thinking (flat, mid) "
+                        "| tool (low tick — running something) | speaking (falling — about to "
+                        "talk, so stop if you were not finished)",
+            },
+            "returns": {"queued": "bool"},
+            "notes": "A short non-speech tone, so a pause is legible without looking at the "
+                     "page. Cheaper and faster than speaking 'let me think about that'.",
+        },
         "voiceprint": {
             "args": {"--forget": "NAME to delete"},
             "returns": {"known": "[{name, count, updated}]", "threshold": "float"},
@@ -111,16 +190,21 @@ DESCRIBE: Dict[str, Any] = {
         "final": "bool",
         "wall": "ISO-8601 local timestamp",
     },
-    "env": {
-        "VM_TOKEN": "shared secret for the WS handshake",
-        "VM_ALLOW_CIDRS": "extra CIDRs allowed (add 100.64.0.0/10 for Tailscale)",
-        "VM_TRUSTED_PROXIES": "leave empty unless a real proxy fronts this",
-        "VM_DIR": "where turn logs live",
-        "VM_TTS": "sapi | piper | none",
-        "VM_WHISPER_MODEL": "whisper fallback model (default base.en; parakeet is preferred)",
-        "VM_ASR": "parakeet | whisper (auto-selects parakeet when its model is present)",
-        "VM_OWNER": "name the voiceprint gallery learns under (default: me)",
+    "exit_codes": EXIT_CODES,
+    "errors": ERROR_SHAPE,
+    "config_file": {
+        "path": "<repo>/.env — gitignored, loaded automatically by every command",
+        "precedence": "process env > .env file > built-in default",
+        "write_it_with": "vm config set VM_TTS piper",
+        "read_it_with": "vm config show",
+        "why": "So an agent never has to re-type VM_TTS/VM_PIPER_BIN/VM_PIPER_VOICE/VM_DIR on "
+               "each invocation. A setting repeated on every call is a setting that will "
+               "eventually be repeated wrong.",
     },
+    # Generated from vm.config.SETTINGS, never hand-listed: the previous hand-written block
+    # documented 8 of the 17 variables the code reads, and the ones it omitted (VM_PIPER_BIN,
+    # VM_PIPER_VOICE) were exactly the ones an agent could not run piper without.
+    "env": {s["key"]: s["what"] for s in config.SETTINGS},
 }
 
 
@@ -157,10 +241,27 @@ def read_runtime(session: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _serve_remedy(session: str) -> str:
+    """The command that fixes 'nothing is listening'. Spelled out, because the fix is two steps
+    (start it detached, then go straight back into `watch`) and an agent that only gets told
+    'no server' reliably starts one and then forgets the second half."""
+    return (
+        f"start it detached: `vm serve --session {session}` — then IMMEDIATELY "
+        f"`vm watch --session {session} --since -1`"
+    )
+
+
 def _request(session: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     rt = read_runtime(session)
     if not rt:
-        return {"running": False, "error": f"no server registered for session {session!r}"}
+        # `error` keeps its exact original wording — callers may already match on it. `code` and
+        # `remedy` are additive, and are what a new caller should branch on instead.
+        return {
+            "running": False,
+            "error": f"no server registered for session {session!r}",
+            "code": "no_server",
+            "remedy": _serve_remedy(session),
+        }
     url = f"http://{rt['host']}:{rt['port']}{path}?token={urllib.parse.quote(rt['token'])}"
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
@@ -175,7 +276,17 @@ def _request(session: str, path: str, payload: Optional[Dict[str, Any]] = None) 
         except Exception:
             return {"error": f"HTTP {exc.code}", "status": exc.code}
     except OSError as exc:
-        return {"running": False, "error": f"cannot reach server: {exc}"}
+        # A runtime file exists but nothing answers: the server died and left its note behind.
+        # Distinct code from `no_server` because the remedy is the same but the diagnosis is not.
+        return {
+            "running": False,
+            "error": f"cannot reach server: {exc}",
+            "code": "server_unreachable",
+            "remedy": (
+                f"the runtime file at {runtime_path(session)} points at a server that is gone; "
+                + _serve_remedy(session)
+            ),
+        }
 
 
 # -------------------------------------------------------------------- commands
@@ -281,6 +392,164 @@ def cmd_status(args) -> Dict[str, Any]:
     return _request(args.session, "/status")
 
 
+def cmd_config(args) -> Dict[str, Any]:
+    """Read and write the persisted settings file.
+
+    Argument-shaped (`config set VM_TTS piper`), not payload-shaped (`config set --json {...}`),
+    and deliberately so. Mastykarz's measurements are unambiguous: a constrained argument surface
+    scored 5/5 for every model tested while a JSON payload degraded on the smaller ones and cost
+    4-11x the tokens, because JSON asks the caller to author syntax, nesting, field names and
+    shell escaping on top of the actual decision. There is nothing nested here to justify that.
+    """
+    path = config.env_file_path()
+
+    if args.config_cmd == "path":
+        return {"file": path, "exists": os.path.exists(path)}
+
+    if args.config_cmd == "show":
+        report = config.load_report()
+        return {
+            "file": path,
+            "exists": os.path.exists(path),
+            "precedence": "process env > file > default",
+            "settings": config.effective(),
+            "shadowed_by_env": report.get("shadowed", []),
+            "ignored_lines": report.get("ignored", []),
+            "note": f"secrets show as {config.REDACTED!r}; `vm config get <KEY>` returns the value",
+        }
+
+    if args.config_cmd == "get":
+        for row in config.effective(reveal=True):
+            if row["key"] == args.key:
+                return row
+        return {
+            "error": f"unknown setting {args.key!r}",
+            "code": "invalid_input",
+            "remedy": "run `vm config show` for the settings this tool knows about",
+        }
+
+    if args.config_cmd == "set":
+        result = config.write_setting(args.key, args.value)
+        # An agent that sets a value and then sees the old one behave has hit exactly one thing:
+        # a process env var shadowing the file. Say it at write time, not after the confusion.
+        shadowed = args.key in os.environ and os.environ[args.key] != args.value
+        result["shadowed_by_env"] = shadowed
+        if shadowed:
+            result["note"] = (
+                f"{args.key} is also set in this process environment ({os.environ[args.key]!r}), "
+                f"which wins over the file — the new value applies to future processes that do "
+                f"not export it"
+            )
+        return result
+
+    if args.config_cmd == "unset":
+        return config.write_setting(args.key, None)
+
+    raise ValueError(f"unknown config subcommand {args.config_cmd!r}")
+
+
+def _check(name: str, ok: bool, detail: str, remedy: str = "") -> Dict[str, Any]:
+    return {"name": name, "ok": ok, "detail": detail, "remedy": (remedy if not ok else None)}
+
+
+def cmd_doctor(_args) -> Dict[str, Any]:
+    """Say what is broken AND the command that fixes it.
+
+    This is the one place both articles agree without qualification: an agent cannot infer a
+    remedy from a stack trace, so the tool has to carry it. Every check below exists because
+    something in it has actually cost a session — the venv not being used, piper missing its
+    voice, the shim not being on PATH.
+    """
+    import shutil as _shutil
+
+    checks = [
+        _check(
+            "interpreter",
+            os.path.abspath(sys.prefix).startswith(os.path.abspath(config.ROOT)),
+            f"running {sys.executable}",
+            f"use the shim so the repo venv is picked automatically: {config.ROOT}/bin/vm — "
+            f"a bare `python` has none of the dependencies",
+        )
+    ]
+
+    missing = []
+    for mod in ("aiohttp", "numpy"):
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(mod)
+    checks.append(_check(
+        "dependencies", not missing,
+        "installed" if not missing else f"missing: {', '.join(missing)}",
+        f"{config.ROOT}/venv/Scripts/python -m pip install -r {config.ROOT}/requirements.txt",
+    ))
+
+    report = config.load_report()
+    env_path = config.env_file_path()
+    checks.append(_check(
+        "settings_file", True,
+        (f"{env_path} — {len(report.get('applied', []))} applied, "
+         f"{len(report.get('shadowed', []))} shadowed by the environment")
+        if os.path.exists(env_path) else f"{env_path} does not exist (defaults are in use)",
+    ))
+
+    sessions = config.session_dir()
+    try:
+        os.makedirs(sessions, exist_ok=True)
+        probe = os.path.join(sessions, ".vm-write-probe")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("")
+        os.unlink(probe)
+        writable = True
+    except OSError as exc:
+        writable, sessions = False, f"{sessions} ({exc})"
+    checks.append(_check(
+        "session_dir", writable, str(sessions),
+        "point VM_DIR somewhere writable: `vm config set VM_DIR <path>`",
+    ))
+
+    backend = config.tts_backend()
+    if backend == "piper":
+        binary, voice = config.piper_bin(), config.piper_voice()
+        checks.append(_check(
+            "tts", bool(binary) and bool(voice),
+            f"piper bin={binary or '(not found)'} voice={voice or '(not chosen)'}",
+            "install piper into the venv (`pip install piper-tts`) or "
+            "`vm config set VM_PIPER_BIN <path>`; pick a voice with "
+            "`vm config set VM_PIPER_VOICE <path>` (see `vm voices`)",
+        ))
+    elif backend == "sapi":
+        checks.append(_check(
+            "tts", os.name == "nt", "sapi (Windows System.Speech)",
+            "sapi is Windows-only: `vm config set VM_TTS piper` or `vm config set VM_TTS none`",
+        ))
+    else:
+        checks.append(_check("tts", backend == "none", f"backend={backend}",
+                             "VM_TTS must be sapi | piper | none"))
+
+    engine = config.asr_engine()
+    asr_ok = engine == "whisper" or bool(config.parakeet_dir())
+    checks.append(_check(
+        "asr", asr_ok,
+        f"{engine}" + (f" at {config.parakeet_dir()}" if engine == "parakeet" else
+                       f" model={config.whisper_model()}"),
+        "VM_ASR=parakeet but no model directory was found — `vm config set VM_ASR whisper` "
+        "or point VM_PARAKEET_DIR at a sherpa-onnx Parakeet model",
+    ))
+
+    on_path = _shutil.which("vm")
+    checks.append(_check(
+        "shim_on_path", bool(on_path), on_path or "`vm` is not on PATH",
+        f"add {os.path.join(config.ROOT, 'bin')} to PATH (PowerShell, once: "
+        f"[Environment]::SetEnvironmentVariable('Path', "
+        f"$env:Path + ';{os.path.join(config.ROOT, 'bin')}', 'User')), "
+        f"or call {config.ROOT}/bin/vm by absolute path",
+    ))
+
+    failed = [c["name"] for c in checks if not c["ok"]]
+    return {"ok": not failed, "checks": checks, "failed": failed}
+
+
 def cmd_turns(args) -> Dict[str, Any]:
     turns = store.read_turns(args.session)
     if args.limit:
@@ -289,11 +558,31 @@ def cmd_turns(args) -> Dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="vm", description=DESCRIBE["summary"])
+    p = argparse.ArgumentParser(
+        prog="vm",
+        description=DESCRIBE["summary"],
+        # `--help` is for people; an agent should be reading `describe`, which is machine-readable
+        # and cannot drift from the code. Point at it here so the human surface routes correctly.
+        epilog="`vm describe` is the machine-readable contract. `vm doctor` says what is broken "
+               "and how to fix it. `vm config show` says where each setting came from.",
+    )
     p.add_argument("--human", action="store_true", help="pretty output for people")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("describe", help="the live contract (read this first)")
+    sub.add_parser("doctor", help="preflight: what is missing, and the command that fixes it")
+
+    cf = sub.add_parser("config", help="persisted settings, so env vars are not per-call")
+    cfs = cf.add_subparsers(dest="config_cmd", required=True)
+    cfs.add_parser("show", help="every setting, its value, and where it came from")
+    cfs.add_parser("path", help="where the settings file is")
+    cg = cfs.add_parser("get", help="one setting's value and source")
+    cg.add_argument("key")
+    cst = cfs.add_parser("set", help="persist a setting to the .env file")
+    cst.add_argument("key")
+    cst.add_argument("value")
+    cun = cfs.add_parser("unset", help="remove a setting from the .env file")
+    cun.add_argument("key")
 
     s = sub.add_parser("serve", help="start the tunnel")
     s.add_argument("--session", default="dev")
@@ -354,9 +643,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # FIRST, before anything reads a setting. This is what makes `vm watch --session x --since -1`
+    # a complete command: VM_TTS / VM_PIPER_BIN / VM_PIPER_VOICE / VM_DIR come off disk instead of
+    # off the caller's memory. Never overwrites a variable already exported, so a one-off override
+    # is still just a prefix — which is exactly what scripts/e2e.py relies on.
+    config.load_env_file()
+
     args = build_parser().parse_args(argv)
     handlers = {
         "describe": cmd_describe,
+        "doctor": cmd_doctor,
+        "config": cmd_config,
         "serve": cmd_serve,
         "watch": cmd_watch,
         "say": cmd_say,
@@ -370,12 +667,27 @@ def main(argv=None) -> int:
     try:
         result = handlers[args.cmd](args)
     except ValueError as exc:  # validation failures are user errors, not crashes
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 2
+        # The message already carries the remedy — validate_setting and friends are written to
+        # end in the command that fixes them, so the error is actionable without a second call.
+        print(
+            json.dumps({"error": str(exc), "code": "invalid_input"}),
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     if result is None:
-        return 0
+        return EXIT_OK
     print(json.dumps(result, indent=2 if args.human else None, ensure_ascii=False))
-    return 1 if isinstance(result, dict) and result.get("error") else 0
+    if not isinstance(result, dict):
+        return EXIT_OK
+    if result.get("running") is False:
+        # Distinct from a generic failure: the caller should start a server, not rephrase the
+        # request. Branching on an exit code beats string-matching an error message.
+        return EXIT_NO_SERVER
+    if result.get("error"):
+        return EXIT_ERROR
+    if args.cmd == "doctor" and not result.get("ok"):
+        return EXIT_ERROR
+    return EXIT_OK
 
 
 if __name__ == "__main__":
