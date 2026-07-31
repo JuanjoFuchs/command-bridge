@@ -63,6 +63,10 @@
   #state { font-size:.88rem; color:var(--dim); min-height:1.4em; text-align:center;
            letter-spacing:.01em; }
   #state.err { color:var(--err); }
+  #mic { max-width:min(100%,420px); padding:.45rem .6rem; border-radius:10px;
+         background:var(--card); color:var(--fg); font-size:.8rem;
+         border:1px solid var(--edge); cursor:pointer; }
+  #mic:focus-visible { outline:2px solid var(--ok); outline-offset:2px; }
   /* The read boundary, sitting in the log where claude has consumed to. */
   .divider {
     display:flex; align-items:center; gap:.6rem; margin:.1rem .9rem;
@@ -100,6 +104,7 @@
   <h1>voice&#8209;mode</h1>
   <div id="orbwrap"><div id="ring"></div><button id="orb">Tap to start</button></div>
   <div id="state">idle</div>
+  <select id="mic" hidden aria-label="Microphone"></select>
   <div id="log" role="log" aria-live="polite"></div>
 
 <script>
@@ -108,6 +113,7 @@
   const $orb = document.getElementById("orb");
   const $state = document.getElementById("state");
   const $log = document.getElementById("log");
+  const $mic = document.getElementById("mic");
 
   const token = new URLSearchParams(location.search).get("token") || "";
   let ws = null, ctx = null, micStream = null, node = null, source = null;
@@ -222,6 +228,10 @@
       // changing the machine's default recording device, and useful on its own when the
       // default is the wrong mic. Labels are only populated once permission is granted, so
       // this takes two getUserMedia calls on the first run.
+      const remembered = localStorage.getItem("vm.micId");
+      if (remembered && !q.get("device")) {
+        constraints.deviceId = { exact: remembered };
+      }
       const want = q.get("device");
       if (want) {
         try {
@@ -240,9 +250,21 @@
       }
 
       diag.constraints = constraints;
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+      } catch (err) {
+        // A remembered microphone can be unplugged between sessions. Falling back to the
+        // default beats refusing to start and looking broken.
+        if (constraints.deviceId) {
+          diag.errors.push("preferred mic unavailable, using default");
+          delete constraints.deviceId;
+          localStorage.removeItem("vm.micId");
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        } else { throw err; }
+      }
       diag.settings = micStream.getAudioTracks()[0].getSettings();
       diag.deviceLabel = micStream.getAudioTracks()[0].label;
+      await populateMics();
     } catch (e) {
       // On a LAN IP navigator.mediaDevices is undefined and this is a TypeError. That is not
       // a bug to fix here — it is the secure-context rule. See ai-docs/reference/browser.md.
@@ -473,6 +495,39 @@
       }
     }
   }
+
+  // --- microphone picker ----------------------------------------------------
+  // Labels are empty until permission is granted, so the list can only be built after the
+  // first successful getUserMedia. The choice persists, because the default input on this
+  // machine is not the one you want to talk into and re-picking it every session is friction.
+  async function populateMics() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = (await navigator.mediaDevices.enumerateDevices())
+        .filter((d) => d.kind === "audioinput");
+      if (!devices.length) return;
+      const current = diag.settings?.deviceId;
+      $mic.innerHTML = "";
+      for (const d of devices) {
+        const o = document.createElement("option");
+        o.value = d.deviceId;
+        o.textContent = d.label || "microphone";
+        if (d.deviceId === current) o.selected = true;
+        $mic.appendChild(o);
+      }
+      $mic.hidden = false;
+    } catch (e) { diag.errors.push("enumerate: " + e.message); }
+  }
+
+  $mic.addEventListener("change", async () => {
+    localStorage.setItem("vm.micId", $mic.value);
+    // Full stop/start rather than surgery on a live audio graph: swapping the source node
+    // mid-stream is where subtle capture bugs breed, and the turn log lives on the server so
+    // a reconnect costs nothing.
+    setState("switching microphone…");
+    await stop();
+    await start();
+  });
 
   $orb.addEventListener("click", start);
   if (!token) setState("no token in URL — append ?token=…", "err");
