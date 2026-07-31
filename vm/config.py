@@ -176,6 +176,12 @@ def session_dir() -> str:
     )
 
 
+def cues_enabled() -> bool:
+    """Audio cues on by default. They exist so a pause is legible without looking at the page —
+    disable with VM_CUES=0 if they ever become noise rather than information."""
+    return (_env("VM_CUES", "1") or "1") not in ("0", "false", "no", "off")
+
+
 def owner_name() -> str:
     """Whose voice this tunnel belongs to. One operator, so a constant is enough — but it is a
     name rather than a boolean so a gallery can hold other speakers later (to *exclude* them)."""

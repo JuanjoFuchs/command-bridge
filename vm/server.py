@@ -24,7 +24,7 @@ import numpy as np
 from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
-from . import config, security, store, tts, voiceprint
+from . import config, cues, security, store, tts, voiceprint
 from .wake import WakeGate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
@@ -49,6 +49,7 @@ class TunnelState:
         self.client_sr: int = config.TARGET_SR
         self.consumed_cursor: int = -1
         self.agent_state: str = "idle"
+        self.cues_enabled: bool = config.cues_enabled()
         self.embedder = voiceprint.Embedder()
         self.voice_samples: int = 0
         self.partial_busy: bool = False
@@ -259,6 +260,7 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
         if not state.buffer.speech_active:
             break
     await _set_agent_state(state, "speaking")
+    await _push_cue(state, "speaking")
 
     # Header first so the client knows how to interpret the bytes that follow.
     await _broadcast_json(
@@ -283,6 +285,44 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
         "seconds": round(len(pcm) / 2 / rate, 2),
         "held_for": round(waited, 1),
     }
+
+
+async def _push_cue(state: TunnelState, name: str) -> None:
+    """Send a cue to the client. Silently no-ops on an unknown name — a missing sound must never
+    be able to break a conversation."""
+    if not state.cues_enabled or not state.clients:
+        return
+    try:
+        pcm, rate = cues.render(name)
+    except KeyError:
+        return
+    await _broadcast_json(
+        state, {"type": "audio_header", "id": f"cue-{name}", "sample_rate": rate,
+                "bytes": len(pcm), "text": "", "cue": name}
+    )
+    for ws in list(state.clients):
+        try:
+            await ws.send_bytes(pcm)
+        except Exception:
+            state.clients.discard(ws)
+
+
+async def handle_cue(request: web.Request) -> web.Response:
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    name = str((body or {}).get("name") or "")
+    if name not in cues.CUES:
+        return web.json_response(
+            {"error": f"unknown cue {name!r}", "available": cues.names()}, status=400
+        )
+    await _push_cue(state, name)
+    return web.json_response({"played": name})
 
 
 async def handle_consumed(request: web.Request) -> web.Response:
@@ -311,6 +351,8 @@ async def handle_consumed(request: web.Request) -> web.Response:
         {"type": "consumed", "cursor": cursor, "pending": max(0, state.turns_logged - 1 - cursor)},
     )
     await _set_agent_state(state, agent_state)
+    if agent_state == "thinking":
+        await _push_cue(state, "thinking")
     return web.json_response({"consumed": cursor, "state": agent_state})
 
 
@@ -437,6 +479,7 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # ASR is CPU-bound; keep it off the event loop or audio ingest stalls.
     text = await loop.run_in_executor(None, state.recognizer.transcribe, samples)
     if not text:
+        # No cue here: nothing was heard, and a sound would announce a turn that does not exist.
         await _set_agent_state(state, "idle")
         return  # silence or a hallucination artifact — never a turn (AC-1)
 
@@ -484,6 +527,7 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
             "pending": max(0, state.turns_logged - 1 - state.consumed_cursor),
         },
     )
+    await _push_cue(state, "heard")
     await _set_agent_state(state, "idle")
 
 
@@ -497,6 +541,7 @@ def build_app(session: str, token: Optional[str], gate_enabled: bool = True) -> 
             web.get("/status", handle_status),
             web.post("/say", handle_say),
             web.post("/consumed", handle_consumed),
+            web.post("/cue", handle_cue),
             web.get("/ws", handle_ws),
         ]
     )

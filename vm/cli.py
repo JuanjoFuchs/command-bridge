@@ -217,6 +217,10 @@ def cmd_consumed(args) -> Dict[str, Any]:
     )
 
 
+def cmd_cue(args) -> Dict[str, Any]:
+    return _request(args.session, "/cue", {"name": args.name})
+
+
 def cmd_voiceprint(args) -> Dict[str, Any]:
     from . import voiceprint
 
@@ -299,6 +303,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("voices", help="list installed piper voices")
 
+    cu = sub.add_parser("cue", help="play a short non-speech cue (heard|thinking|speaking)")
+    cu.add_argument("--session", default="dev")
+    cu.add_argument("name")
+
     vpp = sub.add_parser(
         "voiceprint", help="who the tunnel has learned to recognise by voice"
     )
@@ -340,6 +348,7 @@ def main(argv=None) -> int:
         "voices": cmd_voices,
         "consumed": cmd_consumed,
         "voiceprint": cmd_voiceprint,
+        "cue": cmd_cue,
     }
     try:
         result = handlers[args.cmd](args)

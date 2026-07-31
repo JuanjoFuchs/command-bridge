@@ -126,7 +126,7 @@
   // that the UI actually SHOWED a stage rather than merely that the server sent it.
   const diag = window.__vm = {
     connected:false, framesSent:0, peakRms:0, liveLevel:0,
-    turns:[], played:[], states:[], partials:[], errors:[]
+    turns:[], played:[], cues:[], states:[], partials:[], errors:[]
   };
 
   const setState = (t, cls) => { $state.textContent = t; $state.className = cls || ""; };
@@ -476,16 +476,23 @@
       audio.getChannelData(0).set(f32);
       const src = ctx.createBufferSource();
       src.buffer = audio; src.connect(ctx.destination);
-      $orb.classList.add("speaking");
-      $orb.textContent = "Speaking";
-      setState("");
-      addRow("claude", header.text || "", "claude");
+      // A cue is punctuation, not an utterance: no transcript row, no "Speaking" state, and
+      // tracked separately so it never masquerades as a spoken reply.
+      const isCue = Boolean(header.cue);
+      if (!isCue) {
+        $orb.classList.add("speaking");
+        $orb.textContent = "Speaking";
+        setState("");
+        addRow("claude", header.text || "", "claude");
+      }
       await new Promise((res) => { src.onended = res; src.start(); });
-      $orb.classList.remove("speaking");
-      $orb.textContent = running ? "Listening" : "Tap to start";
-      if (running) setState('say "hey claude…"');
-      diag.played.push(header.id);
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (!isCue) {
+        $orb.classList.remove("speaking");
+        $orb.textContent = running ? "Listening" : "Tap to start";
+        if (running) setState('say "hey claude…"');
+      }
+      (isCue ? diag.cues : diag.played).push(header.id);
+      if (!isCue && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type:"played", id: header.id }));
       }
     } catch (e) {

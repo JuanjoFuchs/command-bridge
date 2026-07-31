@@ -327,6 +327,16 @@ def main() -> int:
             check(stage in states, f"UI displayed the '{stage}' stage",
                   f"saw {sorted(set(states))}")
 
+        # Cues: audible state. Assert they reached the browser AND stayed out of the speech
+        # channel — a cue counted as a spoken reply would silently corrupt the played-clip check.
+        played_cues = page.evaluate("() => window.__vm.cues")
+        check(len(played_cues) > 0, "audio cues played in the browser",
+              f"{len(played_cues)}: {played_cues[:4]}")
+        check(all(not c.startswith("cue-") for c in page.evaluate("() => window.__vm.played")),
+              "cues are not mistaken for spoken replies")
+        rows = page.evaluate("() => [...document.querySelectorAll('.row.claude')].length")
+        check(rows <= 1, "cues add no transcript rows", f"{rows} claude rows for 1 reply")
+
         errors = page.evaluate("() => window.__vm.errors")
         check(not errors, "client reported no errors", json.dumps(errors))
 
