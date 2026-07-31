@@ -172,10 +172,13 @@ def test_leading_silence_is_trimmed_to_a_short_preroll():
             break
     assert out is not None
     samples, t_start, _t_end = out
-    # Fed 2.0s silence + 1.5s speech + ~1.0s end-of-utterance silence = ~4.5s buffered.
-    # After trimming the runway we expect ~preroll + speech + trailing ~= 2.7s.
-    assert samples.size < int(sr * 3.0), "leading silence was not trimmed"
-    assert samples.size > int(sr * 2.0), "trimmed too aggressively — speech was cut"
+    # Derived from config, not hardcoded: END_OF_UTTERANCE_MS is a tunable, and a test that
+    # bakes in its current value fails the moment someone tunes it — which teaches people to
+    # edit tests instead of thinking.
+    trailing = config.END_OF_UTTERANCE_MS / 1000.0
+    expected = b.preroll_samples / sr + 1.5 + trailing
+    assert samples.size < int(sr * (expected + 0.6)), "leading silence was not trimmed"
+    assert samples.size > int(sr * (1.5 - 0.1)), "trimmed too aggressively — speech was cut"
     assert t_start > 1.5, "t_start should move forward with the trim"
 
 

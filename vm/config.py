@@ -9,6 +9,16 @@ from __future__ import annotations
 
 import os
 
+def _int_env(name: str, default: int) -> int:
+    """An int tunable overridable at runtime, so pacing can be tuned by feel in a live session
+    instead of requiring a code edit and a restart of the conversation."""
+    raw = (os.environ.get(name) or "").strip()
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
 # ---------------------------------------------------------------- audio format
 
 TARGET_SR = 16000
@@ -54,10 +64,17 @@ A rolling percentile has no memory of a moment that will never recur. Over 8 sec
 always inter-word gaps even in continuous speech, so the 20th percentile lands on the room rather
 than on the voice — and when the AC switches on, the estimate follows within seconds."""
 
-END_OF_UTTERANCE_MS = 1000
-"""Silence that ends a turn.
+END_OF_UTTERANCE_MS = _int_env("VM_END_OF_UTTERANCE_MS", 1500)
+"""Silence that ends a turn. Override live with VM_END_OF_UTTERANCE_MS.
 
-Briefly lowered to 700 ms to cut latency, then reverted. At 700 ms a single continuous thought
+Raised 1000 -> 1500 after JJ, live 2026-07-31: "whenever I haven't finished speaking, it ends my
+turn and you start processing and you might interrupt me." He thinks in pauses, and a threshold
+tuned for clipped dictation fragments a person who is composing a thought out loud.
+
+The cost is 0.5 s added to every reply. That is the right trade here — being cut off mid-thought
+ruins the exchange, while half a second of extra pause is merely slower. Earlier history:
+
+at 700 ms a single continuous thought
 **fragmented into five separate turns** — JJ, live, 2026-07-29: "...I don't like the voice much.
 Um I like um" / "Voices that have a lower register." / "And do I need to say every time?" —
 because filler-and-pause is normal speech, not the end of a sentence.
@@ -66,9 +83,8 @@ Nothing was lost (every fragment reached the log, which is the cursor contract w
 fragmentation is still a real cost: it hands the agent four partial thoughts to reassemble
 instead of one, and an agent that answers the first fragment answers the wrong question.
 
-Keep it at 1000. The latency that actually mattered was the ASR — Parakeet cut transcription
-from 2.64 s to 0.23 s. This second buys the speaker room to think, and spending it is the right
-trade. VoiceMode independently landed on the same value."""
+The latency that actually mattered was never this — Parakeet cut transcription from 2.64 s to
+0.23 s. This pause buys the speaker room to think, which is what the whole exchange depends on."""
 
 MIN_UTTERANCE_MS = 500
 """Discard anything shorter. Rejects coughs, clicks, and door slams that clear the energy gate
