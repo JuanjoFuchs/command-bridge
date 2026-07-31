@@ -469,8 +469,8 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         t_start=t_start,
         t_end=t_end,
         addressed=addressed,
+        reason=reason,
     )
-    turn["reason"] = reason
     state.turns_logged += 1
     state.partial_text = ""  # the final turn supersedes any live preview
     await _broadcast_json(state, {"type": "turn", **turn})

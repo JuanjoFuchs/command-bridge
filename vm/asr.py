@@ -102,6 +102,8 @@ class UtteranceBuffer:
         self._total_fed = 0
         self._utterance_start_sample = 0
         self._buf_start_total = 0
+        self._noise_floor = silence_floor
+        """Running estimate of the room's noise level, tracked rather than assumed."""
         self.preroll_samples = int(sr * 0.2)
         """Audio kept before detected speech onset. Enough to protect a soft first consonant,
         which the energy gate can miss, without handing the model a long silent runway."""
@@ -142,7 +144,17 @@ class UtteranceBuffer:
         window = int(self.sr * 0.02) or 1
         for i in range(0, samples.size, window):
             chunk = samples[i : i + window]
-            if rms(chunk) >= self.silence_floor:
+            level = rms(chunk)
+            # Track the room. A fixed threshold assumes a quiet room; with an AC running, the
+            # ambient noise sits above it, trailing silence never accumulates, and the turn
+            # never closes — the user has to mute their microphone to be heard. See
+            # config.NOISE_MARGIN.
+            if level < self._noise_floor:
+                self._noise_floor = level                       # snap down instantly
+            else:
+                self._noise_floor *= config.NOISE_FLOOR_DECAY   # creep up slowly
+            threshold = max(self.silence_floor, self._noise_floor * config.NOISE_MARGIN)
+            if level >= threshold:
                 if not self._seen_speech:
                     # Anchor the utterance to where speech actually began.
                     self._utterance_start_sample = self._total_fed + i

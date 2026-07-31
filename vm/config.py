@@ -27,6 +27,26 @@ This is a hard guarantee, not an optimization: Whisper hallucinates confident te
 ("you", "Thank you.") and an energy gate is the only thing that makes a silent room produce
 zero turns (AC-1)."""
 
+NOISE_MARGIN = 3.0
+"""How far above the measured room noise a window must be to count as speech.
+
+A FIXED silence threshold assumes a quiet room, and JJ's is not one. Live 2026-07-31: with the
+air conditioning running, its white noise sat above SILENCE_RMS_FLOOR, so trailing silence never
+accumulated, the utterance never ended, and he had to MUTE HIS MICROPHONE to get a turn to close
+— "I had finished speaking a while ago and I had to mute the microphone for you to pick up what
+I said and not pick up the white noise".
+
+So the floor is measured, not assumed: a window counts as speech only above
+`max(SILENCE_RMS_FLOOR, noise_floor * NOISE_MARGIN)`. 3x is roughly 10 dB over ambient, which
+separates speech from a fan or an AC while staying reachable by a quiet voice."""
+
+NOISE_FLOOR_DECAY = 1.0002
+"""Per-window upward drift of the noise estimate (~2% per 100 windows).
+
+The tracker snaps DOWN instantly to any quieter window and creeps UP slowly. Fast-down keeps it
+honest the moment the room goes quiet; slow-up stops one unusually quiet window from pinning the
+floor too low forever, and is far too slow for speech itself to drag the estimate up."""
+
 END_OF_UTTERANCE_MS = 1000
 """Silence that ends a turn.
 

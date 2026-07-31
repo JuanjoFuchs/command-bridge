@@ -84,6 +84,7 @@ def append_turn(
     addressed: bool,
     final: bool = True,
     base: Optional[str] = None,
+    reason: str = "",
 ) -> Dict[str, Any]:
     """Append one turn and return it (with its assigned `id`)."""
     validate_session(session)
@@ -94,6 +95,10 @@ def append_turn(
         "t_end": round(float(t_end), 3),
         "text": text,
         "addressed": bool(addressed),
+        # WHY it was addressed: 'wake' | 'voice:<similarity>' | 'not-addressed'. Persisted, not
+        # just broadcast — otherwise you can only infer after the fact whether the voiceprint or
+        # the wake phrase let a turn through, and those fail for completely different reasons.
+        "reason": reason,
         "final": bool(final),
         "wall": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
     }

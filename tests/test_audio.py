@@ -230,3 +230,58 @@ def test_turn_timestamps_are_ordered_and_match_the_returned_audio():
     assert t_start < t_end, f"inverted range: {t_start} .. {t_end}"
     # The window must be at least as long as the audio it describes.
     assert (t_end - t_start) >= samples.size / sr - 0.05
+
+
+# --- adaptive noise floor -----------------------------------------------------
+
+def _noise(n, level, seed=7):
+    return (np.random.RandomState(seed).randn(n) * level).astype(np.float32)
+
+
+def test_a_turn_still_closes_over_room_noise():
+    """Regression (JJ, live 2026-07-31): with the AC running, ambient noise sat above the fixed
+    silence floor, trailing silence never accumulated, the utterance never ended, and he had to
+    MUTE HIS MICROPHONE to get a turn to close.
+    """
+    sr = config.TARGET_SR
+    b = asr.UtteranceBuffer()
+    ac = 0.012                                   # above SILENCE_RMS_FLOOR (0.005)
+    assert ac > config.SILENCE_RMS_FLOOR, "the test must reproduce the real condition"
+
+    for _ in range(15):                          # let the tracker learn the room
+        b.feed(_noise(int(sr * 0.1), ac))
+    b.feed(_speech(int(sr * 1.5)))               # speak over it
+
+    out = None
+    for _ in range(40):                          # stop speaking; noise continues
+        out = b.feed(_noise(int(sr * 0.1), ac))
+        if out is not None:
+            break
+    assert out is not None, "the turn must close over continuing room noise"
+
+
+def test_speech_is_still_detected_in_a_noisy_room():
+    sr = config.TARGET_SR
+    b = asr.UtteranceBuffer()
+    for _ in range(15):
+        b.feed(_noise(int(sr * 0.1), 0.012))
+    b.feed(_speech(int(sr * 1.0)))
+    out = None
+    for _ in range(40):
+        out = b.feed(_noise(int(sr * 0.1), 0.012))
+        if out is not None:
+            break
+    assert out is not None
+    assert out[0].size > int(sr * 0.5), "the speech itself must survive, not just the boundary"
+
+
+def test_noise_floor_snaps_down_but_creeps_up():
+    b = asr.UtteranceBuffer()
+    b.feed(_noise(1600, 0.05))
+    high = b._noise_floor
+    b.feed(_noise(1600, 0.001))
+    assert b._noise_floor < high, "must drop quickly when the room goes quiet"
+    quiet = b._noise_floor
+    for _ in range(20):
+        b.feed(_noise(1600, 0.05))
+    assert b._noise_floor < quiet * 1.5, "must not chase loud audio upward"
