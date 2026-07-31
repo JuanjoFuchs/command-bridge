@@ -275,13 +275,38 @@ def test_speech_is_still_detected_in_a_noisy_room():
     assert out[0].size > int(sr * 0.5), "the speech itself must survive, not just the boundary"
 
 
-def test_noise_floor_snaps_down_but_creeps_up():
+def test_a_quiet_moment_does_not_latch_the_floor_low_forever():
+    """THE regression for the 63.7-second turn (JJ, live 2026-07-31).
+
+    A min-tracker snapped DOWN to the quietest window ever seen. After one near-silent moment the
+    AC sat ~24x above that latched floor and read as speech indefinitely, so the turn only closed
+    when he MUTED — "I finished speaking a while ago on this new turn, and the white noise kept
+    running, and you didn't recognize the stop".
+
+    A rolling percentile has no memory of a moment that will not recur.
+    """
+    sr = config.TARGET_SR
     b = asr.UtteranceBuffer()
-    b.feed(_noise(1600, 0.05))
-    high = b._noise_floor
-    b.feed(_noise(1600, 0.001))
-    assert b._noise_floor < high, "must drop quickly when the room goes quiet"
-    quiet = b._noise_floor
-    for _ in range(20):
-        b.feed(_noise(1600, 0.05))
-    assert b._noise_floor < quiet * 1.5, "must not chase loud audio upward"
+
+    b.feed(_silence(int(sr * 1.0)))              # a near-silent moment, as in a real session
+    latched = b._noise_floor
+
+    for _ in range(int(config.NOISE_WINDOW_S * 10) + 5):   # then the AC starts and stays on
+        b.feed(_noise(int(sr * 0.1), 0.012))
+
+    assert b._noise_floor > latched * 5, (
+        f"floor stayed latched at {latched:.5f} while the room ran at 0.012 "
+        f"(estimate {b._noise_floor:.5f})"
+    )
+    assert not b.speech_active, "continuous room noise must not read as someone speaking"
+
+
+def test_the_floor_follows_the_room_back_down():
+    sr = config.TARGET_SR
+    b = asr.UtteranceBuffer()
+    for _ in range(int(config.NOISE_WINDOW_S * 10) + 5):
+        b.feed(_noise(int(sr * 0.1), 0.02))
+    noisy = b._noise_floor
+    for _ in range(int(config.NOISE_WINDOW_S * 10) + 5):
+        b.feed(_noise(int(sr * 0.1), 0.001))
+    assert b._noise_floor < noisy / 3, "the estimate must follow the room when it goes quiet"

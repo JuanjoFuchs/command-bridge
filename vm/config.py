@@ -40,12 +40,19 @@ So the floor is measured, not assumed: a window counts as speech only above
 `max(SILENCE_RMS_FLOOR, noise_floor * NOISE_MARGIN)`. 3x is roughly 10 dB over ambient, which
 separates speech from a fan or an AC while staying reachable by a quiet voice."""
 
-NOISE_FLOOR_DECAY = 1.0002
-"""Per-window upward drift of the noise estimate (~2% per 100 windows).
+NOISE_WINDOW_S = 8.0
+NOISE_PERCENTILE = 20
+"""The noise floor is the Nth percentile of the last NOISE_WINDOW_S of frame energies.
 
-The tracker snaps DOWN instantly to any quieter window and creeps UP slowly. Fast-down keeps it
-honest the moment the room goes quiet; slow-up stops one unusually quiet window from pinning the
-floor too low forever, and is far too slow for speech itself to drag the estimate up."""
+**A min-tracker was tried first and failed in the room.** It snapped DOWN to the quietest window
+ever seen, so after one near-silent moment the AC sat ~24x above the latched floor and read as
+speech indefinitely; the upward creep recovered under 2x per minute. JJ, live 2026-07-31:
+"I finished speaking a while ago on this new turn, and the white noise kept running, and you
+didn't recognize the stop" — a 63.7 second turn that only closed when he muted.
+
+A rolling percentile has no memory of a moment that will never recur. Over 8 seconds there are
+always inter-word gaps even in continuous speech, so the 20th percentile lands on the room rather
+than on the voice — and when the AC switches on, the estimate follows within seconds."""
 
 END_OF_UTTERANCE_MS = 1000
 """Silence that ends a turn.
