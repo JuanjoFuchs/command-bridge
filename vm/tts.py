@@ -99,11 +99,14 @@ def _synth_sapi(text: str) -> Tuple[bytes, int]:
 
 
 def list_voices() -> list:
-    """Piper voices available in the models dir, by name."""
-    d = config.models_dir()
-    if not os.path.isdir(d):
-        return []
-    return sorted(f[:-5] for f in os.listdir(d) if f.endswith(".onnx"))
+    """Piper voices available in the models dir, by name.
+
+    Delegates to config so "what is installed" has one definition (AGENTS.md convention 5). The
+    listing there also requires each `.onnx` to have its sidecar `.onnx.json`, which keeps the
+    voiceprint gallery's speaker model out of `vm voices` — it was being offered as a selectable
+    voice that then failed at synthesis time.
+    """
+    return config.piper_voices()
 
 
 def resolve_voice(name: Optional[str]) -> Optional[str]:
@@ -122,20 +125,35 @@ def resolve_voice(name: Optional[str]) -> Optional[str]:
     return os.path.join(config.models_dir(), f"{name}.onnx")
 
 
-def _synth_piper(text: str, voice_path: Optional[str] = None) -> Tuple[bytes, int]:
-    binary = os.environ.get("VM_PIPER_BIN") or shutil.which("piper")
-    voice = voice_path or os.environ.get("VM_PIPER_VOICE")
+def _synth_piper(text: str, voice_path: Optional[str] = None,
+                 rate: Optional[float] = None) -> Tuple[bytes, int]:
+    # Resolution moved into config: the binary is findable in the repo venv and the voice is
+    # findable in the models dir, so `VM_TTS=piper` is now the ONLY setting a piper session
+    # needs. Requiring all three to be exported on every call is what produced the wall of
+    # env-var prefixes this refactor exists to delete.
+    binary = config.piper_bin()
+    voice = voice_path or config.piper_voice()
     if not binary or not voice:
-        raise TTSError("piper backend needs VM_PIPER_BIN and VM_PIPER_VOICE")
+        missing = " and ".join(
+            [n for n, v in (("a piper binary", binary), ("an .onnx voice", voice)) if not v]
+        )
+        raise TTSError(
+            f"the piper backend cannot start: no {missing}. Run `vm doctor` for the exact "
+            f"remedy, or set it explicitly: `vm config set VM_PIPER_BIN <path>` / "
+            f"`vm config set VM_PIPER_VOICE <path>` (see `vm voices`)."
+        )
     fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
-        try:
-            length_scale = float(
-                os.environ.get("VM_PIPER_LENGTH_SCALE") or config.PIPER_LENGTH_SCALE
-            )
-        except ValueError:
-            length_scale = config.PIPER_LENGTH_SCALE
+        if rate is not None:
+            length_scale = rate
+        else:
+            try:
+                length_scale = float(
+                    os.environ.get("VM_PIPER_LENGTH_SCALE") or config.PIPER_LENGTH_SCALE
+                )
+            except ValueError:
+                length_scale = config.PIPER_LENGTH_SCALE
         proc = subprocess.run(
             [
                 binary, "--model", voice, "--output_file", path,
@@ -163,7 +181,8 @@ def _synth_none(text: str) -> Tuple[bytes, int]:
 
 
 def synthesize(
-    text: str, backend: str | None = None, voice: Optional[str] = None
+    text: str, backend: str | None = None, voice: Optional[str] = None,
+    rate: Optional[float] = None,
 ) -> Tuple[bytes, int]:
     """Return `(padded mono 16-bit PCM, sample_rate)`. Raises TTSError on failure.
 
@@ -172,15 +191,18 @@ def synthesize(
     if not text or not text.strip():
         raise TTSError("nothing to speak")
     backend = (backend or config.tts_backend()).lower()
+    # `sr`, not `rate`: `rate` is the SPEECH rate parameter and reusing the name for the
+    # returned SAMPLE rate shadows it — a trap that would silently ignore the caller's speed
+    # the moment anyone reordered these lines.
     if backend == "sapi":
-        pcm, rate = _synth_sapi(text)
+        pcm, sr = _synth_sapi(text)
     elif backend == "piper":
-        pcm, rate = _synth_piper(text, resolve_voice(voice))
+        pcm, sr = _synth_piper(text, resolve_voice(voice), rate=rate)
     elif backend == "none":
-        pcm, rate = _synth_none(text)
+        pcm, sr = _synth_none(text)
     else:
         raise TTSError(f"unknown TTS backend: {backend!r} (sapi|piper|none)")
-    return pad(pcm, rate), rate
+    return pad(pcm, sr), sr
 
 
 def write_wav(path: str, pcm: bytes, sample_rate: int) -> str:
@@ -198,7 +220,10 @@ def available() -> str:
     backend = config.tts_backend()
     if backend == "sapi" and os.name == "nt":
         return "sapi"
-    if backend == "piper" and (os.environ.get("VM_PIPER_BIN") or shutil.which("piper")):
+    # Both halves, not just the binary: piper with no voice fails at the first `say`, and a
+    # status line that said "piper" while synthesis was impossible sent you looking at the
+    # network layer.
+    if backend == "piper" and config.piper_bin() and config.piper_voice():
         return "piper"
     if backend == "none":
         return "none"

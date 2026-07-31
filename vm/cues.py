@@ -34,14 +34,19 @@ CUE_AMPLITUDE = 0.18
 CUES: Dict[str, Tuple[Tuple[float, float], float]] = {
     "heard": ((660.0, 990.0), 0.11),
     "thinking": ((520.0, 520.0), 0.09),
+    "tool": ((320.0, 320.0), 0.06),
     "speaking": ((880.0, 590.0), 0.13),
 }
 
 CUE_MEANING = {
     "heard": "rising — your turn arrived and was read",
-    "thinking": "flat — working on it",
+    "thinking": "flat, mid — working on it",
+    "tool": "flat, low, short — running something (a tick, so a burst reads as activity)",
     "speaking": "falling — about to talk, so stop if you were not finished",
 }
+"""Four states, four sounds. `tool` is deliberately the shortest and lowest: it fires repeatedly
+while the agent works, so it has to read as a background tick rather than an announcement — a
+run of them should feel like activity, not like being paged four times."""
 
 
 def names() -> List[str]:

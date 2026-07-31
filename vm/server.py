@@ -50,6 +50,9 @@ class TunnelState:
         self.consumed_cursor: int = -1
         self.agent_state: str = "idle"
         self.cues_enabled: bool = config.cues_enabled()
+        self.speech_rate: float = config.PIPER_LENGTH_SCALE
+        """Live speech rate. Held in server state, not read from env per call, so "talk faster"
+        can be honoured mid-conversation instead of requiring a restart."""
         self.embedder = voiceprint.Embedder()
         self.voice_samples: int = 0
         self.partial_busy: bool = False
@@ -98,6 +101,7 @@ class TunnelState:
             "voiceprint_available": self.embedder.available,
             "wake_phrases": list(self.wake.phrases),
             "tts_backend": tts.available(),
+            "speech_speed": round(1.0 / self.speech_rate, 2),
             "asr_model": self.recognizer.model_name,
             "log": store.log_path(self.session),
             "capture_wav": os.path.join(config.session_dir(), f"{self.session}.wav"),
@@ -225,7 +229,7 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
     await _set_agent_state(state, "synthesizing")
     try:
         pcm, rate = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: tts.synthesize(text, voice=voice)
+            None, lambda: tts.synthesize(text, voice=voice, rate=state.speech_rate)
         )
     except tts.TTSError as exc:
         state.last_error = str(exc)
@@ -323,6 +327,39 @@ async def handle_cue(request: web.Request) -> web.Response:
         )
     await _push_cue(state, name)
     return web.json_response({"played": name})
+
+
+async def handle_rate(request: web.Request) -> web.Response:
+    """Set the speech rate at runtime.
+
+    JJ asked whether "talk faster" could take effect mid-conversation or would need a code
+    change. Holding the rate in server state rather than reading an env var per call is what
+    makes the former possible — a preference the user expresses out loud should not require
+    restarting the conversation to apply.
+    """
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+        value = float((body or {}).get("value"))
+    except (TypeError, ValueError, Exception):
+        return web.json_response({"error": "value must be a number"}, status=400)
+    # SPEED, not duration. Piper's own length_scale is inverted — lower means faster — and
+    # exposing that leaked straight through to the user: JJ asked for 2.0 expecting twice as
+    # fast and got half speed. An API that contradicts the plain meaning of its own parameter
+    # name is a defect, so the inversion is hidden here and speed is what crosses the boundary.
+    if not (0.5 <= value <= 2.5):
+        return web.json_response(
+            {"error": "speed must be between 0.5 (half speed) and 2.5 (2.5x faster)"},
+            status=400,
+        )
+    previous = round(1.0 / state.speech_rate, 2)
+    state.speech_rate = 1.0 / value
+    return web.json_response(
+        {"speed": value, "previous": previous, "length_scale": round(state.speech_rate, 3)}
+    )
 
 
 async def handle_consumed(request: web.Request) -> web.Response:
@@ -546,6 +583,7 @@ def build_app(session: str, token: Optional[str], gate_enabled: bool = True) -> 
             web.post("/say", handle_say),
             web.post("/consumed", handle_consumed),
             web.post("/cue", handle_cue),
+            web.post("/rate", handle_rate),
             web.get("/ws", handle_ws),
         ]
     )

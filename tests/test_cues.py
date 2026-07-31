@@ -57,13 +57,30 @@ def test_cues_start_and_end_at_silence_so_they_do_not_click():
         assert abs(s[0]) < 200 and abs(s[-1]) < 200
 
 
-def test_each_cue_is_distinguishable_by_contour_not_just_timbre():
-    """Rising/flat/falling survives cheap earbuds and a noisy room; timbre does not."""
-    contours = {}
+def test_each_cue_is_distinguishable_without_relying_on_timbre():
+    """Contour survives cheap earbuds and a noisy room; timbre does not.
+
+    There are only three contours (rising/flat/falling) and more than three cues, so contour
+    alone cannot separate them — the honest discriminator is contour PLUS register. Two flat
+    cues are fine if one is clearly lower than the other; two flat cues at the same pitch are
+    not, because nothing distinguishes them by ear.
+    """
+    sigs = {}
     for name in cues.names():
         (f0, f1), _dur = cues.CUES[name]
-        contours[name] = (f1 > f0) - (f1 < f0)      # +1 rising, 0 flat, -1 falling
-    assert len(set(contours.values())) == len(contours), f"contours collide: {contours}"
+        contour = (f1 > f0) - (f1 < f0)             # +1 rising, 0 flat, -1 falling
+        register = round(f0 / 150)                  # ~coarse pitch band
+        sigs[name] = (contour, register)
+    assert len(set(sigs.values())) == len(sigs), f"cues are not distinguishable: {sigs}"
+
+
+def test_the_tool_cue_is_the_least_intrusive():
+    """It fires repeatedly while the agent works, so a run of them must read as background
+    activity rather than as being paged once per tool call."""
+    durations = {n: cues.CUES[n][1] for n in cues.names()}
+    assert durations["tool"] == min(durations.values())
+    pitches = {n: cues.CUES[n][0][0] for n in cues.names()}
+    assert pitches["tool"] == min(pitches.values())
 
 
 def test_every_cue_has_a_documented_meaning():
