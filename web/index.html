@@ -424,6 +424,13 @@
   const token = new URLSearchParams(location.search).get("token") || "";
   let ws = null, ctx = null, micStream = null, node = null, source = null;
   let wakeLock = null, running = false, pendingClip = null, $partial = null, $divider = null;
+  // Clips wait their turn here. A single `pendingClip` variable was not enough: a cue arriving
+  // between a reply's header and its audio OVERWROTE the reply, so the reply either played
+  // labelled as a cue (no transcript row, no `played` receipt) or was dropped outright — and
+  // when two clips did survive they played SIMULTANEOUSLY, one on top of the other. JJ, live
+  // on the move 2026-07-31: "those two play together, overlapping one on top of the other."
+  const clipQueue = [];
+  let draining = false;
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
@@ -446,7 +453,18 @@
     const t = document.createElement("span");
     t.textContent = text;
     d.appendChild(s); d.appendChild(t);
-    $log.appendChild(d); $log.scrollTop = $log.scrollHeight;
+    // A reply is PROOF the turns above it were read, so it belongs ABOVE the read boundary.
+    // Appending every row at the end put claude's answer below "claude has read to here", which
+    // reads as an answer to something he hasn't been shown yet — and left the unread marker
+    // stranded mid-log instead of at the bottom where the waiting turns are. JJ, live from the
+    // car 2026-07-31: "whatever responses you generate ... should show on top of that. I have
+    // noticed that they show below that."
+    if (cls === "claude" && $divider && $divider.parentNode === $log) {
+      $log.insertBefore(d, $divider);
+    } else {
+      $log.appendChild(d);
+    }
+    $log.scrollTop = $log.scrollHeight;
   }
 
   // The read boundary lives INSIDE the log, sitting after the last turn claude has consumed —
@@ -770,7 +788,26 @@
       }
       return;
     }
-    if (pendingClip) { await playClip(pendingClip, ev.data); pendingClip = null; }
+    // Pair the bytes with the header that announced them and QUEUE it — never play inline.
+    // Awaiting playback here blocked this handler for the length of the clip while the browser
+    // happily dispatched the next message into a second concurrent invocation, which is how two
+    // replies ended up audible at the same time.
+    if (pendingClip) { clipQueue.push({ header: pendingClip, buf: ev.data }); pendingClip = null; drainClips(); }
+  }
+
+  async function drainClips() {
+    // One drainer at a time. The guard is what serializes playback; without it every arriving
+    // clip would start its own drain loop and we would be back to overlapping audio.
+    if (draining) return;
+    draining = true;
+    try {
+      while (clipQueue.length) {
+        const { header, buf } = clipQueue.shift();
+        await playClip(header, buf);
+      }
+    } finally {
+      draining = false;
+    }
   }
 
   async function playClip(header, buf) {
