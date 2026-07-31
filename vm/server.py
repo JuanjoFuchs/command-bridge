@@ -25,7 +25,7 @@ import numpy as np
 from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
-from . import config, cues, security, store, tts, voiceprint
+from . import config, cues, security, store, timing, tts, voiceprint
 from .wake import WakeGate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
@@ -60,6 +60,34 @@ class TunnelState:
         """Live too, and persisted for the same reason: this is a pacing preference tuned by ear,
         and re-setting it on every server start meant the right value lived only in a running
         process."""
+        self._clip_lock = asyncio.Lock()
+        """Held across a clip's header AND its bytes, so the pair cannot be split.
+
+        The protocol is "JSON header, then the binary frame it describes", and the client pairs
+        bytes with the most recent header. Concurrent `_speak` tasks broke that invariant: with
+        two replies in flight the wire could carry header1, header2, bytes1, bytes2, and the
+        second header overwrote the first before any audio arrived — so one reply played under
+        the other's identity and the other was dropped.
+
+        This is the SAME defect JJ heard on the move ("those two play together, overlapping one
+        on top of the other") surviving one layer deeper than the first fix. Queuing playback on
+        the client made the audio serial; it could not restore a pairing the server had already
+        scrambled. An invariant the client depends on has to be guaranteed by the sender.
+        """
+        self.verbose: bool = False
+        """Does JJ want every action narrated? Toggled from the page, read by the agent.
+
+        The TOOL only stores and publishes this — it does not act on it. Deciding what counts as
+        "an action worth narrating" is exactly the unbounded judgment that belongs in the agent
+        (AGENTS.md rule 1), and a flag is the smallest thing that can carry the preference across
+        the boundary. JJ, live 2026-07-31: "a toggle that says a verbose mode for you so that I
+        don't have to ask you to describe the actions and we don't have to write it into the
+        guide. This button would toggle live how you respond."
+        """
+        self.muted: bool = False
+        """Whether the client is holding its own microphone shut. Published for `status` only —
+        the mute is enforced ON THE CLIENT by not sending frames, because a mute that still
+        streams audio to a server that promises to ignore it is not a mute anyone should trust."""
         self.embedder = voiceprint.Embedder()
         self.voice_samples: int = 0
         self.partial_busy: bool = False
@@ -103,6 +131,8 @@ class TunnelState:
             "speech_active": self.buffer.speech_active,
             "last_played": self.last_played,
             "last_error": self.last_error,
+            "verbose": self.verbose,
+            "muted": self.muted,
             "wake_enabled": self.wake.enabled,
             "voice_enrolled_samples": self.voice_samples,
             "voiceprint_available": self.embedder.available,
@@ -234,6 +264,7 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
     Shared by the blocking and fire-and-forget paths so the interruption guard cannot be
     bypassed by choosing the async one.
     """
+    timing.stamp(state.session, "say_requested", chars=len(text))
     await _set_agent_state(state, "synthesizing")
     try:
         pcm, rate = await asyncio.get_running_loop().run_in_executor(
@@ -247,6 +278,7 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
         await _set_agent_state(state, "idle")
         raise
 
+    timing.stamp(state.session, "synthesized", audio_s=round(len(pcm) / 2 / rate, 2))
     clip_id = f"clip-{int(time.time() * 1000)}"
 
     # Do not talk over the speaker. Synthesis is done, but if they are mid-utterance, hold the
@@ -277,8 +309,10 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
     await _set_agent_state(state, "speaking")
     await _push_cue(state, "speaking")
 
-    # Header first so the client knows how to interpret the bytes that follow.
-    await _broadcast_json(
+    # Header first so the client knows how to interpret the bytes that follow — and both under
+    # the clip lock, because a second clip slipping between them is what made two replies play
+    # as one. See TunnelState._clip_lock.
+    await _send_clip(
         state,
         {
             "type": "audio_header",
@@ -288,18 +322,31 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
             "text": text,
             "held_for": round(waited, 1),
         },
+        pcm,
     )
-    for ws in list(state.clients):
-        try:
-            await ws.send_bytes(pcm)
-        except Exception:
-            state.clients.discard(ws)
+    timing.stamp(state.session, "spoken", clip=clip_id, held_for=round(waited, 1))
     return {
         "queued": True,
         "id": clip_id,
         "seconds": round(len(pcm) / 2 / rate, 2),
         "held_for": round(waited, 1),
     }
+
+
+async def _send_clip(state: TunnelState, header: Dict[str, Any], pcm: bytes) -> None:
+    """Send one clip's header and its bytes as an indivisible pair.
+
+    The lock is the whole function. Everything that puts audio on the wire goes through here so
+    there is exactly one place the pairing can be reasoned about — a second sender that forgot
+    to take the lock would reintroduce the bug silently.
+    """
+    async with state._clip_lock:
+        await _broadcast_json(state, header)
+        for ws in list(state.clients):
+            try:
+                await ws.send_bytes(pcm)
+            except Exception:
+                state.clients.discard(ws)
 
 
 async def _push_cue(state: TunnelState, name: str) -> None:
@@ -311,15 +358,15 @@ async def _push_cue(state: TunnelState, name: str) -> None:
         pcm, rate = cues.render(name)
     except KeyError:
         return
-    await _broadcast_json(
-        state, {"type": "audio_header", "id": f"cue-{name}", "sample_rate": rate,
-                "bytes": len(pcm), "text": "", "cue": name}
+    # Cues go through the same lock as speech. A cue landing between a reply's header and its
+    # bytes is the exact sequence that made a reply play tagged as a cue, with no transcript row
+    # and no playback receipt — so the server believed it had spoken and JJ had heard nothing.
+    await _send_clip(
+        state,
+        {"type": "audio_header", "id": f"cue-{name}", "sample_rate": rate,
+         "bytes": len(pcm), "text": "", "cue": name},
+        pcm,
     )
-    for ws in list(state.clients):
-        try:
-            await ws.send_bytes(pcm)
-        except Exception:
-            state.clients.discard(ws)
 
 
 async def handle_cue(request: web.Request) -> web.Response:
@@ -419,6 +466,9 @@ async def handle_consumed(request: web.Request) -> web.Response:
     except (TypeError, ValueError):
         return web.json_response({"error": "cursor must be an int"}, status=400)
     state.consumed_cursor = cursor
+    # The agent has the turn in hand. Everything from here to `say_requested` is IT thinking —
+    # the stage that dominated every measurement and was invisible until it had a name.
+    timing.stamp(state.session, "consumed", cursor=cursor)
     agent_state = str((body or {}).get("state") or "thinking")
     await _broadcast_json(
         state,
@@ -427,7 +477,12 @@ async def handle_consumed(request: web.Request) -> web.Response:
     await _set_agent_state(state, agent_state)
     if agent_state == "thinking":
         await _push_cue(state, "thinking")
-    return web.json_response({"consumed": cursor, "state": agent_state})
+    # `verbose` rides back on the response every `watch` already makes, so the agent learns the
+    # current preference without polling for it. A toggle the agent has to remember to ask about
+    # is a toggle that silently stops working.
+    return web.json_response(
+        {"consumed": cursor, "state": agent_state, "verbose": state.verbose}
+    )
 
 
 async def handle_ws(request: web.Request) -> web.StreamResponse:
@@ -481,10 +536,19 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         await ws.send_json({"type": "hello_ack", "server_sample_rate": config.TARGET_SR})
     elif kind == "played":
         state.last_played = str(msg.get("id") or "")
+        timing.stamp(state.session, "played", clip=state.last_played)
         # Playback finished, so the agent is no longer speaking. The client is the only party
         # that knows when a clip actually ended — the server only knows when it finished
         # sending — so the receipt is what closes the state machine back to idle.
         await _set_agent_state(state, "idle")
+    elif kind == "verbose":
+        # Stored and republished, never acted on here — see TunnelState.verbose.
+        state.verbose = bool(msg.get("value"))
+        await _broadcast_json(state, {"type": "verbose", "value": state.verbose})
+        timing.stamp(state.session, "verbose_toggled", value=state.verbose)
+    elif kind == "muted":
+        state.muted = bool(msg.get("value"))
+        await _broadcast_json(state, {"type": "muted", "value": state.muted})
     elif kind == "client_error":
         state.last_error = f"client: {str(msg.get('message'))[:300]}"
 
@@ -551,11 +615,15 @@ async def _flush(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
 async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) -> None:
     """Transcribe a completed utterance, gate it, log it, and tell the client."""
     samples, t_start, t_end = completed
+    # The clock the USER experiences starts the moment they stop talking, not when we finish
+    # some internal step, so this is where the timing log begins an exchange.
+    timing.stamp(state.session, "utterance_end", audio_s=round(t_end - t_start, 2))
     # Announce each stage. The user cannot see any of this from outside, and an unexplained
     # pause is the difference between "it's working" and "it's broken" to someone waiting.
     await _set_agent_state(state, "transcribing")
     # ASR is CPU-bound; keep it off the event loop or audio ingest stalls.
     text = await loop.run_in_executor(None, state.recognizer.transcribe, samples)
+    timing.stamp(state.session, "transcribed", chars=len(text or ""))
     if not text:
         # No cue here: nothing was heard, and a sound would announce a turn that does not exist.
         await _set_agent_state(state, "idle")
@@ -593,6 +661,8 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         reason=reason,
     )
     state.turns_logged += 1
+    timing.stamp(state.session, "turn_logged", turn=turn.get("id"),
+                 text=(agent_text or "")[:80], addressed=addressed)
     state.partial_text = ""  # the final turn supersedes any live preview
     await _broadcast_json(state, {"type": "turn", **turn})
     # Republish the read-lag so the gap between "said" and "read by the agent" stays visible

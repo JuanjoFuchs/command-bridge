@@ -132,10 +132,22 @@ DESCRIBE: Dict[str, Any] = {
                 "--since": "cursor; use -1 for 'from the beginning'",
                 "--timeout": "seconds to block before returning empty (default 30)",
             },
-            "returns": {"turns": "[turn, ...]", "cursor": "int — resume from this"},
+            "returns": {"turns": "[turn, ...]", "cursor": "int — resume from this",
+                        "verbose": "bool — present when a server is up; see below"},
             "notes": "Returns EVERY turn with id > since, not just the newest. That is the "
                      "contract. It also marks those turns READ automatically — receiving them is "
-                     "the acknowledgement — so you do NOT need to call `consumed` after a watch.",
+                     "the acknowledgement — so you do NOT need to call `consumed` after a watch. "
+                     "**If `verbose` is true, narrate what you are about to do before you do it** "
+                     "— he toggled it from the page and expects every action described.",
+        },
+        "timing": {
+            "args": {"--session": "session id", "--limit": "last N exchanges (default 10, 0=all)"},
+            "returns": {"exchanges": "[{total_s, steps, slowest}]", "by_step": "aggregate",
+                        "worst_step": "str"},
+            "notes": "Where the time went, read from disk — works with no server running. "
+                     "`consumed -> say_requested` is YOU thinking; every other step is the tool. "
+                     "Check this before believing any hypothesis about slowness: the network was "
+                     "blamed twice and was under 0.1 s both times.",
         },
         "say": {
             "args": {"--session": "session id", "text": "positional; what to speak"},
@@ -339,9 +351,15 @@ def cmd_watch(args) -> Dict[str, Any]:
         # Best-effort by design: `watch` reads the log from disk and must keep working with no
         # server running at all, so a failed notify is never allowed to fail the watch.
         try:
-            _request(args.session, "/consumed", {"cursor": cursor, "state": "thinking"})
+            ack = _request(args.session, "/consumed", {"cursor": cursor, "state": "thinking"})
         except Exception:
-            pass
+            ack = {}
+        # Surface the verbose toggle on every watch rather than making the agent poll for it.
+        # JJ flips it from the page mid-conversation; a preference the agent only notices if it
+        # remembers to ask is a preference that silently stops being honoured.
+        if isinstance(ack, dict) and ack.get("verbose") is not None:
+            return {"turns": turns, "cursor": cursor, "count": len(turns),
+                    "verbose": bool(ack["verbose"])}
     return {"turns": turns, "cursor": cursor, "count": len(turns)}
 
 
@@ -632,6 +650,19 @@ def cmd_doctor(_args) -> Dict[str, Any]:
     return {"ok": not failed, "checks": checks, "failed": failed}
 
 
+def cmd_timing(args) -> Dict[str, Any]:
+    """Where the time went, per exchange — read straight from disk, no server needed.
+
+    Exists because "why is this slow" was answered twice by hand in one session, from clip IDs
+    and wall-clocks, and the intuition was wrong both times: the network was blamed and the
+    network was under a tenth of a second. `consumed -> say_requested` is the agent thinking,
+    and it dwarfed every stage the tool owns.
+    """
+    from . import timing
+
+    return timing.report(args.session, limit=args.limit)
+
+
 def cmd_turns(args) -> Dict[str, Any]:
     turns = store.read_turns(args.session)
     if args.limit:
@@ -731,6 +762,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--session", default="dev")
     g.add_argument("--limit", type=int, default=0)
 
+    tm = sub.add_parser("timing", help="where the time went, per exchange")
+    tm.add_argument("--session", default="dev")
+    tm.add_argument("--limit", type=int, default=10, help="last N exchanges (0 = all)")
+
     return p
 
 
@@ -756,6 +791,7 @@ def main(argv=None) -> int:
         "voiceprint": cmd_voiceprint,
         "cue": cmd_cue,
         "rate": cmd_rate,
+        "timing": cmd_timing,
     }
     try:
         result = handlers[args.cmd](args)

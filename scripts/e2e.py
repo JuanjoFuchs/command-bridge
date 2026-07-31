@@ -308,6 +308,66 @@ def run(headed: bool, keep: bool) -> int:
               "AC-E3 the page acknowledged playback back to the server",
               f"server last_played={final.get('last_played')} expected={said.get('id')}")
 
+        # --- clips queue rather than race ----------------------------------------
+        # The defect this guards: a single `pendingClip` variable meant a cue arriving between a
+        # reply's header and its bytes OVERWROTE the reply, and two surviving clips played
+        # simultaneously. JJ heard it on the move — "those two play together, overlapping
+        # one on top of the other" — after asking the same question three times unanswered.
+        print("\n== clips queue, never overlap ==")
+        before = page.evaluate("() => window.__vm.played.length")
+        ids = []
+        for i in range(3):
+            r = http_json(f"http://127.0.0.1:{port}/say?token={token}",
+                          {"text": f"Queued reply number {i + 1}.", "async": True}, timeout=60)
+            ids.append(r)
+        page.wait_for_function(
+            f"() => window.__vm.played.length >= {before + 3}", timeout=90000
+        )
+        played_ids = page.evaluate("() => window.__vm.played")[before:before + 3]
+        check(len(set(played_ids)) == 3, "three rapid clips all played, none dropped",
+              json.dumps(played_ids))
+        # Every clip must have reported playback. Under the old code an overwritten reply never
+        # sent a `played` receipt at all, which is exactly how the server kept believing it had
+        # spoken when JJ had heard nothing.
+        check(all(i for i in played_ids), "every queued clip acknowledged playback")
+
+        # --- the two toggles -----------------------------------------------------
+        print("\n== mute and verbose toggles ==")
+        check(page.locator("#mute").is_visible() and page.locator("#verbose").is_visible(),
+              "both control buttons render")
+
+        frames_before = page.evaluate("() => window.__vm.framesSent")
+        page.click("#mute")
+        page.wait_for_timeout(1200)
+        muted_state = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
+        check(muted_state.get("muted") is True, "mute reached the server",
+              json.dumps(muted_state.get("muted")))
+        frames_during = page.evaluate("() => window.__vm.framesSent")
+        page.wait_for_timeout(900)
+        frames_after = page.evaluate("() => window.__vm.framesSent")
+        # The point of mute: the microphone stops SENDING. Enforced client-side, because a mute
+        # that still ships audio to a server promising to ignore it is not a mute.
+        check(frames_after == frames_during,
+              "muted client sends no audio frames",
+              f"before={frames_before} during={frames_during} after={frames_after}")
+
+        page.click("#mute")
+        page.wait_for_timeout(1200)
+        check(page.locator("#mute").get_attribute("aria-pressed") == "false",
+              "unmuting restores the control state")
+
+        page.click("#verbose")
+        page.wait_for_timeout(800)
+        v = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
+        check(v.get("verbose") is True, "verbose toggle reached the server")
+        # The agent learns about it WITHOUT polling: it rides back on the /consumed call that
+        # every `watch` already makes. A preference the agent must remember to ask about is a
+        # preference that silently stops being honoured.
+        ack = http_json(f"http://127.0.0.1:{port}/consumed?token={token}",
+                        {"cursor": 0, "state": "thinking"}, timeout=10)
+        check(ack.get("verbose") is True, "verbose rides back on the watch acknowledgement",
+              json.dumps(ack))
+
         errors = page.evaluate("() => window.__vm.errors")
         check(not errors, "client reported no errors", json.dumps(errors))
 

@@ -280,6 +280,34 @@
   }
   #state.err { color:var(--err); }
 
+  /* The two flanking toggles. Sized for a thumb (44px is the platform minimum for a touch
+     target) and pushed to the edges of the orb's own width, so neither can be hit by accident
+     while reaching for the orb itself. */
+  #controls {
+    display:flex; gap:.5rem; align-items:center; justify-content:center;
+    margin-top:-.2rem;
+  }
+  .ctl {
+    appearance:none; -webkit-appearance:none;
+    min-height:44px; min-width:5.6rem; padding:.5rem .95rem; border-radius:999px;
+    background-color:color-mix(in srgb, var(--card) 70%, transparent);
+    color:var(--dim); font-family:var(--mono); font-size:.68rem; letter-spacing:.04em;
+    border:1px solid var(--edge); cursor:pointer; white-space:nowrap;
+    transition:color .18s ease, border-color .18s ease, background-color .18s ease;
+  }
+  .ctl:hover { color:var(--fg); border-color:var(--edge-2); }
+  .ctl:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
+  /* ON states are colour-coded by MEANING, not by "active": a muted mic is a warning because
+     the tunnel is deaf and that is easy to forget, while verbose is merely a mode. */
+  #mute[aria-pressed="true"] {
+    color:var(--err); border-color:color-mix(in srgb, var(--err) 55%, transparent);
+    background-color:color-mix(in srgb, var(--err) 12%, transparent);
+  }
+  #verbose[aria-pressed="true"] {
+    color:var(--warm); border-color:color-mix(in srgb, var(--warm) 55%, transparent);
+    background-color:color-mix(in srgb, var(--warm) 12%, transparent);
+  }
+
   #mic {
     appearance:none; -webkit-appearance:none;
     max-width:min(100%,26rem);
@@ -407,6 +435,13 @@
       <div class="bezel" aria-hidden="true"></div>
       <div class="aura" aria-hidden="true"></div>
     </div>
+    <!-- Flanking the orb, one each side: the two things you reach for WITHOUT looking. Both are
+         toggles with a persistent on/off state, so they say what they ARE, not what tapping them
+         would do — a button labelled with its own action reads as a lie half the time. -->
+    <div id="controls">
+      <button id="mute" class="ctl" aria-pressed="false">Mic on</button>
+      <button id="verbose" class="ctl" aria-pressed="false">Quiet</button>
+    </div>
     <div id="state">idle</div>
     <select id="mic" hidden aria-label="Microphone"></select>
   </main>
@@ -420,6 +455,8 @@
   const $state = document.getElementById("state");
   const $log = document.getElementById("log");
   const $mic = document.getElementById("mic");
+  const $mute = document.getElementById("mute");
+  const $verbose = document.getElementById("verbose");
 
   const token = new URLSearchParams(location.search).get("token") || "";
   let ws = null, ctx = null, micStream = null, node = null, source = null;
@@ -431,6 +468,7 @@
   // on the move 2026-07-31: "those two play together, overlapping one on top of the other."
   const clipQueue = [];
   let draining = false;
+  let muted = false, verbose = false;
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
@@ -487,6 +525,41 @@
     if (anchor) anchor.after($divider);
     else $log.appendChild($divider);
   }
+
+  // --- the two toggles -------------------------------------------------------
+  // Both persist in localStorage. Losing your mute on a reload means the room gets streamed
+  // again without anyone deciding to; losing verbose means being asked to re-toggle a
+  // preference, which is the friction it exists to remove.
+
+  function tellServer(type, value) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, value }));
+  }
+
+  function setMuted(next) {
+    muted = next;
+    $mute.setAttribute("aria-pressed", String(muted));
+    $mute.textContent = muted ? "Muted" : "Mic on";
+    localStorage.setItem("vm.muted", muted ? "1" : "0");
+    // The server is told so `vm status` can say "he has himself muted" — otherwise a silent
+    // tunnel and a muted one look identical from the agent's side, and the agent goes hunting
+    // for a broken microphone that is working perfectly.
+    tellServer("muted", muted);
+    if (running) setState(muted ? "muted — tap Mic on to talk" : 'say "hey claude…"');
+  }
+
+  function setVerbose(next) {
+    verbose = next;
+    $verbose.setAttribute("aria-pressed", String(verbose));
+    $verbose.textContent = verbose ? "Verbose" : "Quiet";
+    localStorage.setItem("vm.verbose", verbose ? "1" : "0");
+    tellServer("verbose", verbose);
+  }
+
+  $mute.addEventListener("click", () => setMuted(!muted));
+  $verbose.addEventListener("click", () => setVerbose(!verbose));
+
+  setMuted(localStorage.getItem("vm.muted") === "1");
+  setVerbose(localStorage.getItem("vm.verbose") === "1");
 
   // Live level -> CSS variable, smoothed and painted once per frame rather than per audio
   // callback. Writing a style on every 4096-sample block (~12/s) is wasteful and jittery;
@@ -648,6 +721,11 @@
     `;
     const onChunk = (ch) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // Mute is enforced HERE, by not sending. Not on the server, and not by stopping the audio
+      // graph: a mute that still ships audio to something promising to ignore it is not a mute
+      // anyone should have to trust, and tearing down the graph would cost a re-permission
+      // prompt to come back. The level ring goes still too, which is the visible proof.
+      if (muted) { levelTarget = 0; return; }
       let sum = 0;
       for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
       const r = Math.sqrt(sum / ch.length);
@@ -728,6 +806,11 @@
       ws.onopen = () => {
         diag.connected = true;
         ws.send(JSON.stringify({ type:"hello", sample_rate: sampleRate }));
+        // Re-assert both toggles on every connect. The server holds them in memory, so a
+        // restart or a dropped socket would otherwise leave the page showing "Verbose" while
+        // the agent reads false — a disagreement neither side can see.
+        tellServer("muted", muted);
+        tellServer("verbose", verbose);
         resolve();
       };
       ws.onclose = () => { diag.connected = false; if (running) setState("disconnected", "err"); };
