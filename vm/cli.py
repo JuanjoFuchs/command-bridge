@@ -67,7 +67,9 @@ DESCRIBE: Dict[str, Any] = {
                 "--timeout": "seconds to block before returning empty (default 30)",
             },
             "returns": {"turns": "[turn, ...]", "cursor": "int — resume from this"},
-            "notes": "Returns EVERY turn with id > since, not just the newest. That is the contract.",
+            "notes": "Returns EVERY turn with id > since, not just the newest. That is the "
+                     "contract. It also marks those turns READ automatically — receiving them is "
+                     "the acknowledgement — so you do NOT need to call `consumed` after a watch.",
         },
         "say": {
             "args": {"--session": "session id", "text": "positional; what to speak"},
@@ -86,8 +88,8 @@ DESCRIBE: Dict[str, Any] = {
             "args": {"--session": "session id", "--cursor": "how far you have read",
                      "--state": "idle|thinking|waiting|speaking"},
             "returns": {"consumed": "int", "state": "str"},
-            "notes": "Shows the user a read-boundary line in their transcript. Call it — silence "
-                     "is otherwise indistinguishable from not listening.",
+            "notes": "OPTIONAL. `watch` already marks turns read. Use this only to correct the "
+                     "state by hand, e.g. back to 'idle' if you decide not to reply.",
         },
         "voices": {"args": [], "returns": "installed piper voices for `say --voice`"},
         "voiceprint": {
@@ -199,6 +201,21 @@ def cmd_serve(args) -> None:
 
 def cmd_watch(args) -> Dict[str, Any]:
     turns, cursor = store.watch(args.session, args.since, timeout=args.timeout)
+    if turns:
+        # Delivering the turns IS the acknowledgement — JJ, 2026-07-31: "the moment you receive
+        # that new transcription in your context window, that is the acknowledgement."
+        #
+        # Reporting it here rather than making the agent call `consumed` removes a round trip
+        # AND removes a way to lie: a separate command can be forgotten, and then the read
+        # boundary silently under-reports while the agent is in fact reading. State that can
+        # drift from reality should not be maintained by hand.
+        #
+        # Best-effort by design: `watch` reads the log from disk and must keep working with no
+        # server running at all, so a failed notify is never allowed to fail the watch.
+        try:
+            _request(args.session, "/consumed", {"cursor": cursor, "state": "thinking"})
+        except Exception:
+            pass
     return {"turns": turns, "cursor": cursor, "count": len(turns)}
 
 

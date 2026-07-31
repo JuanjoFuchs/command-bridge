@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import wave
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -80,12 +81,36 @@ def _load(path: Optional[str] = None) -> Dict:
 
 
 def _save(data: Dict, path: Optional[str] = None) -> None:
+    """Write the gallery atomically, retrying the rename on Windows lock contention.
+
+    `os.replace` is atomic and a torn gallery would be silently wrong, so the write must go
+    through a temp file. But on Windows the rename intermittently raises PermissionError
+    (WinError 5) when a scanner or indexer still holds a handle on the file just written — seen
+    roughly once in four full test runs. Untreated that means a *silently lost enrolment*: the
+    voice sample is computed, the centroid updated in memory, and then never persisted.
+
+    A few short retries clear it; failing loudly afterwards is better than pretending it saved.
+    """
     path = path or gallery_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
-    os.replace(tmp, path)          # atomic; a torn gallery would be silently wrong
+        fh.flush()
+        os.fsync(fh.fileno())
+    last: Optional[Exception] = None
+    for attempt in range(6):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as exc:      # transient handle held by another process
+            last = exc
+            time.sleep(0.02 * (attempt + 1))
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise RuntimeError(f"could not persist voiceprint gallery: {last}")
 
 
 def cosine(a: np.ndarray, b: np.ndarray) -> float:

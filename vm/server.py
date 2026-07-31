@@ -407,6 +407,10 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         await ws.send_json({"type": "hello_ack", "server_sample_rate": config.TARGET_SR})
     elif kind == "played":
         state.last_played = str(msg.get("id") or "")
+        # Playback finished, so the agent is no longer speaking. The client is the only party
+        # that knows when a clip actually ended — the server only knows when it finished
+        # sending — so the receipt is what closes the state machine back to idle.
+        await _set_agent_state(state, "idle")
     elif kind == "client_error":
         state.last_error = f"client: {str(msg.get('message'))[:300]}"
 
