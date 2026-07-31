@@ -4,107 +4,413 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="dark light" />
+<meta name="theme-color" content="#080b11" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#e7e9e7" media="(prefers-color-scheme: light)" />
 <title>voice-mode</title>
 <link rel="icon" href="data:," /><!-- suppress the favicon 404; there is no icon to serve -->
 <style>
+  /* ===========================================================================
+     DESIGN NOTE — "dial light"
+
+     This is a listening instrument, not a chat app, so it borrows from the things
+     that actually listen: a hydrophone bezel, a VU scale, the warm sodium glow of a
+     receiver dial in a dark room.
+
+     ONE idea carries the whole colour system: COLOUR TEMPERATURE ENCODES WHO HAS
+     THE FLOOR.  Warm amber light = a human is being heard.  Cool blue light = the
+     machine has it (thinking, or speaking).  That is legible at a glance from the
+     other side of a room, survives colour-blindness because each state also has its
+     own MOTION (voice-driven for you, a slow radar sweep while it works, a breath
+     while it speaks), and it repeats all the way down to the 3px dot beside each
+     transcript row.
+
+     Type is split by who is talking: MONO for everything the machine says about
+     itself (wordmark, stage readout, speaker tags, the read boundary) and the system
+     SANS for words that were actually spoken.  Nothing is fetched — no webfonts, no
+     images; the grain is an inline SVG turbulence filter.
+     =========================================================================== */
+
   :root {
-    --bg:#07090c; --fg:#e9eef5; --dim:#7d8899; --ok:#5eead4; --err:#fb7185;
-    --card:#0e1319; --edge:#ffffff12; --level:0;
+    color-scheme:dark light;
+    --level:0;
+
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI Variable Text","Segoe UI",
+           Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"Cascadia Mono","Roboto Mono","SF Mono",Menlo,Consolas,
+           "Liberation Mono",monospace;
+
+    /* --- night (default): a dark room with a lit instrument in it --- */
+    --bg:#080b11; --bg-deep:#04060a; --bg-lift:#0c1018;
+    --fg:#e7eaf1; --dim:#79849b; --faint:#525c72;
+    --card:#0d121a; --edge:#ffffff14; --edge-2:#ffffff26;
+
+    --warm:#ffb35e;        /* strokes + type when a human has the floor */
+    --cool:#8fb4ff;        /* strokes + type when the machine has it    */
+    --glow-warm:#ff9f3d;   /* the light itself, which wants more punch  */
+    --glow-cool:#6f9dff;
+    --err:#ff8172;
+    --ok:var(--warm);      /* the original token name, kept so nothing dangles */
+
+    --aura-blend:normal; --aura-k:1;
+    /* How much light the lens holds. On a dark ground amber-inside-black reads as emitted
+       light; on a bright ground the same wash reads as dirty paint, so daylight keeps the
+       lens nearly black and puts the signal in a crisper rim instead. */
+    --lamp-rim:55%; --lamp-in:52%; --lamp-core:17%;
   }
   @media (prefers-color-scheme: light) {
-    :root { --bg:#f4f6f8; --fg:#0d1117; --dim:#5b6675; --card:#ffffff; --edge:#0000000f; }
+    /* Daylight in the same room. The instrument does NOT invert — the orb stays a dark
+       lens (its label must therefore stay light in BOTH themes; making it inherit --fg
+       once produced dark-on-dark, invisible on a dark-mode machine and only caught by a
+       headless screenshot). What inverts is the ground, and with it the aura: on paper a
+       glow reads as nothing, so it multiplies into a coloured halation instead. */
+    :root {
+      --bg:#e7e9e7; --bg-deep:#d9dcda; --bg-lift:#f3f4f2;
+      --fg:#101519; --dim:#5b6572; --faint:#8b939d;
+      --card:#fbfbfa; --edge:#0f172a1f; --edge-2:#0f172a33;
+
+      --warm:#a45c07;
+      --cool:#3559bd;
+      --glow-warm:#e07a12;
+      --glow-cool:#6c8fe0;
+      --err:#c0392b;
+
+      /* On paper a glow reads as nothing, so the aura multiplies into a coloured
+         halation instead — and needs more of itself to register. */
+      --aura-blend:multiply; --aura-k:1.5;
+      --lamp-rim:95%; --lamp-in:24%; --lamp-core:7%;
+    }
   }
-  * { box-sizing:border-box; }
-  html,body { height:100%; margin:0; }
+
+  *,*::before,*::after { box-sizing:border-box; }
+  html { height:100%; }
   body {
-    background:var(--bg); color:var(--fg);
-    font:16px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    margin:0; min-height:100vh; min-height:100dvh;
+    color:var(--fg);
+    font:400 16px/1.55 var(--sans);
+    -webkit-font-smoothing:antialiased;
+    -webkit-tap-highlight-color:transparent;
+    overflow:hidden;
+    background-color:var(--bg);
+    /* Deliberately no coloured wash here. The only light in the room comes from the orb,
+       which moves as the transcript grows — a fixed page glow floats free of it and reads
+       as a smudge the moment the log appears. */
+    background-image:
+      /* film grain, so the large flat gradients have a surface instead of banding */
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n' x='0' y='0'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.06'/%3E%3C/svg%3E"),
+      radial-gradient(150% 78% at 50% 112%, var(--bg-deep), transparent 66%),
+      linear-gradient(179deg, var(--bg-lift), var(--bg) 42%, var(--bg-deep));
+    background-repeat:repeat,no-repeat,no-repeat;
+    background-size:140px 140px,auto,auto;
+    background-attachment:fixed;
+
+    display:grid;
+    grid-template-rows:auto minmax(0,1fr) auto;
+    justify-items:center;
+    row-gap:clamp(.7rem,2.4vh,1.35rem);
+    padding:
+      calc(env(safe-area-inset-top,0px)    + clamp(.95rem,3vh,1.7rem))
+      calc(env(safe-area-inset-right,0px)  + 1rem)
+      calc(env(safe-area-inset-bottom,0px) + clamp(.8rem,2vh,1.3rem))
+      calc(env(safe-area-inset-left,0px)   + 1rem);
+  }
+
+  /* Rows are assigned explicitly rather than by source order, so hiding the wordmark in
+     landscape (or an element appearing later) cannot shuffle the stage and the transcript
+     up a row — which is exactly what dropped the log into the middle of the page. */
+  h1    { grid-row:1; }
+  #stage{ grid-row:2; }
+  #log  { grid-row:3; }
+
+  /* --- wordmark ---------------------------------------------------------- */
+  h1 {
+    margin:0; font-family:var(--mono);
+    font-size:.64rem; font-weight:600;
+    letter-spacing:.44em; text-indent:.44em;   /* indent cancels the trailing track */
+    text-transform:uppercase; color:var(--faint);
+  }
+
+  /* --- stage ------------------------------------------------------------- */
+  #stage {
     display:flex; flex-direction:column; align-items:center; justify-content:center;
-    gap:1.5rem; padding:1.5rem; -webkit-tap-highlight-color:transparent; overflow:hidden;
+    width:100%; min-height:0;
+    gap:clamp(.85rem,3vh,1.5rem);
   }
-  h1 { font-size:.72rem; font-weight:600; letter-spacing:.24em; text-transform:uppercase;
-       color:var(--dim); margin:0; }
 
-  /* The orb is the whole interface. It has to answer "is it hearing me?" from across a room,
-     so every state is a distinct colour AND a distinct motion — colour alone fails outdoors
-     and for colour-blind users. */
-  #orbwrap { position:relative; display:grid; place-items:center;
-             width:min(58vw,240px); aspect-ratio:1; }
+  /* The orb is the whole interface. It has to answer "is it hearing me?" from across a
+     room, so every state is a distinct colour AND a distinct motion — colour alone fails
+     outdoors and for colour-blind users.
+     Layer order, centre outwards: orb (the lens) → #ring (the live level, expanding across
+     the scale) → .bezel (a fixed graduated scale to read it against) → .aura (the room
+     light).  #orb comes FIRST in the DOM so the decoration can be selected off its state
+     class with a plain sibling combinator; z-index puts it back on top. */
+  #orbwrap {
+    position:relative; display:grid; place-items:center;
+    width:min(62vw,40dvh,300px); aspect-ratio:1;
+    /* The resting colours live HERE, on the parent, so the children only ever INHERIT them.
+       Declaring them on `#orbwrap > #ring` instead put two ids in the selector, which
+       outweighs `#orb.live ~ *` (id + class) — the scale went gold on speech and the ring
+       stayed grey. An inherited value loses to any declaration on the element itself, which
+       is exactly the precedence this needs. */
+    --signal:var(--faint); --glow:var(--faint);
+  }
+  #orbwrap > .aura, #orbwrap > #ring, #orbwrap > .bezel {
+    position:absolute; border-radius:50%; pointer-events:none;
+  }
+
+  .aura {
+    inset:-40%; z-index:0;
+    background:radial-gradient(circle closest-side,
+      color-mix(in srgb, var(--glow) 62%, transparent) 0%,
+      color-mix(in srgb, var(--glow) 22%, transparent) 34%,
+      transparent 66%);
+    mix-blend-mode:var(--aura-blend);
+    --ab:.10; --ag:.06;
+    opacity:calc((var(--ab) + var(--level) * var(--ag)) * var(--aura-k));
+    transform:scale(calc(.84 + var(--level) * .30));
+    transition:opacity .13s linear, transform .16s cubic-bezier(.2,.8,.3,1),
+               background .5s ease;
+  }
+
+  /* A needle, not a second glow: the orb's rim is already soft light, so the live level
+     reads best as one crisp edge travelling outward across the scale below.
+     NB every mask here is `closest-side`. The default sizing is farthest-corner — half the
+     DIAGONAL — which pushes a "94%" stop clean outside a square box, and the whole ring
+     silently draws nothing. */
   #ring {
-    position:absolute; inset:0; border-radius:50%; pointer-events:none;
-    /* scale is driven live by microphone RMS — this is the "when I speak" feedback */
-    transform:scale(calc(1 + var(--level) * 0.45));
-    background:radial-gradient(circle, transparent 58%, color-mix(in srgb, var(--ok) 45%, transparent) 72%, transparent 76%);
-    opacity:calc(0.15 + var(--level) * 0.85);
-    transition:opacity .09s linear, transform .09s linear;
-  }
-  #orb {
-    position:relative; width:76%; aspect-ratio:1; border-radius:50%; border:none;
-    /* The orb is a dark sphere in BOTH themes, so its label must be light in both. Inheriting
-       --fg made it dark-on-dark and unreadable in light mode — invisible on this machine
-       because the browser was in dark mode, and only caught by a headless screenshot. */
-    cursor:pointer; color:#eef3fa; font-size:1rem; font-weight:600; letter-spacing:.01em;
-    background:radial-gradient(circle at 38% 30%, #223044, #0c1118 72%);
-    box-shadow:0 0 0 1px var(--edge), 0 20px 60px #000a;
-    transition:transform .14s cubic-bezier(.34,1.56,.64,1), background .3s ease;
-  }
-  #orb:active { transform:scale(.96); }
-  #orb.live   { background:radial-gradient(circle at 38% 30%, #1d3a3a, #0a1414 72%); }
-  #orb.speaking {
-    background:radial-gradient(circle at 38% 30%, #2b3f5c, #0d1420 72%);
-    animation:breathe 1.6s ease-in-out infinite;
-  }
-  @keyframes breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.045)} }
-  @media (prefers-reduced-motion:reduce) {
-    #orb.speaking { animation:none; }
-    #ring { transition:none; }
+    inset:9%; z-index:1;   /* a clear gap off the lens, or it reads as a doubled outline */
+    /* scale is driven live by microphone RMS — this is the "when I speak" feedback,
+       and it is deliberately the ONE thing on the page that moves at speech rate */
+    border:1.5px solid var(--signal);
+    box-shadow:0 0 10px -1px color-mix(in srgb, var(--glow) 40%, transparent);
+    transform:scale(calc(1 + var(--level) * 0.28));
+    opacity:calc(0.2 + var(--level) * 0.8);
+    transition:opacity .09s linear, transform .09s linear, border-color .4s ease;
   }
 
-  #state { font-size:.88rem; color:var(--dim); min-height:1.4em; text-align:center;
-           letter-spacing:.01em; }
+  /* A graduated scale, like the bezel of any instrument you read a moving needle against.
+     It sits inside the ring's travel — rest is just below it, a loud syllable carries the
+     ring past it — so the two only mean something together. Deliberately faint: a texture
+     you notice on the second look, not a sunburst. */
+  .bezel { inset:0; z-index:2; opacity:calc(.26 + var(--level) * .34); transition:opacity .13s linear; }
+  .bezel::before { content:""; position:absolute; inset:0; border-radius:50%; }
+  .bezel {
+    background:repeating-conic-gradient(from -90deg,
+      color-mix(in srgb, var(--signal) 55%, transparent) 0deg 1deg, transparent 1deg 7.5deg);
+    -webkit-mask:radial-gradient(circle closest-side, transparent 0 86.5%, #000 87% 90.5%, transparent 91%);
+            mask:radial-gradient(circle closest-side, transparent 0 86.5%, #000 87% 90.5%, transparent 91%);
+  }
+  .bezel::before {
+    background:repeating-conic-gradient(from -90deg,
+      color-mix(in srgb, var(--signal) 80%, transparent) 0deg 1.5deg, transparent 1.5deg 30deg);
+    -webkit-mask:radial-gradient(circle closest-side, transparent 0 83.5%, #000 84% 90.5%, transparent 91%);
+            mask:radial-gradient(circle closest-side, transparent 0 83.5%, #000 84% 90.5%, transparent 91%);
+  }
+
+  /* A dark lens rather than a shiny ball: the light is IN it, gathered at the rim, and the
+     rim is what changes colour. Nothing about the sphere itself says which state it is in —
+     only the light does, which is why the same object works in both themes. */
+  #orb {
+    position:relative; z-index:3;
+    width:74%; aspect-ratio:1; border-radius:50%; border:0; padding:0 11%;
+    appearance:none; cursor:pointer; touch-action:manipulation;
+    /* The orb is a dark lens in BOTH themes, so its label must be light in both.
+       Inheriting --fg made it dark-on-dark and unreadable in light mode. */
+    color:#f1f5fb;
+    font-family:var(--mono);
+    font-size:clamp(.9rem,3.8vw,1rem); font-weight:700;
+    letter-spacing:.15em; text-transform:uppercase; line-height:1.4;
+    /* --lamp is the light INSIDE the lens and never changes with the theme, because the
+       lens is dark in both. --glow is light thrown onto the page and does. Collapsing the
+       two is what turned the rim into a muddy rust ring on the light ground. */
+    --signal:#46556f; --glow:#38455c; --lamp:#596b8c;
+    background:
+      radial-gradient(circle closest-side, transparent 58%,
+        color-mix(in srgb, var(--lamp) var(--lamp-core), transparent) 92%,
+        color-mix(in srgb, var(--lamp) 5%, transparent) 100%),
+      radial-gradient(56% 42% at 33% 14%, #ffffff1c, #ffffff00 62%),
+      radial-gradient(circle closest-side at 50% 40%, #121a25 0%, #080d14 56%, #04070b 100%);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--lamp) var(--lamp-rim), transparent),
+      inset 0 0 24px -7px color-mix(in srgb, var(--lamp) var(--lamp-in), transparent),
+      inset 0 2px 2px -1px #ffffff18,
+      0 24px 52px -18px #000000b3,
+      0 0 36px -8px color-mix(in srgb, var(--glow) 30%, transparent),
+      0 0 0 1px var(--edge-2);
+    transition:transform .16s cubic-bezier(.34,1.56,.64,1), background .45s ease,
+               box-shadow .45s ease, text-shadow .45s ease;
+  }
+  /* Sits above the orb face but is masked out of the middle, so the sweep never washes
+     over the label. A pseudo-element survives $orb.textContent = "…". */
+  #orb::before {
+    content:""; position:absolute; inset:0; border-radius:50%; pointer-events:none;
+    opacity:0; transition:opacity .35s ease;
+    background:conic-gradient(from 0deg, transparent 0deg,
+      color-mix(in srgb, var(--lamp) 40%, transparent) 46deg, transparent 104deg);
+    -webkit-mask:radial-gradient(circle closest-side, transparent 0 56%, #000 78%);
+            mask:radial-gradient(circle closest-side, transparent 0 56%, #000 78%);
+  }
+  #orb:active { transform:scale(.965); }
+  #orb:focus-visible { outline:2px solid var(--warm); outline-offset:7px; }
+
+  /* State → temperature. Set on the orb for its own body, and on every following sibling
+     for the ring, bezel and aura. Equal specificity, so source order decides: speaking
+     wins over thinking wins over live, which is the order they actually supersede in. */
+  #orb.live         { --signal:var(--warm); --glow:var(--glow-warm); --lamp:#ffa63f;
+                      text-shadow:0 0 22px #ffa63f73; }
+  #orb.live ~ *     { --signal:var(--warm); --glow:var(--glow-warm); --ab:.22; --ag:.62; }
+  #orb.thinking     { --signal:var(--cool); --glow:var(--glow-cool); --lamp:#7ba4ff;
+                      text-shadow:none; }
+  #orb.thinking ~ * { --signal:var(--cool); --glow:var(--glow-cool); --ab:.36; --ag:.26; }
+  #orb.thinking::before { opacity:1; animation:sweep 2.6s linear infinite; }
+  #orb.speaking     { --signal:var(--cool); --glow:var(--glow-cool); --lamp:#8fb4ff;
+                      animation:breathe 1.6s ease-in-out infinite;
+                      text-shadow:0 0 22px #8fb4ff8c; }
+  #orb.speaking ~ * { --signal:var(--cool); --glow:var(--glow-cool); --ab:.50; --ag:.18; }
+
+  @keyframes breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.045)} }
+  @keyframes sweep   { to { transform:rotate(360deg) } }
+  @keyframes blink   { 50% { opacity:0 } }
+
+  /* --- readout ----------------------------------------------------------- */
+  #state {
+    font-family:var(--mono); font-size:clamp(.71rem,2.9vw,.78rem);
+    letter-spacing:.05em; line-height:1.5; color:var(--dim);
+    text-align:center; text-wrap:balance;
+    max-width:min(100%,36ch); min-height:3em;   /* reserve two lines: no jump on change */
+  }
   #state.err { color:var(--err); }
-  #mic { max-width:min(100%,420px); padding:.45rem .6rem; border-radius:10px;
-         background:var(--card); color:var(--fg); font-size:.8rem;
-         border:1px solid var(--edge); cursor:pointer; }
-  #mic:focus-visible { outline:2px solid var(--ok); outline-offset:2px; }
-  /* The read boundary, sitting in the log where claude has consumed to. */
+
+  #mic {
+    appearance:none; -webkit-appearance:none;
+    max-width:min(100%,26rem);
+    padding:.46rem 2.1rem .46rem .9rem; border-radius:999px;
+    background-color:color-mix(in srgb, var(--card) 70%, transparent);
+    background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),
+                     linear-gradient(135deg,var(--dim) 50%,transparent 50%);
+    background-position:calc(100% - 1.08rem) 53%, calc(100% - .82rem) 53%;
+    background-size:5px 5px,5px 5px; background-repeat:no-repeat;
+    color:var(--dim); font-family:var(--mono); font-size:.68rem; letter-spacing:.02em;
+    border:1px solid var(--edge); cursor:pointer;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  #mic:hover { color:var(--fg); border-color:var(--edge-2); }
+  #mic:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
+  #mic[hidden] { display:none; }
+
+  /* --- transcript -------------------------------------------------------- */
+  #log {
+    position:relative; z-index:5;
+    width:min(100%,40rem); max-height:min(40dvh,21rem);
+    overflow-y:auto; overscroll-behavior:contain;
+    padding:.3rem 0; border-radius:20px;
+    background:color-mix(in srgb, var(--card) 72%, transparent);
+    -webkit-backdrop-filter:blur(14px) saturate(1.15);
+            backdrop-filter:blur(14px) saturate(1.15);
+    border:1px solid var(--edge);
+    box-shadow:0 22px 50px -32px #00000099;
+    scrollbar-width:thin; scrollbar-color:var(--edge-2) transparent;
+  }
+  #log:empty { display:none; }
+  #log::-webkit-scrollbar { width:6px; }
+  #log::-webkit-scrollbar-thumb { background:var(--edge-2); border-radius:99px; }
+
+  .row {
+    display:grid; grid-template-columns:3.5rem minmax(0,1fr);
+    gap:.7rem; align-items:baseline;
+    padding:.55rem .95rem;
+    font-size:.92rem;
+    color:var(--dim);            /* heard, but not addressed to anyone: ambient */
+    overflow-wrap:anywhere;
+  }
+  .row + .row { border-top:1px solid var(--edge); }
+  .row .tag {
+    font-family:var(--mono); font-size:.56rem; font-weight:600;
+    letter-spacing:.14em; text-transform:uppercase;
+    color:var(--faint); white-space:nowrap;
+  }
+  /* The same warm/cool axis as the orb, one channel light per speaker. Rows that were
+     merely overheard get no light, because nobody had the floor. */
+  .row.addressed .tag::before, .row.claude .tag::before {
+    content:""; display:inline-block; width:.36em; height:.36em; border-radius:50%;
+    background:currentColor; box-shadow:0 0 7px currentColor;
+    margin-right:.5em; vertical-align:.1em;
+  }
+  .row.addressed          { color:var(--fg); }
+  .row.addressed .tag     { color:var(--warm); }
+  .row.claude             { color:color-mix(in srgb, var(--fg) 86%, var(--cool)); }
+  .row.claude .tag        { color:var(--cool); }
+  .row.partial            { color:var(--faint); }
+  .row.partial .tag       { color:color-mix(in srgb, var(--warm) 62%, transparent); }
+  .row.partial > span:last-child::after {
+    content:"▌"; margin-left:.12em; color:var(--warm);
+    animation:blink 1.05s steps(2,end) infinite;
+  }
+
+  /* The read boundary, sitting in the log where claude has consumed to. Because it is a
+     POSITION and not a counter, plain CSS can dim everything past it — the rows below the
+     line are visibly still waiting, with no extra state and no JS. */
   .divider {
-    display:flex; align-items:center; gap:.6rem; margin:.1rem .9rem;
-    font-size:.62rem; letter-spacing:.1em; text-transform:uppercase;
-    color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap;
+    display:flex; align-items:center; gap:.7rem; margin:.5rem .95rem;
+    font-family:var(--mono); font-size:.55rem; font-weight:600;
+    letter-spacing:.12em; text-transform:uppercase;
+    color:var(--faint); font-variant-numeric:tabular-nums; white-space:nowrap;
   }
   .divider::before, .divider::after {
-    content:""; flex:1; height:1px; background:currentColor; opacity:.3;
+    content:""; flex:1; height:0; border-top:1px solid currentColor; opacity:.55;
   }
-  .divider.behind { color:#fbbf24; }
-  #orb.thinking { animation:pulse 1.15s ease-in-out infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.62} }
-  @media (prefers-reduced-motion:reduce) { #orb.thinking { animation:none; } }
+  /* Behind is not an error, it is a backlog — so it changes texture as well as colour:
+     a dashed line reads as provisional, and stays legible without colour vision. */
+  .divider.behind { color:var(--warm); }
+  .divider.behind::before, .divider.behind::after {
+    border-top-style:dashed; border-top-width:1px; opacity:.6;
+  }
+  /* :not(.claude) matters. The boundary is anchored to a turn id, and claude's own reply
+     carries none, so it always lands below the line — dimming it made the actual answer the
+     faintest thing on the page. Only speech waiting to be read is below the waterline. */
+  .divider ~ .row:not(.claude) { opacity:.5; }
+  .divider ~ .row.partial      { opacity:.65; }
 
-  #log { width:min(100%,600px); max-height:34vh; overflow-y:auto; background:var(--card);
-         border-radius:16px; padding:.5rem .25rem; font-size:.92rem;
-         box-shadow:0 0 0 1px var(--edge); }
-  #log:empty { display:none; }
-  .row { padding:.5rem .9rem; display:flex; gap:.7rem; align-items:baseline; }
-  .row + .row { border-top:1px solid var(--edge); }
-  .row .tag { flex:0 0 auto; font-size:.62rem; letter-spacing:.1em; text-transform:uppercase;
-              color:var(--dim); font-weight:600; padding-top:.15rem; }
-  .row.addressed .tag { color:var(--ok); }
-  .row.partial { color:var(--dim); }
-  .row.partial .tag { color:var(--ok); }
-  .row.partial span:last-child::after {
-    content:"▌"; margin-left:.15em; animation:blink 1s steps(2) infinite;
+  /* Phone in landscape. The orb is sized in dvh so it shrinks with the viewport, but at
+     40dvh the stage plus the transcript still overran a 390px-tall window and body's
+     overflow:hidden silently cropped the bottom of the log. Everything tightens together. */
+  @media (max-height:560px) {
+    h1 { display:none; }
+    #orbwrap { width:min(30dvh,44vw,168px); }
+    #stage { gap:.55rem; }
+    #state { min-height:1.6em; }
+    body { row-gap:.5rem; }
+    #log { max-height:34dvh; border-radius:14px; }
+    .row { padding:.4rem .8rem; font-size:.86rem; }
   }
-  @keyframes blink { 50% { opacity:0 } }
-  .row.claude { color:var(--dim); font-style:italic; }
-  .row.claude .tag { color:#93b4ff; font-style:normal; }
+
+  @media (prefers-reduced-motion:reduce) {
+    /* Level feedback survives — it is the point of the page — but everything that loops
+       on its own stops, and the ring answers in brightness rather than in movement. */
+    #orb.speaking, #orb.thinking::before, .row.partial > span:last-child::after {
+      animation:none;
+    }
+    #ring { transform:none; transition:opacity .12s linear; }
+    .aura { transform:scale(1); transition:opacity .13s linear; }
+    #orb { transition:background .45s ease, box-shadow .45s ease; }
+  }
 </style>
 </head>
 <body>
   <h1>voice&#8209;mode</h1>
-  <div id="orbwrap"><div id="ring"></div><button id="orb">Tap to start</button></div>
-  <div id="state">idle</div>
-  <select id="mic" hidden aria-label="Microphone"></select>
+
+  <main id="stage">
+    <!-- #orb is first so the decoration can be selected off its state class with a sibling
+         combinator; z-index paints it back on top. -->
+    <div id="orbwrap">
+      <button id="orb">Tap to start</button>
+      <div id="ring"></div>
+      <div class="bezel" aria-hidden="true"></div>
+      <div class="aura" aria-hidden="true"></div>
+    </div>
+    <div id="state">idle</div>
+    <select id="mic" hidden aria-label="Microphone"></select>
+  </main>
+
   <div id="log" role="log" aria-live="polite"></div>
 
 <script>
