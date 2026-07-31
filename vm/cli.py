@@ -220,6 +220,27 @@ def cmd_consumed(args) -> Dict[str, Any]:
 def cmd_voiceprint(args) -> Dict[str, Any]:
     from . import voiceprint
 
+    if getattr(args, "owner", None) is None:
+        args.owner = config.owner_name()
+
+    if getattr(args, "learn_from", None):
+        import glob
+
+        target = args.learn_from
+        paths = sorted(glob.glob(os.path.join(target, "*.wav"))) if os.path.isdir(target) else [target]
+        emb = voiceprint.Embedder()
+        if not emb.available:
+            return {"error": f"speaker model missing: {emb.model_path}"}
+        results, total = [], 0
+        for p in paths:
+            if ".excerpt-" in os.path.basename(p):
+                continue          # excerpts are single-speaker clips of OTHER people
+            r = voiceprint.enroll_from_wav(p, args.owner, emb, channel=args.channel)
+            total += r["enrolled"]
+            results.append({"file": os.path.basename(p), **r})
+        return {"learned_from": len(results), "samples_enrolled": total,
+                "files": results, "known": voiceprint.known()}
+
     if getattr(args, "forget", None):
         return {"forgot": args.forget, "ok": voiceprint.forget(args.forget)}
     return {
@@ -283,6 +304,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vpp.add_argument("--forget", default=None, metavar="NAME",
                      help="delete a learned voice")
+    vpp.add_argument("--learn-from", default=None, metavar="WAV_OR_DIR",
+                     help="bootstrap from existing recordings (e.g. meeting-copilot sessions)")
+    vpp.add_argument("--owner", default=None,
+                     help="name to learn under (default: VM_OWNER)")
+    vpp.add_argument("--channel", type=int, default=0,
+                     help="0 = mic/left (you), 1 = system/right (everyone else)")
 
     c = sub.add_parser("consumed", help="tell the client how far you have read (mc-style)")
     c.add_argument("--session", default="dev")

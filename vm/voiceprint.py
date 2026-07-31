@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import wave
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -39,18 +40,21 @@ from . import config
 AUTO_THRESHOLD = 0.50
 """At or above this, treat the speaker as the owner without a wake phrase.
 
-Set from measurement, not taste. TitaNet-large on real captures from this machine, 2026-07-29:
+Set from measurement, not taste. Against a 180-sample centroid bootstrapped from meeting-copilot
+recordings, scored on audio captured through a *different* device and pipeline (the headset ->
+browser -> tunnel path):
 
-    JJ vs JJ (three separate sessions)   0.644, 0.660, 0.812
-    JJ vs two different TTS voices       0.083 .. 0.201
+    JJ, three voice-mode sessions          0.711, 0.782, 0.801   <- accepted
+    Three different TTS voices             0.000, 0.066, 0.132   <- rejected
+    Real colleagues, three meetings        0.035, 0.055, 0.096   <- rejected
 
-0.50 sits ~2.5x above the highest impostor score and well below the lowest genuine one, so both
-error modes need a large excursion to occur. An earlier 0.62 was inside the noise of genuine
-single-sample variation — and the gallery compares against a *centroid*, which scores higher
-than any single pair, so the real operating margin is wider still.
+Lowest genuine 0.711 against highest impostor 0.132 — a 5.4x margin, with 0.50 sitting near the
+midpoint. That the print *generalises across recording setups* is the important part: it was
+learned from meeting audio and still recognises him through a completely different microphone
+chain, which is what makes silent enrolment viable.
 
-Worth noting: the agent's own synthesized replies score 0.13-0.20 against JJ, so the tunnel
-cannot mistake itself for him even when echo cancellation lets its own voice back in."""
+Worth noting: the agent's own synthesized replies score 0.00-0.16, so the tunnel cannot mistake
+itself for him even when echo cancellation lets its own voice back in."""
 
 ENROLL_MIN_SECONDS = 1.0
 """Utterances shorter than this carry too little voice to learn from."""
@@ -182,6 +186,79 @@ def forget(name: str, path: Optional[str] = None) -> bool:
         _save(data, path)
         return True
     return False
+
+
+def speech_windows(
+    samples: np.ndarray,
+    sample_rate: int = config.TARGET_SR,
+    window_s: float = 4.0,
+    max_windows: int = 40,
+    floor: float = 0.02,
+) -> List[np.ndarray]:
+    """Pick the loudest non-overlapping windows that plausibly contain speech.
+
+    Deliberately crude — this is enrolment, not recognition. Taking the loudest windows spread
+    across a long recording samples many different sentences and moods, which is what makes a
+    centroid general rather than a fingerprint of one sentence.
+    """
+    n = int(sample_rate * window_s)
+    if samples.size < n:
+        return []
+    scored = []
+    for i in range(0, samples.size - n, n):
+        w = samples[i : i + n]
+        r = float(np.sqrt(np.mean(w * w)))
+        if r >= floor:
+            scored.append((r, i))
+    scored.sort(reverse=True)
+    # Spread the picks over the file rather than clustering on the single loudest passage.
+    picked = sorted(i for _r, i in scored[: max_windows * 3])
+    step = max(1, len(picked) // max_windows) if picked else 1
+    return [samples[i : i + n] for i in picked[::step]][:max_windows]
+
+
+def enroll_from_wav(
+    path: str,
+    name: str,
+    embedder: "Embedder",
+    channel: int = 0,
+    max_windows: int = 25,
+    gallery: Optional[str] = None,
+) -> Dict[str, int]:
+    """Learn a voice from one recording's channel. Returns `{windows, enrolled}`.
+
+    Built for `meeting-copilot` session WAVs, which are 16 kHz stereo with **mic on the left and
+    system audio on the right** — so channel 0 is JJ speaking, already labelled by construction
+    with no diarization required. Hours of his real voice, in many rooms and moods, is a far
+    better starting print than anything a scripted enrolment sentence would produce.
+
+    **Only embeddings are computed.** No transcription, no audio is copied, and what lands in the
+    gallery is a 192-dim centroid from which speech cannot be reconstructed — which is what makes
+    it acceptable to point this at confidential meeting recordings.
+    """
+    with wave.open(path, "rb") as w:
+        n_ch, width, rate, n_frames = (
+            w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+        )
+        raw = w.readframes(n_frames)
+    if width != 2:
+        return {"windows": 0, "enrolled": 0}
+    a = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if n_ch > 1:
+        a = a[channel::n_ch]
+    if rate != config.TARGET_SR:
+        from . import asr as _asr
+
+        a = _asr.resample_linear(a, rate, config.TARGET_SR)
+
+    windows = speech_windows(a, config.TARGET_SR, max_windows=max_windows)
+    enrolled = 0
+    for w_ in windows:
+        emb = embedder.embed(np.ascontiguousarray(w_))
+        if emb is not None:
+            enroll(name, emb, path=gallery)
+            enrolled += 1
+    return {"windows": len(windows), "enrolled": enrolled}
 
 
 def should_address(
