@@ -133,6 +133,12 @@ def session_dir() -> str:
     )
 
 
+def owner_name() -> str:
+    """Whose voice this tunnel belongs to. One operator, so a constant is enough — but it is a
+    name rather than a boolean so a gallery can hold other speakers later (to *exclude* them)."""
+    return _env("VM_OWNER", "me")
+
+
 def models_dir() -> str:
     """Where downloaded models live (Piper voices, Parakeet). Gitignored — models are
     downloaded, never vendored."""

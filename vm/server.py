@@ -24,7 +24,7 @@ import numpy as np
 from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
-from . import config, security, store, tts
+from . import config, security, store, tts, voiceprint
 from .wake import WakeGate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
@@ -49,6 +49,8 @@ class TunnelState:
         self.client_sr: int = config.TARGET_SR
         self.consumed_cursor: int = -1
         self.agent_state: str = "idle"
+        self.embedder = voiceprint.Embedder()
+        self.voice_samples: int = 0
         self.partial_busy: bool = False
         self.last_partial_at: float = 0.0
         self.partial_text: str = ""
@@ -91,6 +93,8 @@ class TunnelState:
             "last_played": self.last_played,
             "last_error": self.last_error,
             "wake_enabled": self.wake.enabled,
+            "voice_enrolled_samples": self.voice_samples,
+            "voiceprint_available": self.embedder.available,
             "wake_phrases": list(self.wake.phrases),
             "tts_backend": tts.available(),
             "asr_model": self.recognizer.model_name,
@@ -439,7 +443,26 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # Session-relative audio time, not wall clock: it is monotonic, it matches the timestamps
     # written to the log, and it lets the gate compare "silence between turns" rather than
     # "time since the last transcription finished".
-    addressed, agent_text = state.wake.evaluate(text, now=t_start, ended=t_end)
+    wake_said, agent_text = state.wake.evaluate(text, now=t_start, ended=t_end)
+
+    # Voice identity. Learn from turns the wake phrase already confirmed, and let a confident
+    # match grant attention on turns where it did not fire. Additive only — see
+    # voiceprint.should_address for why a match can never withhold attention.
+    speaker, similarity = None, 0.0
+    if state.embedder.available:
+        try:
+            emb = await loop.run_in_executor(None, state.embedder.embed, samples)
+            if emb is not None:
+                speaker, similarity = voiceprint.match(emb)
+                if wake_said:
+                    rec = voiceprint.enroll(config.owner_name(), emb)
+                    state.voice_samples = int(rec.get("count", 0))
+        except Exception as exc:      # identity is a bonus; never break a turn over it
+            state.last_error = f"voiceprint: {exc}"
+
+    addressed, reason = voiceprint.should_address(
+        wake_said, speaker, similarity, owner=config.owner_name()
+    )
     turn = store.append_turn(
         session=state.session,
         text=agent_text,
@@ -447,6 +470,7 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         t_end=t_end,
         addressed=addressed,
     )
+    turn["reason"] = reason
     state.turns_logged += 1
     state.partial_text = ""  # the final turn supersedes any live preview
     await _broadcast_json(state, {"type": "turn", **turn})
