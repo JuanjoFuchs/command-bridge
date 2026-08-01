@@ -287,7 +287,13 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
     # Bounded so a stuck VAD can never silence the agent permanently.
     waited = 0.0
     announced = False
-    while waited < 15.0:
+    # A muted microphone cannot be mid-sentence. Without this the hold ran anyway: muting stops
+    # frames arriving, so nothing ever closes the utterance and `speech_active` stays stuck true
+    # from the last frame before the mute — the agent then announces it is waiting for someone to
+    # finish speaking who has physically switched their microphone off. JJ, live 2026-08-01:
+    # "whenever I mute, you say that you're listening and you're waiting for me to finish, but
+    # I'm muted."
+    while waited < 15.0 and not state.muted:
         if state.buffer.speech_active:
             if not announced:
                 await _set_agent_state(state, "waiting")
@@ -548,7 +554,17 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         timing.stamp(state.session, "verbose_toggled", value=state.verbose)
     elif kind == "muted":
         state.muted = bool(msg.get("value"))
+        if state.muted:
+            # Flush whatever was mid-sentence when the mute landed. Two reasons: the buffer would
+            # otherwise sit forever holding a half-utterance that no further frame can close, and
+            # muting mid-thought should not silently eat the words already spoken — the same
+            # guarantee a dropped socket gets.
+            try:
+                await _flush(state, asyncio.get_running_loop())
+            except Exception as exc:
+                state.last_error = f"flush on mute failed: {exc}"
         await _broadcast_json(state, {"type": "muted", "value": state.muted})
+        await _set_agent_state(state, "idle" if state.muted else state.agent_state)
     elif kind == "client_error":
         state.last_error = f"client: {str(msg.get('message'))[:300]}"
 

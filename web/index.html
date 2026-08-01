@@ -502,7 +502,23 @@
     } else {
       $log.appendChild(d);
     }
-    $log.scrollTop = $log.scrollHeight;
+    revealRow(d);
+  }
+
+  // Scroll so THIS row's last line is against the bottom edge. Two bugs live here, both of which
+  // JJ saw as "the last one is cut off":
+  //
+  //   * `scrollTop = scrollHeight` ran before the browser had wrapped the text, so it scrolled to
+  //     the height the log had BEFORE the new row grew it. A long reply lost its final lines.
+  //   * once replies started inserting above the read-boundary divider, "scroll to the bottom" was
+  //     scrolling past the very row that had just arrived.
+  //
+  // rAF waits for layout, and targeting the row instead of the container fixes both.
+  function revealRow(el) {
+    requestAnimationFrame(() => {
+      const target = el.offsetTop + el.offsetHeight - $log.clientHeight;
+      $log.scrollTop = Math.max(0, target);
+    });
   }
 
   // The read boundary lives INSIDE the log, sitting after the last turn claude has consumed —
@@ -584,9 +600,12 @@
     catch (e) { diag.errors.push("wakeLock: " + e.message); }
   }
   document.addEventListener("visibilitychange", async () => {
-    if (running && wakeLock !== null && document.visibilityState === "visible") {
-      await acquireWakeLock();
-    }
+    if (!running || document.visibilityState !== "visible") return;
+    if (wakeLock !== null) await acquireWakeLock();
+    // Coming back to the foreground is the ONE moment a reconnect is certain to be able to
+    // succeed, so retry immediately here rather than waiting out whatever backoff had accrued
+    // while the tab was suspended and every attempt was doomed.
+    if (!ws || ws.readyState !== WebSocket.OPEN) { reconnectDelay = 0; scheduleReconnect(true); }
   });
 
   // --- capture --------------------------------------------------------------
@@ -813,10 +832,58 @@
         tellServer("verbose", verbose);
         resolve();
       };
-      ws.onclose = () => { diag.connected = false; if (running) setState("disconnected", "err"); };
+      ws.onclose = () => {
+        diag.connected = false;
+        if (running) scheduleReconnect();
+      };
       ws.onerror = () => { diag.errors.push("websocket error"); resolve(); };
       ws.onmessage = onMessage;
     });
+  }
+
+  // --- staying connected ----------------------------------------------------
+  // Android suspends a backgrounded tab, so the socket dies whenever the phone locks or JJ
+  // switches apps. The MICROPHONE genuinely cannot record in the background — that is a platform
+  // rule, not something to work around — but needing a manual page refresh to get the session
+  // back is entirely self-inflicted. JJ, live 2026-08-01: "whenever I switch screens or lock my
+  // phone for just up to a minute, it disconnects and I have to refresh."
+  let reconnectTimer = null, reconnectDelay = 0, reconnecting = false;
+  const RECONNECT_MIN = 500, RECONNECT_MAX = 8000;
+
+  function scheduleReconnect(immediate) {
+    if (!running || reconnecting) return;
+    clearTimeout(reconnectTimer);
+    // Backoff, so a server that is genuinely down is not hammered — but a hidden tab waits for
+    // the return to foreground instead of burning retries it cannot succeed at anyway.
+    const delay = immediate ? 0 : (reconnectDelay = Math.min(
+      RECONNECT_MAX, reconnectDelay ? reconnectDelay * 2 : RECONNECT_MIN
+    ));
+    setState(delay > 1500 ? "reconnecting…" : "reconnecting", "err");
+    reconnectTimer = setTimeout(reconnect, delay);
+  }
+
+  async function reconnect() {
+    if (!running || reconnecting) return;
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    reconnecting = true;
+    try {
+      // The AudioContext is suspended along with the tab; without resuming it the socket comes
+      // back and no audio ever flows, which looks exactly like a broken microphone.
+      if (ctx && ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
+      await openSocket(ctx ? ctx.sampleRate : 48000);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        reconnectDelay = 0;
+        diag.reconnects = (diag.reconnects || 0) + 1;
+        setState(muted ? "muted — tap Mic on to talk" : 'say "hey claude…"');
+      } else {
+        scheduleReconnect();
+      }
+    } catch (e) {
+      diag.errors.push("reconnect: " + e.message);
+      scheduleReconnect();
+    } finally {
+      reconnecting = false;
+    }
   }
 
   async function onMessage(ev) {
@@ -863,7 +930,9 @@
           $log.appendChild($partial);
         }
         $partial.lastChild.textContent = msg.text;
-        $log.scrollTop = $log.scrollHeight;
+        // Same reason as addRow: the live preview grows a line at a time as you keep talking,
+        // and measuring before the reflow leaves the newest words below the fold.
+        revealRow($partial);
       } else if (msg.type === "consumed") {
         diag.consumed = msg.cursor;
         diag.pending = msg.pending;
