@@ -331,17 +331,23 @@ def run(headed: bool, keep: bool) -> int:
         # spoken when JJ had heard nothing.
         check(all(i for i in played_ids), "every queued clip acknowledged playback")
 
-        # --- the two toggles -----------------------------------------------------
-        print("\n== mute and verbose toggles ==")
-        check(page.locator("#mute").is_visible() and page.locator("#verbose").is_visible(),
-              "both control buttons render")
+        # --- the orb is the microphone control -----------------------------------
+        # One control, not two. JJ, live: "it doesn't make sense that it's a separate button from
+        # the middle orb... Maybe I can tap it again to mute and unmute."
+        print("\n== orb mutes, verbose switch ==")
+        check(page.locator("#mute").count() == 0,
+              "the separate mute button is gone, the orb owns it")
+        check(page.locator("#verbose").is_visible(), "the verbose switch renders")
 
         frames_before = page.evaluate("() => window.__vm.framesSent")
-        page.click("#mute")
+        page.click("#orb")
         page.wait_for_timeout(1200)
         muted_state = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
-        check(muted_state.get("muted") is True, "mute reached the server",
+        check(muted_state.get("muted") is True, "tapping the orb muted, and the server knows",
               json.dumps(muted_state.get("muted")))
+        check(page.locator("#orb").text_content().strip() == "Muted",
+              "the orb itself shows the muted state",
+              page.locator("#orb").text_content())
         frames_during = page.evaluate("() => window.__vm.framesSent")
         page.wait_for_timeout(900)
         frames_after = page.evaluate("() => window.__vm.framesSent")
@@ -351,15 +357,25 @@ def run(headed: bool, keep: bool) -> int:
               "muted client sends no audio frames",
               f"before={frames_before} during={frames_during} after={frames_after}")
 
-        page.click("#mute")
-        page.wait_for_timeout(1200)
-        check(page.locator("#mute").get_attribute("aria-pressed") == "false",
-              "unmuting restores the control state")
+        # Crucially, muting must NOT drop the session — that was the old stop() behaviour.
+        check(page.evaluate("() => window.__vm.connected") is True,
+              "muting keeps the socket connected")
+
+        page.click("#orb")
+        page.wait_for_timeout(1500)
+        unmuted = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
+        check(unmuted.get("muted") is False, "tapping again unmuted")
+        resumed = page.evaluate("() => window.__vm.framesSent")
+        page.wait_for_timeout(900)
+        check(page.evaluate("() => window.__vm.framesSent") > resumed,
+              "audio flows again after unmuting")
 
         page.click("#verbose")
         page.wait_for_timeout(800)
         v = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
-        check(v.get("verbose") is True, "verbose toggle reached the server")
+        check(v.get("verbose") is True, "verbose switch reached the server")
+        check(page.locator("#verbose").get_attribute("aria-checked") == "true",
+              "the switch reports its state as a switch, not a button")
         # The agent learns about it WITHOUT polling: it rides back on the /consumed call that
         # every `watch` already makes. A preference the agent must remember to ask about is a
         # preference that silently stops being honoured.

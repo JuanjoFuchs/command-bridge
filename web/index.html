@@ -287,25 +287,51 @@
     display:flex; gap:.5rem; align-items:center; justify-content:center;
     margin-top:-.2rem;
   }
-  .ctl {
-    appearance:none; -webkit-appearance:none;
-    min-height:44px; min-width:5.6rem; padding:.5rem .95rem; border-radius:999px;
+  /* A real switch, not a button that reports its own state in a word. The distinction matters
+     here because the label is a NOUN ("Verbose"): a button saying "Verbose" is ambiguous about
+     whether it describes the current mode or the one tapping would produce, and a track-and-knob
+     removes the question by showing position. */
+  #verbose {
+    display:inline-flex; align-items:center; gap:.6rem;
+    min-height:44px; padding:.4rem .9rem .4rem .55rem; border-radius:999px;
+    border:1px solid var(--edge);
     background-color:color-mix(in srgb, var(--card) 70%, transparent);
-    color:var(--dim); font-family:var(--mono); font-size:.68rem; letter-spacing:.04em;
-    border:1px solid var(--edge); cursor:pointer; white-space:nowrap;
-    transition:color .18s ease, border-color .18s ease, background-color .18s ease;
+    cursor:pointer; user-select:none; -webkit-user-select:none;
+    transition:border-color .18s ease, background-color .18s ease;
   }
-  .ctl:hover { color:var(--fg); border-color:var(--edge-2); }
-  .ctl:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
-  /* ON states are colour-coded by MEANING, not by "active": a muted mic is a warning because
-     the tunnel is deaf and that is easy to forget, while verbose is merely a mode. */
-  #mute[aria-pressed="true"] {
-    color:var(--err); border-color:color-mix(in srgb, var(--err) 55%, transparent);
-    background-color:color-mix(in srgb, var(--err) 12%, transparent);
+  #verbose:hover { border-color:var(--edge-2); }
+  #verbose:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
+  .sw-track {
+    position:relative; flex:0 0 auto; width:2.3rem; height:1.3rem; border-radius:999px;
+    background:color-mix(in srgb, var(--edge-2) 55%, transparent);
+    transition:background-color .2s ease;
   }
-  #verbose[aria-pressed="true"] {
-    color:var(--warm); border-color:color-mix(in srgb, var(--warm) 55%, transparent);
-    background-color:color-mix(in srgb, var(--warm) 12%, transparent);
+  .sw-knob {
+    position:absolute; top:.17rem; left:.19rem; width:.96rem; height:.96rem; border-radius:50%;
+    background:var(--dim);
+    transition:transform .2s cubic-bezier(.3,.8,.3,1), background-color .2s ease;
+  }
+  .sw-label {
+    font-family:var(--mono); font-size:.68rem; letter-spacing:.04em; color:var(--dim);
+    transition:color .18s ease;
+  }
+  #verbose[aria-checked="true"] .sw-track { background:color-mix(in srgb, var(--warm) 62%, transparent); }
+  #verbose[aria-checked="true"] .sw-knob  { transform:translateX(.98rem); background:var(--bg); }
+  #verbose[aria-checked="true"] .sw-label { color:var(--warm); }
+  #verbose[aria-checked="true"] { border-color:color-mix(in srgb, var(--warm) 50%, transparent); }
+
+  /* Muted is a WARNING state on the orb, not a neutral one: the tunnel is deaf and that is the
+     easiest thing in this whole interface to forget you did.
+
+     The whole dial goes cold, not just the label. A warm ring around the word "Muted" says
+     "running" and "off" at the same time, and on a device you glance at rather than read, the
+     glow wins that argument — so the glow has to agree with the text. */
+  #orb.muted {
+    color:var(--err);
+    border-color:color-mix(in srgb, var(--err) 55%, transparent);
+  }
+  #orb.muted, #orb.muted ~ * {
+    --signal:var(--err); --glow:transparent; --lamp:#00000000; --ab:.05; --ag:.10;
   }
 
   #mic {
@@ -438,9 +464,13 @@
     <!-- Flanking the orb, one each side: the two things you reach for WITHOUT looking. Both are
          toggles with a persistent on/off state, so they say what they ARE, not what tapping them
          would do — a button labelled with its own action reads as a lie half the time. -->
+    <!-- One control, not two. The orb owns the microphone (tap to start, tap again to mute), so
+         the only thing left worth a switch is how much the agent narrates. -->
     <div id="controls">
-      <button id="mute" class="ctl" aria-pressed="false">Mic on</button>
-      <button id="verbose" class="ctl" aria-pressed="false">Quiet</button>
+      <div id="verbose" role="switch" tabindex="0" aria-checked="false" aria-label="Verbose mode">
+        <span class="sw-track"><span class="sw-knob"></span></span>
+        <span class="sw-label">Verbose</span>
+      </div>
     </div>
     <div id="state">idle</div>
     <select id="mic" hidden aria-label="Microphone"></select>
@@ -455,7 +485,6 @@
   const $state = document.getElementById("state");
   const $log = document.getElementById("log");
   const $mic = document.getElementById("mic");
-  const $mute = document.getElementById("mute");
   const $verbose = document.getElementById("verbose");
 
   const token = new URLSearchParams(location.search).get("token") || "";
@@ -553,26 +582,32 @@
 
   function setMuted(next) {
     muted = next;
-    $mute.setAttribute("aria-pressed", String(muted));
-    $mute.textContent = muted ? "Muted" : "Mic on";
     localStorage.setItem("vm.muted", muted ? "1" : "0");
     // The server is told so `vm status` can say "he has himself muted" — otherwise a silent
     // tunnel and a muted one look identical from the agent's side, and the agent goes hunting
     // for a broken microphone that is working perfectly.
     tellServer("muted", muted);
-    if (running) setState(muted ? "muted — tap Mic on to talk" : 'say "hey claude…"');
+    if (!running) return;
+    // The orb IS the mute indicator now, so its own face has to carry the state — there is no
+    // second control left to read it off.
+    $orb.classList.toggle("muted", muted);
+    $orb.textContent = muted ? "Muted" : "Listening";
+    setState(muted ? "muted — tap the orb to talk" : 'say "hey claude…"');
   }
 
   function setVerbose(next) {
     verbose = next;
-    $verbose.setAttribute("aria-pressed", String(verbose));
-    $verbose.textContent = verbose ? "Verbose" : "Quiet";
+    $verbose.setAttribute("aria-checked", String(verbose));
     localStorage.setItem("vm.verbose", verbose ? "1" : "0");
     tellServer("verbose", verbose);
   }
 
-  $mute.addEventListener("click", () => setMuted(!muted));
   $verbose.addEventListener("click", () => setVerbose(!verbose));
+  $verbose.addEventListener("keydown", (e) => {
+    // A div with role=switch is not a button, so Space and Enter have to be wired by hand or
+    // the control is unreachable without a pointer.
+    if (e.key === " " || e.key === "Enter") { e.preventDefault(); setVerbose(!verbose); }
+  });
 
   setMuted(localStorage.getItem("vm.muted") === "1");
   setVerbose(localStorage.getItem("vm.verbose") === "1");
@@ -618,8 +653,24 @@
     return out;
   }
 
+  // The orb is the ONLY microphone control. First tap grants and starts; every tap after that
+  // mutes or unmutes, and never tears the session down.
+  //
+  // JJ, live 2026-08-01: "it doesn't make sense that it's a separate button from the middle orb.
+  // Because when I tap the middle orb to start, that's what makes you listen to me. Maybe I can
+  // tap it again to mute and unmute... as soon as the page is loaded, that is connected. What the
+  // orb does is just helps us have this conversation."
+  //
+  // He is right, and the socket now opens on load to match. The ONE thing that cannot follow his
+  // model is the first tap: `getUserMedia` requires a user gesture on mobile, so a page cannot
+  // hold a microphone it was never handed. That tap is a browser rule, not a design choice.
+  async function orbTapped() {
+    if (running) { setMuted(!muted); return; }
+    await start();
+  }
+
   async function start() {
-    if (running) return stop();
+    if (running) return;
     setState("requesting microphone…");
     try {
       // Chrome's WebRTC audio processing is tuned for TELEPHONY — making speech intelligible
@@ -694,7 +745,14 @@
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (ctx.state === "suspended") await ctx.resume();
 
-    await openSocket(ctx.sampleRate);
+    // The page already connected on load, so re-announce the REAL sample rate rather than
+    // opening a second socket. `hello` is idempotent server-side — it just updates the rate the
+    // resampler uses — and a stale 48000 here would silently resample every frame wrongly.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "hello", sample_rate: ctx.sampleRate }));
+    } else {
+      await openSocket(ctx.sampleRate);
+    }
 
     source = ctx.createMediaStreamSource(micStream);
     // ScriptProcessorNode is deprecated but universally present, including headless Chrome.
@@ -800,9 +858,11 @@
       })();
     });
 
-    $orb.textContent = "Listening";
     $orb.classList.add("live");
-    setState('say "hey claude…"');
+    // Re-apply through setMuted rather than hard-coding "Listening": a mute persisted from the
+    // last session is restored before `running` is true, so the visual it wanted to paint was
+    // skipped. Without this the orb would read "Listening" on a microphone that is off.
+    setMuted(muted);
   }
 
   async function stop() {
@@ -911,7 +971,13 @@
           speaking:     "⑤ claude is speaking",
         }[msg.state];
         diag.states.push(msg.state);
-        if (label) setState(label);
+        // Now that the socket connects on page load, the server starts narrating BEFORE there is
+        // a microphone — which put "listening — say hey claude" under an orb still reading "Tap
+        // to start". Two controls disagreeing about whether the thing is on is worse than either
+        // being wrong alone, and the orb is the one telling the truth.
+        if (!running) setState("tap the orb to talk");
+        else if (muted) setState("muted — tap the orb to talk");
+        else if (label) setState(label);
         const busy = ["transcribing", "thinking", "synthesizing", "waiting"].includes(msg.state);
         $orb.classList.toggle("thinking", busy);
       } else if (msg.type === "partial") {
@@ -1031,7 +1097,15 @@
     await start();
   });
 
-  $orb.addEventListener("click", start);
+  $orb.addEventListener("click", orbTapped);
+
+  // Connect on load, before any tap. The socket needs no permission and no gesture — only the
+  // microphone does — so making the page arrive already connected costs nothing and is what JJ
+  // already believed was happening. It also means the transcript, cues and replies work the
+  // moment the page opens, and the first tap has one job instead of three.
+  (async () => {
+    try { await openSocket(48000); } catch (e) { diag.errors.push("initial connect: " + e.message); }
+  })();
   if (!token) setState("no token in URL — append ?token=…", "err");
 })();
 </script>
