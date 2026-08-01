@@ -168,6 +168,18 @@ Shortening the pause was an over-correction shipped in the same edit as the clip
 neither of us could attribute the improvement, and it made pacing worse on its own. When the only
 instrument is a person's ear, change one thing at a time."""
 
+UNDELIVERED_MAX = 8
+UNDELIVERED_MAX_AGE_S = 600.0
+"""How many replies to hold for a disconnected phone, and for how long.
+
+Bounded on BOTH axes deliberately. Unbounded, the fix is worse than the bug: you put the phone
+down for an hour, come back, and get read a stack of stale answers to questions you have stopped
+caring about — and each one costs real seconds you cannot skim past.
+
+Ten minutes and eight clips covers the case this exists for (the screen locks, a call comes in, a
+tab gets backgrounded) without covering "I left". Past that the right behaviour is to ask again,
+because by then the question probably changed."""
+
 PEAK_CEILING = 0.89
 """Synthesized audio is scaled to this peak before it is sent.
 

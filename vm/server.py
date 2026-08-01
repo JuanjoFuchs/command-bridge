@@ -60,6 +60,19 @@ class TunnelState:
         """Live too, and persisted for the same reason: this is a pacing preference tuned by ear,
         and re-setting it on every server start meant the right value lived only in a running
         process."""
+        self.undelivered: list = []
+        """Clips synthesized while nobody was connected, waiting for the phone to come back.
+
+        Android suspends a backgrounded tab, so the socket drops every time the phone locks — and
+        `/say` used to answer 409 and throw the reply away. Over one session that silently ate
+        several answers, and from JJ's side he had simply asked a question and never been told
+        anything. JJ, live 2026-08-01: "whenever the client is disconnected or you detect that my
+        phone is locked or whatever, you should queue up your reply back to me. So whenever I
+        reconnect, they all send down to me."
+
+        Bounded by BOTH count and age, because the failure mode of an unbounded queue is worse
+        than the one it fixes: reconnecting after a long break and being read a stack of stale
+        answers to questions you have stopped caring about."""
         self._clip_lock = asyncio.Lock()
         """Held across a clip's header AND its bytes, so the pair cannot be split.
 
@@ -133,6 +146,7 @@ class TunnelState:
             "last_error": self.last_error,
             "verbose": self.verbose,
             "muted": self.muted,
+            "undelivered": len(self.undelivered),
             "wake_enabled": self.wake.enabled,
             "voice_enrolled_samples": self.voice_samples,
             "voiceprint_available": self.embedder.available,
@@ -242,8 +256,8 @@ async def handle_say(request: web.Request) -> web.Response:
     fire_and_forget = bool((body or {}).get("async"))
     if not isinstance(text, str) or not text.strip():
         return web.json_response({"error": "text is required"}, status=400)
-    if not state.clients:
-        return web.json_response({"error": "no client connected"}, status=409)
+    # No 409 when nobody is connected. The reply is synthesized and held; see
+    # TunnelState.undelivered. Refusing here is what made a locked phone eat answers silently.
 
     if fire_and_forget:
         # Return before synthesis so the agent can acknowledge and keep working in parallel,
@@ -318,25 +332,54 @@ async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[st
     # Header first so the client knows how to interpret the bytes that follow — and both under
     # the clip lock, because a second clip slipping between them is what made two replies play
     # as one. See TunnelState._clip_lock.
-    await _send_clip(
-        state,
-        {
-            "type": "audio_header",
-            "id": clip_id,
-            "sample_rate": rate,
-            "bytes": len(pcm),
-            "text": text,
-            "held_for": round(waited, 1),
-        },
-        pcm,
-    )
+    header = {
+        "type": "audio_header",
+        "id": clip_id,
+        "sample_rate": rate,
+        "bytes": len(pcm),
+        "text": text,
+        "held_for": round(waited, 1),
+    }
+    if state.clients:
+        await _send_clip(state, header, pcm)
+    else:
+        # Nobody listening. Hold it rather than dropping it — see TunnelState.undelivered.
+        state.undelivered.append({"header": header, "pcm": pcm, "at": time.time()})
+        _prune_undelivered(state)
+        timing.stamp(state.session, "undelivered_queued",
+                     clip=clip_id, depth=len(state.undelivered))
     timing.stamp(state.session, "spoken", clip=clip_id, held_for=round(waited, 1))
     return {
         "queued": True,
         "id": clip_id,
         "seconds": round(len(pcm) / 2 / rate, 2),
         "held_for": round(waited, 1),
+        "delivered": bool(state.clients),
     }
+
+
+def _prune_undelivered(state: TunnelState) -> None:
+    """Drop anything too old or too far back in the queue."""
+    now = time.time()
+    state.undelivered = [
+        c for c in state.undelivered if now - c["at"] <= config.UNDELIVERED_MAX_AGE_S
+    ][-config.UNDELIVERED_MAX:]
+
+
+async def _flush_undelivered(state: TunnelState) -> int:
+    """Deliver everything that was said while nobody was listening, oldest first."""
+    _prune_undelivered(state)
+    queued, state.undelivered = state.undelivered, []
+    for clip in queued:
+        header = dict(clip["header"])
+        # Say how long it waited. A reply arriving 90 seconds after the question, with no
+        # acknowledgement that time passed, reads as the agent being slow rather than the phone
+        # having been asleep.
+        header["delayed_s"] = round(time.time() - clip["at"], 1)
+        await _send_clip(state, header, clip["pcm"])
+    if queued:
+        timing.stamp(state.session, "undelivered_flushed", count=len(queued))
+    return len(queued)
 
 
 async def _send_clip(state: TunnelState, header: Dict[str, Any], pcm: bytes) -> None:
@@ -507,6 +550,15 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
     await ws.prepare(request)
     state.clients.add(ws)
     await ws.send_json({"type": "ready", "session": state.session})
+    # Deliver anything said while the phone was asleep, before any new audio arrives.
+    try:
+        delivered = await _flush_undelivered(state)
+        if delivered:
+            await _broadcast_json(
+                state, {"type": "resumed", "delivered": delivered}
+            )
+    except Exception as exc:
+        state.last_error = f"flush undelivered failed: {exc}"
 
     loop = asyncio.get_running_loop()
     try:

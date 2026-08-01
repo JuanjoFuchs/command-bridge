@@ -911,30 +911,48 @@
   const RECONNECT_MIN = 500, RECONNECT_MAX = 8000;
 
   function scheduleReconnect(immediate) {
-    if (!running || reconnecting) return;
+    if (reconnecting) return;
+    // Deliberately NOT gated on `running`. The page connects on load now, so the socket can drop
+    // before the first tap — and when this was gated, that drop produced silence: no reconnect
+    // attempt and no message. JJ, live 2026-08-01: "the server or the UI did not show me when it
+    // was disconnected. And I tried speaking and the transcription didn't work."
+    //
+    // A retry loop that hides the disconnection is worse than no retry loop, because at least a
+    // visible "disconnected" tells you to reload.
     clearTimeout(reconnectTimer);
     // Backoff, so a server that is genuinely down is not hammered — but a hidden tab waits for
     // the return to foreground instead of burning retries it cannot succeed at anyway.
     const delay = immediate ? 0 : (reconnectDelay = Math.min(
       RECONNECT_MAX, reconnectDelay ? reconnectDelay * 2 : RECONNECT_MIN
     ));
-    setState(delay > 1500 ? "reconnecting…" : "reconnecting", "err");
+    // Say it plainly, and keep saying it. Every failed attempt repaints this, so the page can
+    // never sit looking connected while it is not.
+    setState(reconnectDelay >= RECONNECT_MAX
+      ? "disconnected — still retrying"
+      : "disconnected — reconnecting…", "err");
+    $orb.classList.remove("live");
     reconnectTimer = setTimeout(reconnect, delay);
   }
 
   async function reconnect() {
-    if (!running || reconnecting) return;
+    if (reconnecting) return;
     if (ws && ws.readyState === WebSocket.OPEN) return;
     reconnecting = true;
     try {
       // The AudioContext is suspended along with the tab; without resuming it the socket comes
-      // back and no audio ever flows, which looks exactly like a broken microphone.
+      // back and no audio ever flows, which looks exactly like a broken microphone — and is
+      // precisely the "I tried speaking and the transcription didn't work" symptom.
       if (ctx && ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
       await openSocket(ctx ? ctx.sampleRate : 48000);
       if (ws && ws.readyState === WebSocket.OPEN) {
         reconnectDelay = 0;
         diag.reconnects = (diag.reconnects || 0) + 1;
-        setState(muted ? "muted — tap Mic on to talk" : 'say "hey claude…"');
+        if (running) {
+          $orb.classList.add("live");
+          setState(muted ? "muted — tap the orb to talk" : 'say "hey claude…"');
+        } else {
+          setState("tap the orb to talk");
+        }
       } else {
         scheduleReconnect();
       }
