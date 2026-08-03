@@ -347,6 +347,45 @@ def cmd_serve(args) -> None:
     )
 
 
+def _next_action(turns, live: Optional[Dict[str, Any]]) -> str:
+    """What the agent should do RIGHT NOW, given the state this call just observed.
+
+    JJ, live 2026-08-03: *"let's not only encode this in describe. I think on every command, for
+    example in watch, whenever verbose is on, we should include a next attribute that... tells the
+    agent that it should acknowledge and respond."*
+
+    **This is better than documenting the rule and it is worth saying why.** `describe` is read
+    once, at the start of a session, and by then it is a manual — an agent holding fifty other
+    instructions will not re-derive "he has verbose on so narrate first" from something it read an
+    hour ago. A `next` field arrives at the moment it applies, carrying only the branch that is
+    actually true. Guidance keyed to state beats guidance keyed to memory.
+
+    Ordered by urgency: a fact he is waiting on beats a habit he prefers.
+    """
+    if live is None:
+        return "no server is answering — tell him you have stopped listening, then `vm serve`"
+    if not live.get("clients"):
+        return ("nobody is connected. Do NOT keep waiting silently — say out loud (in text) that "
+                "he is not reachable, and stop watching until he returns")
+    if "capturing" in live and not live.get("capturing"):
+        return ("a page is open but he has never tapped the orb, so the microphone is off. Tell "
+                "him — he is probably waiting for you")
+    if live.get("muted"):
+        return ("he has muted himself. He can still HEAR you, so say so rather than waiting — "
+                "`vm say --now` and tell him he is muted")
+    if turns:
+        parts = ["drain first: re-watch from the returned cursor until count is 0, because one "
+                 "thought often arrives as several turns"]
+        if live.get("verbose"):
+            parts.append("verbose is ON — before you run anything, `vm say --now` what you are "
+                         "about to do; never report an action after doing it")
+        return ". Then ".join(parts)
+    if live.get("verbose"):
+        return ("nothing new. Verbose is ON, so if you are about to go do something, say it "
+                "first with `vm say --now`; otherwise watch again")
+    return "nothing new — watch again from this cursor, in its own call with nothing chained to it"
+
+
 def cmd_watch(args) -> Dict[str, Any]:
     turns, cursor = store.watch(args.session, args.since, timeout=args.timeout)
     if turns:
@@ -367,10 +406,18 @@ def cmd_watch(args) -> Dict[str, Any]:
         # Surface the verbose toggle on every watch rather than making the agent poll for it.
         # JJ flips it from the page mid-conversation; a preference the agent only notices if it
         # remembers to ask is a preference that silently stops being honoured.
-        if isinstance(ack, dict) and ack.get("verbose") is not None:
-            return {"turns": turns, "cursor": cursor, "count": len(turns),
-                    "verbose": bool(ack["verbose"])}
-        return {"turns": turns, "cursor": cursor, "count": len(turns)}
+        result = {"turns": turns, "cursor": cursor, "count": len(turns)}
+        live = ack if isinstance(ack, dict) and ack.get("verbose") is not None else None
+        if live is not None:
+            result["verbose"] = bool(live["verbose"])
+            # `/consumed` answers with verbose but not the connection facts, so borrow those from
+            # status to build the same `next` the empty branch gets. Best-effort, like the ack.
+            try:
+                live = {**live, **(_request(args.session, "/status") or {})}
+            except Exception:
+                pass
+        result["next"] = _next_action(turns, live)
+        return result
 
     # An EMPTY watch is the moment the agent is about to wait again, and it is exactly where
     # "nobody is actually listening" costs the most — so say so here rather than leaving it to be
@@ -407,6 +454,11 @@ def cmd_watch(args) -> Dict[str, Any]:
             result["hint"] = "he has muted his own microphone; he will not be heard until he unmutes"
         else:
             result["listening"] = True
+    result["next"] = _next_action(
+        turns,
+        live if isinstance(live, dict) and live.get("running") is not False
+        and not live.get("error") else None,
+    )
     return result
 
 
@@ -416,7 +468,18 @@ def cmd_say(args) -> Dict[str, Any]:
         payload["voice"] = args.voice
     if getattr(args, "now", False):
         payload["async"] = True
-    return _request(args.session, "/say", payload)
+    result = _request(args.session, "/say", payload)
+    if isinstance(result, dict) and result.get("running") is not False:
+        # The single most-forgotten step in the loop. Saying something is not the end of a turn —
+        # it is the moment you must go back to listening, and an agent that stops here has left
+        # him talking to nobody.
+        result["next"] = (
+            "go straight back to `vm watch` — in its OWN call, with nothing chained to it"
+            if result.get("delivered", True) else
+            "held: nobody is connected, so this will play when he reconnects. Tell him in text "
+            "that he is unreachable rather than waiting"
+        )
+    return result
 
 
 def cmd_rate(args) -> Dict[str, Any]:
