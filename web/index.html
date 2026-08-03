@@ -1023,9 +1023,12 @@
         // TO DO. A circle cannot hold "transcribing what you said", so the line is not deleted —
         // it is demoted to instructions only, and stays empty whenever there is nothing to ask of
         // him. Numbered prefixes go too; they were scaffolding for a split that no longer exists.
+        // Name the operation, do not soften it. "Hearing you" was a friendlier word for
+        // transcribing and it cost precision — JJ, live: "it's not clear, hearing you, we should
+        // say transcribing." He is watching a machine work; the label should say which machine.
         const ORB = {
-          idle: "Listening", transcribing: "Hearing you", thinking: "Thinking",
-          synthesizing: "Composing", waiting: "Waiting", speaking: "Speaking",
+          idle: "Listening", transcribing: "Transcribing", thinking: "Thinking",
+          synthesizing: "Generating", waiting: "Waiting", speaking: "Speaking",
         };
         // Only states that require something OF HIM get a line.
         const ASK = { idle: wakePrompt(), waiting: "go on, I'll wait until you're done" };
