@@ -31,7 +31,9 @@ sys.path.insert(0, ROOT)
 
 from vm import config, security, store, tts  # noqa: E402
 
-SPOKEN = "Hey Claude, what is the status of the deploy?"
+# Built from the CONFIGURED wake name, not hardcoded. The name is a setting now, and a gate that
+# speaks the old one tests nothing except that the old one still works.
+SPOKEN = f"Hey {config.wake_name().capitalize()}, what is the status of the deploy?"
 EXPECT_WORDS = ("status", "deploy")
 REPLY = "The deploy finished twelve minutes ago and all checks passed."
 

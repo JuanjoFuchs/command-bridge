@@ -26,7 +26,13 @@ from . import config
 GREETINGS = ("hey", "hi", "ok", "okay", "yo", "hello")
 """Openers that mark an utterance as a summons even when the name that follows was garbled."""
 
-_NAME = "claude"
+def _name() -> str:
+    """The assistant's name, read live rather than frozen at import.
+
+    A module-level constant would have baked "claude" into every fuzzy comparison, so renaming
+    would have silently kept matching the old name. Read through config so `VM_WAKE_NAME` is real.
+    """
+    return config.wake_name()
 
 _RATIO_AFTER_GREETING = 0.55
 """Threshold when the token directly follows a greeting.
@@ -50,12 +56,13 @@ def _norm(text: str) -> str:
 
 
 def _is_nameish(word: str, threshold: float = _RATIO_BARE) -> bool:
-    """True if `word` is plausibly a mangled "claude" at the given confidence."""
+    """True if `word` is plausibly a mangled form of the assistant's name."""
     if not word:
         return False
-    if word == _NAME:
+    name = _name()
+    if word == name:
         return True
-    return SequenceMatcher(None, word, _NAME).ratio() >= threshold
+    return SequenceMatcher(None, word, name).ratio() >= threshold
 
 
 class WakeGate:
@@ -74,7 +81,7 @@ class WakeGate:
     ) -> None:
         # Longest first so "hey claude" wins over the bare "claude" and strips fully.
         self.phrases = sorted(
-            (_norm(p) for p in (phrases if phrases is not None else config.WAKE_PHRASES)),
+            (_norm(p) for p in (phrases if phrases is not None else config.wake_phrases())),
             key=len,
             reverse=True,
         )
@@ -126,9 +133,15 @@ class WakeGate:
         for p in self.phrases:
             if (" " + p + " ") in (" " + normalized + " "):
                 return p, False
-        for w in words:
-            if _is_nameish(w):
-                return w, False
+        # 5. The BARE name, anywhere in the sentence. Only when the name is uncommon enough to
+        #    carry that on its own — "claude" can, "thursday" cannot. Without this gate, "let's
+        #    ship it Thursday" wakes the agent, which is the objection that nearly killed a
+        #    perfectly good wake word. The constraint belongs to the NAME, not to the design,
+        #    which is why it is a setting rather than a rule.
+        if config.wake_allows_bare():
+            for w in words:
+                if _is_nameish(w):
+                    return w, False
         return None, False
 
     def evaluate(self, text: str, now: float, ended: Optional[float] = None) -> Tuple[bool, str]:

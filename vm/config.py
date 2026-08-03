@@ -131,11 +131,53 @@ MAX_UTTERANCE_MS = 120_000
 
 # -------------------------------------------------------------------- wake word
 
-WAKE_PHRASES = ("hey claude", "hi claude", "ok claude", "okay claude", "claude")
-"""Matched case-insensitively against the transcript, longest first. Text-level matching rather
-than an acoustic wake model: the ASR already runs on every buffer, so this needs no extra
-dependency, no model download, and no per-phrase training. The cost is that gating happens
-after transcription, which is fine because we are not trying to save power."""
+WAKE_NAME = "thursday"
+"""The name he calls the assistant. Override with VM_WAKE_NAME.
+
+**Not "claude", and the tool is not Claude-specific.** It holds no model, so the only thing tying
+it to one vendor was this string and some copy. JJ, live 2026-08-03: *"my goal is to be able to
+use this with any AI agent, not just cloud [Claude]."*
+
+**"thursday", chosen deliberately over "jarvis".** Jarvis is a Marvel trademark — fine in a
+private tool, a real problem the moment it ships. A day of the week initially looks like the worst
+possible wake word, because he says "let's ship it Thursday" constantly. **He spotted why that
+does not apply here: the wake phrase is a GREETING PLUS A NAME.** Nobody says "hey Thursday" in
+ordinary speech, so the combination is safe even though the bare word is not — which is exactly
+why `WAKE_REQUIRE_GREETING` below exists and why it is on."""
+
+WAKE_REQUIRE_GREETING = True
+"""Demand "hey <name>", never the bare name on its own. Override with VM_WAKE_BARE=1.
+
+With "claude" this could be off, because nobody says "claude" by accident. With a common word it
+must be on, or ordinary scheduling talk wakes the agent all day. Making it a setting rather than a
+hard rule keeps an uncommon name usable bare — the constraint belongs to the *name*, not to the
+design."""
+
+
+def wake_name() -> str:
+    return (_env("VM_WAKE_NAME") or WAKE_NAME).lower().strip()
+
+
+def wake_allows_bare() -> bool:
+    """Whether the bare name (no greeting) counts as a summons."""
+    raw = _env("VM_WAKE_BARE")
+    if raw:
+        return raw not in ("0", "false", "no", "off")
+    return not WAKE_REQUIRE_GREETING
+
+
+def wake_phrases() -> tuple:
+    """Every accepted summons, longest first so the greeting form strips fully.
+
+    Text-level matching rather than an acoustic wake model: the ASR already runs on every buffer,
+    so this needs no extra dependency, no model download, and no per-phrase training. The cost is
+    that gating happens after transcription, which is fine because we are not trying to save
+    power."""
+    name = wake_name()
+    phrases = [f"{g} {name}" for g in ("hey", "hi", "ok", "okay")]
+    if wake_allows_bare():
+        phrases.append(name)
+    return tuple(phrases)
 
 CONVERSATION_WINDOW_S = 30.0
 """After an addressed turn, further turns stay addressed for this long (AC-6). Without it a
@@ -759,6 +801,11 @@ SETTINGS: tuple = (
              "set live with `vm verbose on`",
              lambda: "1" if verbose_default() else "0"),
     _setting("VM_OWNER", "name the voiceprint gallery learns under", owner_name),
+    _setting("VM_WAKE_NAME", "what you call the assistant; 'hey <name>' summons it", wake_name),
+    _setting("VM_WAKE_BARE",
+             "1 | 0 — does the bare name summon it, or is a greeting required? Keep 0 for a "
+             "name that is also an ordinary word",
+             lambda: "1" if wake_allows_bare() else "0"),
 )
 """Every VM_* variable, in one place, with what it does and how to read its live value.
 

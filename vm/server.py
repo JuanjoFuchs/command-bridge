@@ -601,8 +601,12 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
     # `verbose` rides on the ready frame so the client ADOPTS it rather than pushing its own.
     # `muted` deliberately does NOT — that is a fact about this device's microphone, and a phone
     # muting a desktop in another room would be wrong.
+    # The wake name travels too, so the page's prompt cannot drift from what the gate accepts.
+    # Hardcoding "hey claude" in the copy is how a renamed assistant keeps telling people to say
+    # the old name.
     await ws.send_json(
-        {"type": "ready", "session": state.session, "verbose": state.verbose}
+        {"type": "ready", "session": state.session, "verbose": state.verbose,
+         "wake": config.wake_name(), "wake_phrases": list(state.wake.phrases)}
     )
     # Deliver anything said while the phone was asleep, before any new audio arrives.
     try:

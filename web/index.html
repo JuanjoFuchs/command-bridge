@@ -498,6 +498,12 @@
   const clipQueue = [];
   let draining = false;
   let muted = false, verbose = false;
+  // The assistant's name comes from the SERVER, so the page can never tell him to say a name
+  // the wake gate no longer accepts. Falls back to a neutral instruction rather than guessing.
+  let wakeName = "";
+  function wakePrompt(prefix) {
+    return (prefix || "") + (wakeName ? `say "hey ${wakeName}…"` : "say the wake phrase");
+  }
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
@@ -592,7 +598,7 @@
     // second control left to read it off.
     $orb.classList.toggle("muted", muted);
     $orb.textContent = muted ? "Muted" : "Listening";
-    setState(muted ? "muted — tap the orb to talk" : 'say "hey claude…"');
+    setState(muted ? "muted — tap the orb to talk" : wakePrompt());
   }
 
   // Paint only. Used when the SERVER tells us the value — either on the ready frame or after
@@ -969,7 +975,7 @@
         diag.reconnects = (diag.reconnects || 0) + 1;
         if (running) {
           $orb.classList.add("live");
-          setState(muted ? "muted — tap the orb to talk" : 'say "hey claude…"');
+          setState(muted ? "muted — tap the orb to talk" : wakePrompt());
         } else {
           setState("tap the orb to talk");
         }
@@ -999,7 +1005,8 @@
         // Adopt the server's verbose, do not assert our own — it is one preference he holds,
         // not one per browser.
         if (msg.verbose !== undefined) paintVerbose(msg.verbose);
-        setState(running ? (muted ? "muted — tap the orb to talk" : 'say "hey claude…"')
+        if (msg.wake) wakeName = msg.wake;
+        setState(running ? (muted ? "muted — tap the orb to talk" : wakePrompt())
                          : "tap the orb to talk");
       } else if (msg.type === "verbose") {
         // Someone flipped it elsewhere — another device, or the agent via `vm verbose on`.
@@ -1007,14 +1014,22 @@
       } else if (msg.type === "agent_state") {
         // Silence is ambiguous. Naming the state is what separates "it did not hear me" from
         // "it heard me and is working" from "it is holding back so as not to cut me off".
-        const label = {
-          idle:         'listening — say "hey claude…"',
-          transcribing: "① transcribing what you said…",
-          thinking:     "③ claude is thinking…",
-          synthesizing: "④ generating speech…",
-          waiting:      "⏸ ready to reply — letting you finish",
-          speaking:     "⑤ claude is speaking",
-        }[msg.state];
+        // ONE place reports state, and it is the orb. The line below used to report it too —
+        // "listening, say hey claude" under an orb already reading "Listening" — which is the
+        // same fact twice in two voices. JJ, live 2026-08-03: "we have two places where we
+        // report status... I wonder if we should merge it."
+        //
+        // The split that keeps both useful: THE ORB SAYS WHAT IS HAPPENING, THE LINE SAYS WHAT
+        // TO DO. A circle cannot hold "transcribing what you said", so the line is not deleted —
+        // it is demoted to instructions only, and stays empty whenever there is nothing to ask of
+        // him. Numbered prefixes go too; they were scaffolding for a split that no longer exists.
+        const ORB = {
+          idle: "Listening", transcribing: "Hearing you", thinking: "Thinking",
+          synthesizing: "Composing", waiting: "Waiting", speaking: "Speaking",
+        };
+        // Only states that require something OF HIM get a line.
+        const ASK = { idle: wakePrompt(), waiting: "go on, I'll wait until you're done" };
+        const label = ASK[msg.state] !== undefined ? ASK[msg.state] : "";
         diag.states.push(msg.state);
         // Now that the socket connects on page load, the server starts narrating BEFORE there is
         // a microphone — which put "listening — say hey claude" under an orb still reading "Tap
@@ -1022,9 +1037,15 @@
         // being wrong alone, and the orb is the one telling the truth.
         if (!running) setState("tap the orb to talk");
         else if (muted) setState("muted — tap the orb to talk");
-        else if (label) setState(label);
+        else setState(label);
         const busy = ["transcribing", "thinking", "synthesizing", "waiting"].includes(msg.state);
         $orb.classList.toggle("thinking", busy);
+        // The orb carries the state now. `speaking` is left to playClip, which knows when the
+        // audio actually starts and ends — the server only knows when it finished SENDING, and
+        // letting both write the label made them race.
+        if (running && !muted && msg.state !== "speaking" && ORB[msg.state]) {
+          $orb.textContent = ORB[msg.state];
+        }
       } else if (msg.type === "partial") {
         // Live preview of the utterance still being spoken. Replaced in place, then removed
         // when the final turn lands — so it reads as one sentence firming up rather than a
@@ -1107,7 +1128,7 @@
         // to listening."
         $orb.textContent = !running ? "Tap to start" : (muted ? "Muted" : "Listening");
         if (running) {
-          setState(muted ? "muted — tap the orb to talk" : 'say "hey claude…"');
+          setState(muted ? "muted — tap the orb to talk" : wakePrompt());
         }
       }
       (isCue ? diag.cues : diag.played).push(header.id);

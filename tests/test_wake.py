@@ -1,5 +1,24 @@
-"""Wake gating — spec 001 AC-4, AC-5, AC-6."""
+"""Wake gating — spec 001 AC-4, AC-5, AC-6.
+
+The assistant's name is configurable (`VM_WAKE_NAME`) and is no longer "claude". The tests below
+still exercise the ORIGINAL name on purpose: they encode behaviour discovered against real
+speech — the greeting-prefix rule, the two fuzzy thresholds, mid-sentence mentions that must not
+be stripped — and rewriting them for a new name would throw that history away to prove nothing.
+The autouse fixture pins the name so they keep testing behaviour rather than configuration.
+
+`test_configurable_name` and the greeting-required tests at the bottom cover the new setting.
+"""
+import pytest
+
 from vm.wake import WakeGate
+
+
+@pytest.fixture(autouse=True)
+def _classic_name(monkeypatch):
+    """Pin the historical name and allow the bare form, which is what these tests were written
+    against. Without this every assertion below would be testing today's default instead."""
+    monkeypatch.setenv("VM_WAKE_NAME", "claude")
+    monkeypatch.setenv("VM_WAKE_BARE", "1")
 
 
 def test_turn_without_wake_phrase_is_not_addressed():
@@ -165,3 +184,61 @@ def test_ordinary_words_are_not_mistaken_for_the_name():
         g = WakeGate()
         addressed, _ = g.evaluate(f"the {word} is over there", now=1.0)
         assert addressed is False, f"{word!r} should not wake mid-sentence"
+
+
+# ------------------------------------------------- a configurable, non-Claude name
+
+
+def test_the_name_is_configurable(monkeypatch):
+    """The tool holds no model, so nothing should tie it to one vendor's name.
+
+    JJ, live 2026-08-03: "my goal is to be able to use this with any AI agent, not just cloud."
+    """
+    monkeypatch.setenv("VM_WAKE_NAME", "thursday")
+    monkeypatch.setenv("VM_WAKE_BARE", "0")
+
+    addressed, text = WakeGate().evaluate("Hey Thursday, what is the status?", now=100.0)
+
+    assert addressed is True
+    assert text == "what is the status?"
+
+
+def test_a_common_word_name_does_not_fire_bare(monkeypatch):
+    """The whole reason a day of the week is usable at all.
+
+    "Let's ship it Thursday" must NOT wake the agent, while "hey Thursday" must. JJ spotted this
+    himself when the objection was that days are words you say constantly: the wake phrase is a
+    GREETING PLUS A NAME, and nobody says "hey Thursday" by accident.
+    """
+    monkeypatch.setenv("VM_WAKE_NAME", "thursday")
+    monkeypatch.setenv("VM_WAKE_BARE", "0")
+
+    for said in ["let's ship it thursday",
+                 "see you thursday",
+                 "I'll look at it thursday morning",
+                 "thursday works for me"]:
+        addressed, text = WakeGate().evaluate(said, now=1.0)
+        assert addressed is False, f"{said!r} should not wake the agent"
+        assert text == said, "an unaddressed turn must not be edited"
+
+
+def test_the_greeting_form_still_wakes_a_common_word_name(monkeypatch):
+    monkeypatch.setenv("VM_WAKE_NAME", "thursday")
+    monkeypatch.setenv("VM_WAKE_BARE", "0")
+
+    for said in ["hey thursday what's the status",
+                 "Hi Thursday, are you there?",
+                 "okay thursday go ahead"]:
+        addressed, text = WakeGate().evaluate(said, now=1.0)
+        assert addressed is True, f"{said!r} should wake the agent"
+        assert "thursday" not in text.lower(), "the summons should be stripped"
+
+
+def test_bare_is_opt_in_per_name_not_a_hard_rule(monkeypatch):
+    """An uncommon name is safe bare; a common one is not. The constraint belongs to the NAME."""
+    monkeypatch.setenv("VM_WAKE_NAME", "thursday")
+    monkeypatch.setenv("VM_WAKE_BARE", "1")
+
+    addressed, _ = WakeGate().evaluate("thursday what's the status", now=1.0)
+
+    assert addressed is True
