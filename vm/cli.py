@@ -367,25 +367,29 @@ def _next_action(turns, live: Optional[Dict[str, Any]]) -> str:
 
     Ordered by urgency: a fact he is waiting on beats a habit he prefers.
     """
+    # EVERY branch starts with an imperative verb. Shortening these into noun fragments made them
+    # read as labels rather than orders — "back to `vm watch`" states a destination and commands
+    # nothing. JJ, live 2026-08-03: "I just want to make sure that you're including verbs in the
+    # next actions... I would like to avoid any confusion."
     if live is None:
-        return "no server; say you stopped listening, then `vm serve`"
+        return "say you stopped listening, then run `vm serve`"
     if not live.get("clients"):
-        return "nobody connected; say so in text, stop watching"
+        return "say in text that nobody is connected, then stop watching"
     if "capturing" in live and not live.get("capturing"):
-        return "page open, orb never tapped; mic is off, tell him"
+        return "tell him the mic is off — page open, orb never tapped"
     if live.get("muted"):
-        return "muted; he can still hear you, `say --now` tell him"
+        return "tell him he is muted via `say --now`; he can still hear you"
     if turns:
         # CONVERSATIONAL vs HEADS-DOWN. Verbose off is NOT silent mode — going quiet on your own
         # initiative is how he ends up asking whether you are still there. The order-then-confirm
         # handshake is what makes a long silence acceptable. JJ, live 2026-08-03: "you wait for me
         # to explicitly give you an order... you confirm and say what you are going to do and that
         # you will come back once everything is done."
-        mode = ("`say --now` before acting; watch between steps"
+        mode = ("say what you will do via `say --now` before acting, and watch between steps"
                 if live.get("verbose") else
-                "wait for an explicit order; confirm + warn it'll take a while, then work")
-        return f"drain to count 0 first. {mode}"
-    return "nothing new; watch again"
+                "wait for an explicit order, then confirm it and warn it will take a while")
+        return f"drain to count 0 first, then {mode}"
+    return "run `vm watch` again from this cursor"
 
 
 def cmd_watch(args) -> Dict[str, Any]:
@@ -476,9 +480,9 @@ def cmd_say(args) -> Dict[str, Any]:
         # it is the moment you must go back to listening, and an agent that stops here has left
         # him talking to nobody.
         result["next"] = (
-            "back to `vm watch`, own call, nothing chained"
+            "go back to `vm watch` now — own call, nothing chained"
             if result.get("delivered", True) else
-            "held until he reconnects; say in text he's unreachable"
+            "say in text that he is unreachable; this clip is held until he reconnects"
         )
     return result
 
