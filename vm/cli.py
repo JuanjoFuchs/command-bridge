@@ -145,10 +145,15 @@ DESCRIBE: Dict[str, Any] = {
                      "--no-save": "apply live only, do not persist"},
             "returns": {"verbose": "bool", "persisted": "{KEY: value} or null",
                         "applied_live": "bool"},
-            "notes": "When verbose is ON, narrate what you are about to do BEFORE doing it, via "
-                     "`say --now`. GLOBAL and persisted — it is a preference about YOU, so it "
-                     "follows him from laptop to phone. Every connected page repaints its switch, "
-                     "so he can also ask you to flip it out loud. `watch` reports the live value.",
+            "notes": "ONE switch, TWO behaviours that agree with each other — separate controls "
+                     "would let him set a contradiction (narrate everything, listen to nothing). "
+                     "ON = conversational: narrate before acting via `say --now`, and return to "
+                     "`watch` between steps rather than disappearing into the work. OFF = wait "
+                     "for an EXPLICIT ORDER, confirm it out loud, say you will be gone a while, "
+                     "and only then go heads-down; never go quiet on your own initiative. "
+                     "GLOBAL and persisted — a preference about YOU, so it follows him from "
+                     "laptop to phone. Every page repaints its switch, so he can flip it out "
+                     "loud too. `watch` reports the live value and the matching `next`.",
         },
         "timing": {
             "args": {"--session": "session id", "--limit": "last N exchanges (default 10, 0=all)"},
@@ -377,13 +382,27 @@ def _next_action(turns, live: Optional[Dict[str, Any]]) -> str:
         parts = ["drain first: re-watch from the returned cursor until count is 0, because one "
                  "thought often arrives as several turns"]
         if live.get("verbose"):
+            # CONVERSATIONAL. He wants to be kept in the loop, which means both halves: narrate,
+            # and stay in `watch` between every step rather than disappearing into the work.
             parts.append("verbose is ON — before you run anything, `vm say --now` what you are "
-                         "about to do; never report an action after doing it")
+                         "about to do; never report an action after doing it. Return to `watch` "
+                         "between steps, do not go heads-down")
+        else:
+            # HEADS-DOWN, but ONLY on an explicit order, and only after a handshake. Verbose off
+            # is not "silent mode" — going quiet on your own initiative is how he ends up asking
+            # whether you are still there. JJ, live 2026-08-03: "if the verbose is off, you don't
+            # get doing immediately. You wait for me to explicitly give you an order. And as soon
+            # as I give you an order, you confirm and say what you are going to do and that you
+            # will come back once everything is done, which might take a while."
+            parts.append("verbose is OFF. Do NOT go heads-down on your own initiative — wait for "
+                         "an explicit ORDER. When he gives one: `vm say` to confirm it, say what "
+                         "you will do and that you will be gone a while, and only THEN work")
         return ". Then ".join(parts)
     if live.get("verbose"):
         return ("nothing new. Verbose is ON, so if you are about to go do something, say it "
                 "first with `vm say --now`; otherwise watch again")
-    return "nothing new — watch again from this cursor, in its own call with nothing chained to it"
+    return ("nothing new — watch again from this cursor, in its own call with nothing chained to "
+            "it. Verbose is OFF, so stay in the loop until he gives an explicit order")
 
 
 def cmd_watch(args) -> Dict[str, Any]:
