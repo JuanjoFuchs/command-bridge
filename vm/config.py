@@ -287,6 +287,20 @@ def session_dir() -> str:
     return _env("VM_DIR") or os.path.join(ROOT, "sessions")
 
 
+def verbose_default() -> bool:
+    """Whether the agent narrates every action. Persisted, and GLOBAL rather than per-device.
+
+    The split that matters: **verbose is about the AGENT, mute is about a MICROPHONE.** A
+    preference for how much the agent explains itself is one preference JJ holds, so flipping it
+    on a laptop must reach the phone. Muting is a fact about the device in front of him, so it
+    stays local — muting a phone must not deafen a desktop in another room.
+
+    JJ, live 2026-08-03: "I would like the verbose toggle to be server-side persisted. If I toggle
+    it in a browser then it should be remembered on my phone."
+    """
+    return (_env("VM_VERBOSE", "0") or "0") not in ("0", "false", "no", "off")
+
+
 def cues_enabled() -> bool:
     """Audio cues on by default. They exist so a pause is legible without looking at the page —
     disable with VM_CUES=0 if they ever become noise rather than information."""
@@ -740,6 +754,10 @@ SETTINGS: tuple = (
              lambda: str(END_OF_UTTERANCE_MS)),
     _setting("VM_CUES", "1 | 0 — short non-speech cues so a pause is audible",
              lambda: "1" if cues_enabled() else "0"),
+    _setting("VM_VERBOSE",
+             "1 | 0 — narrate every action before doing it. Global across devices; "
+             "set live with `vm verbose on`",
+             lambda: "1" if verbose_default() else "0"),
     _setting("VM_OWNER", "name the voiceprint gallery learns under", owner_name),
 )
 """Every VM_* variable, in one place, with what it does and how to read its live value.

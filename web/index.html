@@ -595,10 +595,16 @@
     setState(muted ? "muted — tap the orb to talk" : 'say "hey claude…"');
   }
 
-  function setVerbose(next) {
-    verbose = next;
+  // Paint only. Used when the SERVER tells us the value — either on the ready frame or after
+  // someone (a laptop, or the agent itself via `vm verbose on`) changed it elsewhere. Echoing it
+  // back would be a loop, so this deliberately does not call tellServer.
+  function paintVerbose(next) {
+    verbose = Boolean(next);
     $verbose.setAttribute("aria-checked", String(verbose));
-    localStorage.setItem("vm.verbose", verbose ? "1" : "0");
+  }
+
+  function setVerbose(next) {
+    paintVerbose(next);
     tellServer("verbose", verbose);
   }
 
@@ -609,8 +615,10 @@
     if (e.key === " " || e.key === "Enter") { e.preventDefault(); setVerbose(!verbose); }
   });
 
+  // Mute restores from THIS device; verbose does not restore at all — it arrives from the server
+  // on connect. Reading it from localStorage here is what used to let a stale phone value
+  // overwrite what he had just set on the laptop.
   setMuted(localStorage.getItem("vm.muted") === "1");
-  setVerbose(localStorage.getItem("vm.verbose") === "1");
 
   // Live level -> CSS variable, smoothed and painted once per frame rather than per audio
   // callback. Writing a style on every 4096-sample block (~12/s) is wasteful and jittery;
@@ -888,8 +896,10 @@
         // Re-assert both toggles on every connect. The server holds them in memory, so a
         // restart or a dropped socket would otherwise leave the page showing "Verbose" while
         // the agent reads false — a disagreement neither side can see.
+        // Mute is a fact about THIS device's microphone, so the client still asserts it.
+        // Verbose is NOT pushed — the server owns it and sends it on the ready frame, because a
+        // preference about the agent must not be reverted by whichever page connected last.
         tellServer("muted", muted);
-        tellServer("verbose", verbose);
         resolve();
       };
       ws.onclose = () => {
@@ -976,7 +986,14 @@
       } else if (msg.type === "audio_header") {
         pendingClip = msg;                       // the bytes follow in the next frame
       } else if (msg.type === "ready") {
-        setState('connected — say "hey claude…"');
+        // Adopt the server's verbose, do not assert our own — it is one preference he holds,
+        // not one per browser.
+        if (msg.verbose !== undefined) paintVerbose(msg.verbose);
+        setState(running ? (muted ? "muted — tap the orb to talk" : 'say "hey claude…"')
+                         : "tap the orb to talk");
+      } else if (msg.type === "verbose") {
+        // Someone flipped it elsewhere — another device, or the agent via `vm verbose on`.
+        paintVerbose(msg.value);
       } else if (msg.type === "agent_state") {
         // Silence is ambiguous. Naming the state is what separates "it did not hear me" from
         // "it heard me and is working" from "it is holding back so as not to cut me off".
@@ -1067,8 +1084,15 @@
       await new Promise((res) => { src.onended = res; src.start(); });
       if (!isCue) {
         $orb.classList.remove("speaking");
-        $orb.textContent = running ? "Listening" : "Tap to start";
-        if (running) setState('say "hey claude…"');
+        // Restore to the state we were ACTUALLY in, which may be muted. Hard-coding "Listening"
+        // here meant every reply silently un-labelled the mute: the orb said Muted until claude
+        // spoke, then went back to Listening on a microphone that was still off. JJ, live
+        // 2026-08-03: "whenever I mute, it says muted. But if you speak after that, it goes back
+        // to listening."
+        $orb.textContent = !running ? "Tap to start" : (muted ? "Muted" : "Listening");
+        if (running) {
+          setState(muted ? "muted — tap the orb to talk" : 'say "hey claude…"');
+        }
       }
       (isCue ? diag.cues : diag.played).push(header.id);
       if (!isCue && ws && ws.readyState === WebSocket.OPEN) {

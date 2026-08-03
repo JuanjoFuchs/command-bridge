@@ -140,6 +140,16 @@ DESCRIBE: Dict[str, Any] = {
                      "**If `verbose` is true, narrate what you are about to do before you do it** "
                      "— he toggled it from the page and expects every action described.",
         },
+        "verbose": {
+            "args": {"--session": "session id", "on|off": "positional; omit to read",
+                     "--no-save": "apply live only, do not persist"},
+            "returns": {"verbose": "bool", "persisted": "{KEY: value} or null",
+                        "applied_live": "bool"},
+            "notes": "When verbose is ON, narrate what you are about to do BEFORE doing it, via "
+                     "`say --now`. GLOBAL and persisted — it is a preference about YOU, so it "
+                     "follows him from laptop to phone. Every connected page repaints its switch, "
+                     "so he can also ask you to flip it out loud. `watch` reports the live value.",
+        },
         "timing": {
             "args": {"--session": "session id", "--limit": "last N exchanges (default 10, 0=all)"},
             "returns": {"exchanges": "[{total_s, steps, slowest}]", "by_step": "aggregate",
@@ -435,6 +445,39 @@ def cmd_rate(args) -> Dict[str, Any]:
         "note": None if applied else (
             f"saved, and it applies the next time you `vm serve --session {args.session}` "
             f"— no server is running to change right now"
+        ),
+    }
+
+
+def cmd_verbose(args) -> Dict[str, Any]:
+    """Turn narration on or off, live and permanently — so he can flip it by ASKING.
+
+    Persists like `vm rate` and for the same reason: this is a preference about the AGENT, held
+    once, not per-browser. Before this it lived in each page's localStorage, so opening the tunnel
+    on a phone silently reverted what was set on the laptop.
+    """
+    if args.state is None:
+        live = _request(args.session, "/status")
+        return {
+            "verbose": config.verbose_default() if live.get("running") is False
+            else live.get("verbose"),
+            "persisted": config.verbose_default(),
+            "live": None if live.get("running") is False else live.get("verbose"),
+        }
+
+    value = args.state == "on"
+    written = {}
+    if not args.no_save:
+        config.write_setting("VM_VERBOSE", "1" if value else "0")
+        written["VM_VERBOSE"] = "1" if value else "0"
+    result = _request(args.session, "/verbose", {"value": value})
+    applied = result.get("running") is not False and not result.get("error")
+    return {
+        "verbose": value,
+        "persisted": written or None,
+        "applied_live": applied,
+        "note": None if applied else (
+            f"saved; applies on the next `vm serve --session {args.session}`"
         ),
     }
 
@@ -748,6 +791,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-save", action="store_true",
                    help="apply to the running server only; do not persist to .env")
 
+    vb = sub.add_parser("verbose", help="narrate every action; global, persists, live")
+    vb.add_argument("--session", default="dev")
+    vb.add_argument("state", nargs="?", choices=["on", "off"],
+                    help="omit to read the current setting")
+    vb.add_argument("--no-save", action="store_true",
+                    help="apply to the running server only; do not persist")
+
     c = sub.add_parser("consumed", help="tell the client how far you have read (mc-style)")
     c.add_argument("--session", default="dev")
     c.add_argument("--cursor", type=int, required=True)
@@ -792,6 +842,7 @@ def main(argv=None) -> int:
         "cue": cmd_cue,
         "rate": cmd_rate,
         "timing": cmd_timing,
+        "verbose": cmd_verbose,
     }
     try:
         result = handlers[args.cmd](args)

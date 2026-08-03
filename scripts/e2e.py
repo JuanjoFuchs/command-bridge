@@ -339,10 +339,26 @@ def run(headed: bool, keep: bool) -> int:
               "the separate mute button is gone, the orb owns it")
         check(page.locator("#verbose").is_visible(), "the verbose switch renders")
 
+        def wait_for_status(predicate, seconds=15):
+            """Poll /status until it agrees, or give up.
+
+            The mute travels over the WebSocket, so a fixed sleep races it — especially right
+            after the rapid-clip test, when the socket is busy. This check failed once and passed
+            on the very next run, and a gate that flakes teaches you to re-run instead of to
+            read, which is worse than not having it.
+            """
+            deadline = time.time() + seconds
+            latest = {}
+            while time.time() < deadline:
+                latest = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
+                if predicate(latest):
+                    return latest
+                time.sleep(0.25)
+            return latest
+
         frames_before = page.evaluate("() => window.__vm.framesSent")
         page.click("#orb")
-        page.wait_for_timeout(1200)
-        muted_state = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
+        muted_state = wait_for_status(lambda s: s.get("muted") is True)
         check(muted_state.get("muted") is True, "tapping the orb muted, and the server knows",
               json.dumps(muted_state.get("muted")))
         check(page.locator("#orb").text_content().strip() == "Muted",
@@ -361,9 +377,21 @@ def run(headed: bool, keep: bool) -> int:
         check(page.evaluate("() => window.__vm.connected") is True,
               "muting keeps the socket connected")
 
+        # Speaking while muted must NOT silently un-label the mute. The old code hard-coded the
+        # orb back to "Listening" when a clip finished, so every reply left him looking at a
+        # listening orb over a microphone that was off. JJ, live 2026-08-03: "whenever I mute, it
+        # says muted. But if you speak after that, it goes back to listening."
+        spoke = page.evaluate("() => window.__vm.played.length")
+        http_json(f"http://127.0.0.1:{port}/say?token={token}",
+                  {"text": "Speaking while you are muted."}, timeout=120)
+        page.wait_for_function(f"() => window.__vm.played.length > {spoke}", timeout=60000)
+        page.wait_for_timeout(400)
+        check(page.locator("#orb").text_content().strip() == "Muted",
+              "the orb still reads Muted after claude speaks",
+              page.locator("#orb").text_content())
+
         page.click("#orb")
-        page.wait_for_timeout(1500)
-        unmuted = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
+        unmuted = wait_for_status(lambda s: s.get("muted") is False)
         check(unmuted.get("muted") is False, "tapping again unmuted")
         resumed = page.evaluate("() => window.__vm.framesSent")
         page.wait_for_timeout(900)

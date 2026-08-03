@@ -87,8 +87,14 @@ class TunnelState:
         the client made the audio serial; it could not restore a pairing the server had already
         scrambled. An invariant the client depends on has to be guaranteed by the sender.
         """
-        self.verbose: bool = False
-        """Does JJ want every action narrated? Toggled from the page, read by the agent.
+        self.verbose: bool = config.verbose_default()
+        """Does JJ want every action narrated? Toggled from the page or by voice, read by the agent.
+
+        **The SERVER is the source of truth, not the browser.** Each client used to push its own
+        localStorage value on connect, so opening the page on a phone silently reverted a
+        preference set on the laptop — last connection wins, which is the opposite of a shared
+        setting. Now the server sends its value on connect and the client adopts it.
+
 
         The TOOL only stores and publishes this — it does not act on it. Deciding what counts as
         "an action worth narrating" is exactly the unbounded judgment that belongs in the agent
@@ -495,6 +501,30 @@ async def handle_rate(request: web.Request) -> web.Response:
     )
 
 
+async def handle_verbose(request: web.Request) -> web.Response:
+    """Set narration mode from the agent side, so JJ can flip it by ASKING rather than tapping.
+
+    JJ, live 2026-08-03: "I also want you to be able to toggle the verbose. If I ask it via here,
+    I would want you to toggle it and I would want the UI properly updated with that." The
+    broadcast is what makes the second half true — every connected page repaints its switch.
+    """
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    value = (body or {}).get("value")
+    if not isinstance(value, bool):
+        return web.json_response({"error": "value must be true or false"}, status=400)
+    previous = state.verbose
+    state.verbose = value
+    await _broadcast_json(state, {"type": "verbose", "value": state.verbose})
+    return web.json_response({"verbose": state.verbose, "previous": previous})
+
+
 async def handle_consumed(request: web.Request) -> web.Response:
     """The agent reports how far it has read — mirrors `mc consumed`.
 
@@ -549,7 +579,12 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
     ws = web.WebSocketResponse(heartbeat=30.0, max_msg_size=8 * 1024 * 1024)
     await ws.prepare(request)
     state.clients.add(ws)
-    await ws.send_json({"type": "ready", "session": state.session})
+    # `verbose` rides on the ready frame so the client ADOPTS it rather than pushing its own.
+    # `muted` deliberately does NOT — that is a fact about this device's microphone, and a phone
+    # muting a desktop in another room would be wrong.
+    await ws.send_json(
+        {"type": "ready", "session": state.session, "verbose": state.verbose}
+    )
     # Deliver anything said while the phone was asleep, before any new audio arrives.
     try:
         delivered = await _flush_undelivered(state)
@@ -759,6 +794,7 @@ def build_app(session: str, token: Optional[str], gate_enabled: bool = True) -> 
             web.post("/consumed", handle_consumed),
             web.post("/cue", handle_cue),
             web.post("/rate", handle_rate),
+            web.post("/verbose", handle_verbose),
             web.get("/ws", handle_ws),
         ]
     )
