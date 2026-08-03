@@ -849,6 +849,12 @@
     diag.capture = usedWorklet ? "audioworklet" : "scriptprocessor";
 
     running = true;
+    // Tell the server the microphone is actually live. A connected socket is not a listening
+    // one, and the agent cannot tell those apart without being told.
+    tellServer("capturing", true);
+    // Anything said while the page sat un-tapped has been waiting for an AudioContext. It exists
+    // now, so let it out.
+    drainClips();
     await acquireWakeLock();
 
     // Do NOT claim to be listening until audio is actually arriving. Between tapping and the
@@ -875,6 +881,7 @@
 
   async function stop() {
     running = false;
+    tellServer("capturing", false);
     try { if (node) node.disconnect(); } catch {}
     try { if (source) source.disconnect(); } catch {}
     try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch {}
@@ -896,10 +903,13 @@
         // Re-assert both toggles on every connect. The server holds them in memory, so a
         // restart or a dropped socket would otherwise leave the page showing "Verbose" while
         // the agent reads false — a disagreement neither side can see.
-        // Mute is a fact about THIS device's microphone, so the client still asserts it.
+        // Mute is a fact about THIS device's microphone, so the client still asserts it — and so
+        // is whether the microphone is running at all, which must be re-asserted on every
+        // reconnect or a resumed session looks unstarted.
         // Verbose is NOT pushed — the server owns it and sends it on the ready frame, because a
         // preference about the agent must not be reverted by whichever page connected last.
         tellServer("muted", muted);
+        tellServer("capturing", running);
         resolve();
       };
       ws.onclose = () => {
@@ -1049,6 +1059,12 @@
   }
 
   async function drainClips() {
+    // No AudioContext yet means the page has loaded but nobody has tapped the orb — and since
+    // the socket now connects on load, a reply can genuinely arrive first. Leave the clips
+    // QUEUED rather than throwing on ctx.createBuffer: they play the moment he taps start, so
+    // "I answered while you weren't ready" costs a delay instead of the answer.
+    // (The autoplay policy means we could not play them now even if we built a context here.)
+    if (!ctx) return;
     // One drainer at a time. The guard is what serializes playback; without it every arriving
     // clip would start its own drain loop and we would be back to overlapping audio.
     if (draining) return;

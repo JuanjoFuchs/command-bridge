@@ -255,12 +255,22 @@ def run(headed: bool, keep: bool) -> int:
 
         # --- AC-E1: the spoken sentence becomes a turn ---------------------------
         print("\n== transcription and wake gating ==")
+        # Wait for a COMPLETE utterance, not merely the first turn. The fake mic loops the WAV,
+        # so capture can begin mid-phrase and the first turn is then a fragment with "hey claude"
+        # already gone — which failed AC-5 on one run and passed on the next. The gate is meant to
+        # assert that a full utterance is recognised as addressed, so wait for a full one; if none
+        # ever arrives, fall back to the first turn so the failure still reports real content.
         deadline = time.time() + 150     # first run downloads the Whisper model
         turn = None
         while time.time() < deadline:
             turns = store.read_turns(session, base=workdir)
-            if turns:
-                turn = turns[0]
+            complete = [t for t in turns if "claude" in (t.get("text") or "").lower()
+                        or t.get("addressed")]
+            if complete:
+                turn = complete[0]
+                break
+            if turns and time.time() > deadline - 60:
+                turn = turns[0]          # give up waiting for a clean one; report what we got
                 break
             time.sleep(0.5)
         check(turn is not None, "AC-E1 spoken audio produced a turn in the log",
@@ -337,6 +347,12 @@ def run(headed: bool, keep: bool) -> int:
         print("\n== orb mutes, verbose switch ==")
         check(page.locator("#mute").count() == 0,
               "the separate mute button is gone, the orb owns it")
+        # A connected client is NOT a listening one. A page that loaded but was never tapped
+        # holds an open socket and sends no audio, and the agent used to have no way to tell.
+        started = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
+        check(started.get("capturing") is True,
+              "the server knows the microphone is actually running",
+              json.dumps(started.get("capturing")))
         check(page.locator("#verbose").is_visible(), "the verbose switch renders")
 
         def wait_for_status(predicate, seconds=15):
@@ -398,18 +414,41 @@ def run(headed: bool, keep: bool) -> int:
         check(page.evaluate("() => window.__vm.framesSent") > resumed,
               "audio flows again after unmuting")
 
+        # Assert the FLIP, not an absolute. Verbose is persisted in .env now, so the server may
+        # legitimately start in either state — a test that demanded `true` was really asserting
+        # the developer's own saved preference and failed the moment he turned it on.
+        before_v = http_json(f"http://127.0.0.1:{port}/status?token={token}",
+                             timeout=10).get("verbose")
         page.click("#verbose")
-        page.wait_for_timeout(800)
-        v = http_json(f"http://127.0.0.1:{port}/status?token={token}", timeout=10)
-        check(v.get("verbose") is True, "verbose switch reached the server")
-        check(page.locator("#verbose").get_attribute("aria-checked") == "true",
+        flipped = wait_for_status(lambda s: s.get("verbose") is (not before_v))
+        check(flipped.get("verbose") is (not before_v),
+              "the verbose switch reached the server and flipped it",
+              f"{before_v} -> {flipped.get('verbose')}")
+        check(page.locator("#verbose").get_attribute("aria-checked") == str(not before_v).lower(),
               "the switch reports its state as a switch, not a button")
+        # The client must ADOPT the server's value rather than push its own, or a second device
+        # silently reverts what was set on the first.
+        page.reload()
+        page.wait_for_timeout(2500)
+        check(page.locator("#verbose").get_attribute("aria-checked") == str(not before_v).lower(),
+              "a reloaded page adopts verbose from the server, not from its own storage",
+              str(page.locator("#verbose").get_attribute("aria-checked")))
+        # A reloaded page has no AudioContext until it is tapped, and the socket is already
+        # connected — so restart capture before anything downstream expects playback. This also
+        # exercises the path where a reply arrived while the page sat un-tapped.
+        page.click("#orb")
+        page.wait_for_function("() => window.__vm.framesSent > 0", timeout=30000)
+        restarted = wait_for_status(lambda s: s.get("capturing") is True)
+        check(restarted.get("capturing") is True,
+              "capture resumes after a reload and the server is told",
+              json.dumps(restarted.get("capturing")))
         # The agent learns about it WITHOUT polling: it rides back on the /consumed call that
         # every `watch` already makes. A preference the agent must remember to ask about is a
         # preference that silently stops being honoured.
         ack = http_json(f"http://127.0.0.1:{port}/consumed?token={token}",
                         {"cursor": 0, "state": "thinking"}, timeout=10)
-        check(ack.get("verbose") is True, "verbose rides back on the watch acknowledgement",
+        check(ack.get("verbose") is (not before_v),
+              "verbose rides back on the watch acknowledgement",
               json.dumps(ack))
 
         errors = page.evaluate("() => window.__vm.errors")
@@ -459,6 +498,19 @@ def run(headed: bool, keep: bool) -> int:
         check(rc == 0 and empty.get("count") == 0 and empty.get("cursor") == -1,
               "vm watch times out to an empty heartbeat, not an error",
               json.dumps(empty)[:200])
+
+        # An empty watch must say whether anyone is actually listening. This is the moment the
+        # agent is about to block again, and "a page is open but was never tapped" is invisible
+        # from every other signal — clients:1 looks identical to a live microphone.
+        live_watch, rc = cli("watch", "--session", session, "--since", "999999", "--timeout", "2")
+        check(live_watch.get("listening") is True,
+              "an empty watch on a live session reports listening=true",
+              json.dumps(live_watch)[:200])
+        # And on a session with no page at all, it must say so rather than leaving the agent to
+        # wait on someone who cannot hear it.
+        check(empty.get("listening") is False and "no server" in (empty.get("hint") or ""),
+              "an empty watch with nothing serving explains why it is quiet",
+              json.dumps(empty)[:220])
 
         print("\n== summary ==")
         print(f"    turns logged     {final.get('turns_logged')}")

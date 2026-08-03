@@ -103,6 +103,20 @@ class TunnelState:
         don't have to ask you to describe the actions and we don't have to write it into the
         guide. This button would toggle live how you respond."
         """
+        self.capturing: bool = False
+        """Has the client actually started its microphone, or is it just *connected*?
+
+        These look identical from the agent's side and are not the same thing at all. A page that
+        has loaded but never been tapped holds an open WebSocket, reports `clients: 1`, and sends
+        no audio — so an agent sits in `watch` believing someone is listening to it. JJ, live
+        2026-08-03: "I just refreshed the UI and I didn't hit tap to start, you should have a way
+        to be aware of that."
+
+        Reported by the client rather than guessed, and backed up by `last_audio_at` so a wedged
+        page that claims to be capturing is still detectable.
+        """
+        self.last_audio_at: float = 0.0
+        """`time.monotonic()` of the most recent audio frame. 0 means none ever arrived."""
         self.muted: bool = False
         """Whether the client is holding its own microphone shut. Published for `status` only —
         the mute is enforced ON THE CLIENT by not sending frames, because a mute that still
@@ -152,6 +166,11 @@ class TunnelState:
             "last_error": self.last_error,
             "verbose": self.verbose,
             "muted": self.muted,
+            "capturing": self.capturing,
+            "seconds_since_audio": (
+                None if not self.last_audio_at
+                else round(time.monotonic() - self.last_audio_at, 1)
+            ),
             "undelivered": len(self.undelivered),
             "wake_enabled": self.wake.enabled,
             "voice_enrolled_samples": self.voice_samples,
@@ -607,6 +626,9 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
                 break
     finally:
         state.clients.discard(ws)
+        if not state.clients:
+            # The last page went away, so nothing is capturing regardless of what it last said.
+            state.capturing = False
         # Flush whatever was mid-sentence when the socket dropped, so a disconnect never
         # silently eats the last thing that was said.
         try:
@@ -639,6 +661,10 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         state.verbose = bool(msg.get("value"))
         await _broadcast_json(state, {"type": "verbose", "value": state.verbose})
         timing.stamp(state.session, "verbose_toggled", value=state.verbose)
+    elif kind == "capturing":
+        state.capturing = bool(msg.get("value"))
+        if not state.capturing:
+            state.last_audio_at = 0.0
     elif kind == "muted":
         state.muted = bool(msg.get("value"))
         if state.muted:
@@ -662,6 +688,7 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
         samples = asr_mod.resample_linear(samples, state.client_sr, config.TARGET_SR)
     state.frames_received += 1
     state.samples_received += samples.size
+    state.last_audio_at = time.monotonic()
     try:
         state.capture(samples)
     except Exception as exc:  # never let diagnostics break the session

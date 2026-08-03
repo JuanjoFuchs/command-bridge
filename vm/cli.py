@@ -370,7 +370,36 @@ def cmd_watch(args) -> Dict[str, Any]:
         if isinstance(ack, dict) and ack.get("verbose") is not None:
             return {"turns": turns, "cursor": cursor, "count": len(turns),
                     "verbose": bool(ack["verbose"])}
-    return {"turns": turns, "cursor": cursor, "count": len(turns)}
+        return {"turns": turns, "cursor": cursor, "count": len(turns)}
+
+    # An EMPTY watch is the moment the agent is about to wait again, and it is exactly where
+    # "nobody is actually listening" costs the most — so say so here rather than leaving it to be
+    # discovered by a person wondering why nothing happened. JJ, live 2026-08-03: "I just
+    # refreshed the UI and I didn't hit tap to start, you should have a way to be aware of that."
+    result = {"turns": turns, "cursor": cursor, "count": len(turns)}
+    live = _request(args.session, "/status")
+    if not isinstance(live, dict) or live.get("running") is False or live.get("error"):
+        # Deliberately NOT surfaced as `running: False` — that would flip watch's exit code to 3
+        # and break every caller that treats a quiet tunnel as normal. It is a hint, not a failure.
+        result["listening"] = False
+        result["hint"] = (f"no server is running for session {args.session!r}, so this watch can "
+                          f"never return anything — start one with `vm serve`")
+    else:
+        result["verbose"] = live.get("verbose")
+        if not live.get("clients"):
+            result["listening"] = False
+            result["hint"] = ("no page is connected — he cannot hear you and you cannot hear "
+                              "him. Say so rather than waiting.")
+        elif not live.get("capturing"):
+            result["listening"] = False
+            result["hint"] = ("a page is open but the microphone was never started — he has not "
+                              "tapped the orb. A connected client is NOT a listening one.")
+        elif live.get("muted"):
+            result["listening"] = False
+            result["hint"] = "he has muted his own microphone; he will not be heard until he unmutes"
+        else:
+            result["listening"] = True
+    return result
 
 
 def cmd_say(args) -> Dict[str, Any]:
