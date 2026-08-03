@@ -390,6 +390,14 @@ def cmd_watch(args) -> Dict[str, Any]:
             result["listening"] = False
             result["hint"] = ("no page is connected — he cannot hear you and you cannot hear "
                               "him. Say so rather than waiting.")
+        elif "capturing" not in live:
+            # ABSENT IS NOT FALSE. A server started before this field existed reports nothing,
+            # and reading that as "the microphone was never started" produced a confidently wrong
+            # hint while he was actively speaking — worse than having no hint at all, because it
+            # invites the agent to tell him something untrue about his own setup.
+            result["listening"] = None
+            result["hint"] = ("this server predates the capturing signal, so whether he is "
+                              "actually listening is UNKNOWN — restart `vm serve` to find out")
         elif not live.get("capturing"):
             result["listening"] = False
             result["hint"] = ("a page is open but the microphone was never started — he has not "
