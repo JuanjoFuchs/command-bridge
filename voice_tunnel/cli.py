@@ -203,7 +203,23 @@ DESCRIBE: Dict[str, Any] = {
             "notes": "OPTIONAL. `watch` already marks turns read. Use this only to correct the "
                      "state by hand, e.g. back to 'idle' if you decide not to reply.",
         },
-        "voices": {"args": [], "returns": "installed piper voices for `say --voice`"},
+        "voices": {"args": [], "returns": "installed piper voices for `say --voice`",
+                   "notes": "Lists what is ON DISK. To GET one, `voice-tunnel download voice`."},
+        "download": {
+            "args": {"what": "voice | asr | voiceprint (omit to list)",
+                     "name": "voice name (default en_GB-alan-medium) or ASR model "
+                             "(default parakeet)",
+                     "--list": "show what is available and what is installed, fetch nothing",
+                     "--force": "re-download even if present"},
+            "returns": {"path": "where it landed", "already_present": "bool", "bytes": "int"},
+            "notes": "Models are NOT shipped with the package — a Parakeet checkpoint is ~600 MB "
+                     "and a voice is 60-120 MB. A fresh install transcribes with whisper and "
+                     "speaks in the system voice until you fetch better ones. The three worth "
+                     "having: `download asr` (Parakeet, 8x faster than whisper), `download voice` "
+                     "(a neural voice instead of SAPI), and `download voiceprint` (recognises the "
+                     "owner, so the wake phrase becomes optional). `doctor` says which are "
+                     "missing. Progress goes to stderr so stdout stays parseable.",
+        },
         "rate": {
             "args": {
                 "--session": "session id",
@@ -727,6 +743,68 @@ def cmd_voices(_args) -> Dict[str, Any]:
     return {"voices": tts.list_voices(), "backend": tts.available()}
 
 
+def cmd_download(args) -> Dict[str, Any]:
+    """Fetch a model. The command that makes a fresh install usable at all.
+
+    Nothing else here downloads anything — `voices` only lists what is already on disk — so
+    before this, a `pip install` produced a tunnel that transcribed nothing and spoke in the
+    system default voice, with no command anywhere that fixed it. Every model on this machine had
+    arrived by hand, which is invisible when the only installation is a checkout you populated
+    yourself a week ago.
+
+    Progress goes to STDERR, never stdout. stdout is the JSON result an agent parses, and a
+    progress bar interleaved into it would make the payload unreadable for the one caller that
+    matters.
+    """
+    from . import download as dl
+
+    if getattr(args, "list", False) or not args.what:
+        return dl.catalog()
+
+    def progress(done: int, total: int) -> None:
+        if not sys.stderr.isatty():
+            return
+        pct = f"{done * 100 // total:3d}%" if total else "  ? "
+        print(f"\r  {pct}  {done / 1e6:.0f} MB", end="", file=sys.stderr, flush=True)
+
+    try:
+        if args.what == "voice":
+            result = dl.download_voice(args.name or dl.DEFAULT_VOICE, args.force, progress)
+        elif args.what == "asr":
+            result = dl.download_asr(args.name or "parakeet", args.force, progress)
+        elif args.what == "voiceprint":
+            result = dl.download_voiceprint(args.force, progress)
+        else:
+            raise ValueError(
+                f"unknown target {args.what!r} — expected voice, asr or voiceprint; "
+                f"`voice-tunnel download --list` shows what is available"
+            )
+    except RuntimeError as exc:
+        # A fetch failure is a CONDITION, not a crash — the name was mistyped, the machine is
+        # offline, a proxy is in the way, or upstream moved a file. All four are the ordinary
+        # first-run experience, and all four used to print a urllib traceback, which reads as a
+        # bug in this tool rather than something the caller can act on. Exit 1 with .error and
+        # .remedy is what `describe` promises for a failed operation.
+        return {
+            "error": str(exc),
+            "code": "download_failed",
+            "remedy": (
+                "check the name against `voice-tunnel download --list` (any piper voice name "
+                "works, see https://huggingface.co/rhasspy/piper-voices)"
+                if "404" in str(exc) else
+                "check network access to huggingface.co and github.com, including any proxy"
+            ),
+        }
+    finally:
+        if sys.stderr.isatty():
+            print("", file=sys.stderr)
+
+    result["models_dir"] = config.models_dir()
+    if args.what == "voice" and not result.get("already_present"):
+        result["use_it_with"] = f"voice-tunnel config set VOICE_TUNNEL_TTS piper"
+    return result
+
+
 def cmd_status(args) -> Dict[str, Any]:
     return _request(args.session, "/status")
 
@@ -853,9 +931,9 @@ def cmd_doctor(_args) -> Dict[str, Any]:
         checks.append(_check(
             "tts", bool(binary) and bool(voice),
             f"piper bin={binary or '(not found)'} voice={voice or '(not chosen)'}",
-            "install piper into the venv (`pip install piper-tts`) or "
-            "`voice-tunnel config set VOICE_TUNNEL_PIPER_BIN <path>`; pick a voice with "
-            "`voice-tunnel config set VOICE_TUNNEL_PIPER_VOICE <path>` (see `voice-tunnel voices`)",
+            "install piper into the venv (`pip install piper-tts`), then get a voice with "
+            "`voice-tunnel download voice` — or point VOICE_TUNNEL_PIPER_VOICE at one you "
+            "already have (`voice-tunnel voices` lists what is on disk)",
         ))
     elif backend == "sapi":
         checks.append(_check(
@@ -872,9 +950,26 @@ def cmd_doctor(_args) -> Dict[str, Any]:
         "asr", asr_ok,
         f"{engine}" + (f" at {config.parakeet_dir()}" if engine == "parakeet" else
                        f" model={config.whisper_model()}"),
-        "VOICE_TUNNEL_ASR=parakeet but no model directory was found — `voice-tunnel config set VOICE_TUNNEL_ASR whisper` "
-        "or point VOICE_TUNNEL_PARAKEET_DIR at a sherpa-onnx Parakeet model",
+        "VOICE_TUNNEL_ASR=parakeet but no model directory was found — run "
+        "`voice-tunnel download asr`, or fall back with `voice-tunnel config set "
+        "VOICE_TUNNEL_ASR whisper`",
     ))
+
+    # Not a failure: the voiceprint is additive. A match can grant attention but never withhold
+    # it, so its absence costs nothing except having to say the wake phrase every time. Reported
+    # as an advisory rather than a red check, because a doctor that cries wolf about optional
+    # things trains people to ignore it.
+    from . import download as _dl
+    vp_file = os.path.join(config.models_dir(), _dl.VOICEPRINT_MODEL["file"])
+    if not _dl._looks_like_a_model(vp_file):
+        # The command goes in `detail`, not `remedy`: `_check` nulls the remedy on a passing
+        # check, which is right for a pass/fail gate and drops exactly what this advisory exists
+        # to carry.
+        checks.append(_check(
+            "voiceprint", True,
+            "not installed, so the wake phrase is always required — optional, fix with "
+            "`voice-tunnel download voiceprint`",
+        ))
 
     on_path = _shutil.which("voice-tunnel")
     checks.append(_check(
@@ -1002,6 +1097,14 @@ def build_parser() -> argparse.ArgumentParser:
     vb.add_argument("--no-save", action="store_true",
                     help="apply to the running server only; do not persist")
 
+    dw = sub.add_parser("download", help="fetch a voice, an ASR model, or the voiceprint model")
+    dw.add_argument("what", nargs="?", choices=["voice", "asr", "voiceprint"],
+                    help="omit (or --list) to see what is available and what is installed")
+    dw.add_argument("name", nargs="?", default=None,
+                    help="voice name (default en_GB-alan-medium) or ASR model (default parakeet)")
+    dw.add_argument("--list", action="store_true", help="list without downloading anything")
+    dw.add_argument("--force", action="store_true", help="re-download even if already present")
+
     wk = sub.add_parser("wake", help="what the agent answers to after 'hey'; persists, live")
     wk.add_argument("--session", default="dev")
     wk.add_argument("--name", default=None,
@@ -1055,6 +1158,7 @@ def main(argv=None) -> int:
         "timing": cmd_timing,
         "verbose": cmd_verbose,
         "wake": cmd_wake,
+        "download": cmd_download,
     }
     try:
         result = handlers[args.cmd](args)

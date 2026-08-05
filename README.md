@@ -28,7 +28,15 @@ venv/Scripts/python -m pip install -r requirements.txt
 #   PowerShell:  [Environment]::SetEnvironmentVariable('Path', "$env:Path;$PWD\bin", 'User')
 #   bash:        export PATH="$PATH:$PWD/bin"
 voice-tunnel doctor            # anything missing? every failing check names the command that fixes it
-voice-tunnel serve --session dev
+
+# Models are NOT bundled — a Parakeet checkpoint is ~600 MB and a voice 60–120 MB. It works
+# without them (whisper + the system voice); these are the upgrades, and all three are optional.
+voice-tunnel download --list       # what is available, what you already have
+voice-tunnel download asr          # Parakeet: 8x faster than whisper, more accurate
+voice-tunnel download voice        # a neural voice instead of the robotic system one
+voice-tunnel download voiceprint   # learns your voice, so the wake phrase becomes optional
+
+voice-tunnel serve --session dev --wake claude   # `--wake` = YOUR name: claude, codex, grok
 # -> http://127.0.0.1:8765/?token=<generated>
 ```
 
