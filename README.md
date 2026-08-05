@@ -20,25 +20,20 @@ voice-tunnel serve  ── the dumb half ─────────────
                                        watch --since <cursor> -> reason -> say
 ```
 
-## What it does, stated exactly
+## What it does
 
-Because the interesting claims here are easy to overstate, and one of them is not true:
-
-- **It runs on your machine.** ASR, speech synthesis, the voiceprint, and every turn of the
-  transcript. Nothing is sent to a speech API and there is no account. The one caveat is
-  transport: reaching your phone needs *some* tunnel, and `tailscale serve` is the only common
-  option with no third party able to decrypt the audio — an ngrok-style tunnel terminates TLS on
-  someone else's edge. See `ai-docs/reference/security.md`.
-- **It learns your voice, and that is what makes the wake phrase optional.** Every turn confirmed
-  by the wake phrase enrols another sample, so the speaker model sharpens with use. Measured
+- **It runs on your machine.** Speech recognition, speech synthesis, the voiceprint, and every
+  turn of the transcript. Nothing is sent to a speech API and there is no account. Reaching your
+  phone needs *some* tunnel, and `tailscale serve` is the one with no third party able to decrypt
+  the audio — see `ai-docs/reference/security.md` for what each option costs.
+- **It learns to recognise your voice, and the wake phrase becomes optional.** Every turn
+  confirmed by the phrase enrols another sample, so the speaker model sharpens with use. Measured
   here: 0.711 / 0.782 / 0.801 for the owner against a highest impostor of 0.132 — a 5.4× margin
   around the threshold — and it generalised to a phone microphone having learned only from
   desktop recordings. Once it knows you, you are addressed without saying anything.
-- **It does NOT learn to transcribe you better, and it does not learn your vocabulary.** The
-  recognizer is a frozen model and nothing adapts it. Contextual biasing was tried and is a dead
-  end on this checkpoint — it ships no SentencePiece vocab, so hotwords corrupt into literal digit
-  tokens. A learned-correction layer is on the roadmap and is not built. What *does* survive a
-  mangled name is a fuzzy match after the greeting, which is static, not learning.
+- **It answers to whatever your agent is called.** `serve --wake codex`, live-changeable, with a
+  greeting always required — which is what keeps ordinary words like `grok` and `cursor` safe as
+  names.
 - **Your files are yours.** Turn logs, audio, and the voiceprint are plain files in a directory
   `voice-tunnel config path` will tell you. The voiceprint is a 192-dimension centroid; speech
   cannot be reconstructed from it.
