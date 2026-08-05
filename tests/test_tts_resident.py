@@ -43,7 +43,48 @@ class _StubVoice:
 
 
 @pytest.fixture
-def resident(monkeypatch):
+def _piper_importable(monkeypatch):
+    """Make `from piper import SynthesisConfig` succeed even where piper-tts is not installed.
+
+    **These tests were model-free but not PACKAGE-free, and the difference only showed up in
+    CI.** They stub the voice, so nothing here exercises piper's synthesis — but `synthesize()`
+    imports `SynthesisConfig` for real, so the whole file collapsed with
+    `ModuleNotFoundError: No module named 'piper'` on any environment without the optional
+    extra. That is precisely the environment a fresh `pip install voice-tunnel` produces, so the
+    suite was passing on the maintainer's machine and failing on the floor every user lands on.
+
+    Skipping would have been the easy fix and the wrong one: it would leave the silence
+    placement, the lock and the sticky-failure contract untested in exactly the configuration
+    most people run. A stub `SynthesisConfig` is as legitimate as the stub voice beside it —
+    both stand in for a dependency whose behaviour is not what these tests are about.
+    """
+    try:
+        import piper  # noqa: F401
+        return
+    except ImportError:
+        pass
+
+    import sys
+    import types
+
+    stub = types.ModuleType("piper")
+
+    class SynthesisConfig:
+        def __init__(self, length_scale=None, **kw):
+            self.length_scale = length_scale
+
+    class PiperVoice:
+        @staticmethod
+        def load(*a, **k):
+            raise RuntimeError("stub piper cannot load a real voice")
+
+    stub.SynthesisConfig = SynthesisConfig
+    stub.PiperVoice = PiperVoice
+    monkeypatch.setitem(sys.modules, "piper", stub)
+
+
+@pytest.fixture
+def resident(monkeypatch, _piper_importable):
     """A fresh resident holder with a stub voice already loaded, isolated from the real one."""
     holder = tts._ResidentVoice()
     voice = _StubVoice()
@@ -106,7 +147,7 @@ def test_synthesis_is_serialized_across_threads(resident):
 # ----------------------------------------------------------------- the fallback
 
 
-def test_a_load_failure_is_sticky_and_names_itself(monkeypatch):
+def test_a_load_failure_is_sticky_and_names_itself(monkeypatch, _piper_importable):
     """Retrying a broken import on every reply just pays the failure repeatedly — and the reason
     has to survive, because a silent fall back to spawning is a 20x latency regression whose
     only symptom is 'it feels slow again'."""
@@ -155,7 +196,14 @@ def test_warm_is_a_no_op_for_a_backend_that_does_not_need_it(monkeypatch):
 # ------------------------------------------------------------- the real model
 
 
-@pytest.mark.skipif(not config.piper_voice(), reason="no piper voice installed")
+# BOTH halves, and needing both is the whole shape of this package's optional extras: a voice
+# FILE on disk and the piper PACKAGE that reads it are independently present or absent. Checking
+# only the file skipped correctly on a bare machine and failed on one that had downloaded a voice
+# without `pip install voice-tunnel[piper]` — which is a completely ordinary state to be in.
+@pytest.mark.skipif(
+    not (config.piper_voice() and config.have_module("piper")),
+    reason="needs both a piper voice on disk and the piper-tts package",
+)
 def test_the_real_voice_loads_and_speaks_faster_the_second_time():
     """The claim, against the actual model: the load is paid once, not per reply."""
     import time
