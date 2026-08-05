@@ -10,6 +10,7 @@ site-packages is read-only (a system Python, a container, most managed environme
 force the other branch instead of hoping to be run in it.
 """
 import os
+import sys
 
 import pytest
 
@@ -70,6 +71,12 @@ def test_the_env_var_overrides_win_in_both_modes(installed, monkeypatch):
     assert config.env_file_path() == os.path.join("X:", "settings.env")
 
 
+# Each platform asserts ITS OWN convention rather than one test skipping everywhere else. The
+# earlier pair skipped XDG only on Windows and therefore ran on macOS, where the code correctly
+# ignores XDG in favour of ~/Library/Application Support — a green suite on two platforms and a
+# red one on the third, for a defect that was in the test. A three-OS matrix is only worth its
+# cost if each OS checks something the others cannot.
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows convention")
 def test_windows_uses_local_appdata_not_roaming(installed, monkeypatch):
     """Local, deliberately. Roaming profiles sync to a network share on managed machines, and a
@@ -79,7 +86,17 @@ def test_windows_uses_local_appdata_not_roaming(installed, monkeypatch):
     assert "Roaming" not in config.models_dir()
 
 
-@pytest.mark.skipif(os.name == "nt", reason="XDG is not a Windows convention")
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS convention")
+def test_macos_uses_application_support_and_ignores_xdg(installed, monkeypatch):
+    """XDG is a freedesktop convention; a Mac user looking for their data looks in
+    ~/Library/Application Support, and honouring XDG there would hide it from them."""
+    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
+
+    assert "Library/Application Support/voice-tunnel" in config.session_dir()
+    assert not config.session_dir().startswith("/tmp/xdg-data")
+
+
+@pytest.mark.skipif(os.name == "nt" or sys.platform == "darwin", reason="XDG is a Linux/BSD convention")
 def test_xdg_variables_are_honoured(installed, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
     monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/xdg-config")
