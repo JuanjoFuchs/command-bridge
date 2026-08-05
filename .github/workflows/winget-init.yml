@@ -1,0 +1,118 @@
+name: Initial WinGet Submission
+
+# ONE-TIME. Opens the first PR to microsoft/winget-pkgs, which a human at Microsoft reviews.
+# Every release after this uses winget-publish.yml, which needs the package to already exist.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to submit, without the v prefix"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    runs-on: windows-latest
+    steps:
+      - name: Resolve the release asset
+        id: release
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/v$version" -Headers @{
+            "Accept" = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $zip = $release.assets | Where-Object { $_.name -match "voice-tunnel-$version-windows-x64\.zip$" }
+          if ($null -eq $zip) { Write-Error "Windows bundle not found for v$version"; exit 1 }
+          "installer_url=$($zip.browser_download_url)" >> $env:GITHUB_OUTPUT
+
+      - name: Download wingetcreate
+        shell: pwsh
+        run: Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+
+      - name: Build the manifest and open the PR
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          $packageId = "JuanjoFuchs.voice-tunnel"
+          $version = "${{ inputs.version }}"
+          $url = "${{ steps.release.outputs.installer_url }}"
+          $manifestVersion = "1.12.0"
+          $manifestDir = Join-Path "manifests" "j/JuanjoFuchs/voice-tunnel/$version"
+          New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+
+          Invoke-WebRequest -Uri $url -OutFile bundle.zip
+          $sha256 = (Get-FileHash -Algorithm SHA256 bundle.zip).Hash
+
+          @(
+            "# yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.$manifestVersion.schema.json",
+            "PackageIdentifier: $packageId",
+            "PackageVersion: $version",
+            "DefaultLocale: en-US",
+            "ManifestType: version",
+            "ManifestVersion: $manifestVersion"
+          ) | Set-Content (Join-Path $manifestDir "$packageId.yaml")
+
+          @(
+            "# yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.$manifestVersion.schema.json",
+            "PackageIdentifier: $packageId",
+            "PackageVersion: $version",
+            "PackageLocale: en-US",
+            "Publisher: JuanjoFuchs",
+            "PublisherUrl: https://github.com/JuanjoFuchs",
+            "PackageName: voice-tunnel",
+            "PackageUrl: https://github.com/JuanjoFuchs/voice-tunnel",
+            "License: MIT",
+            "LicenseUrl: https://github.com/JuanjoFuchs/voice-tunnel/blob/main/LICENSE",
+            "ShortDescription: Talk to your coding agent from a phone browser. Local, no app.",
+            "Description: voice-tunnel opens a page any phone browser can load and carries audio both ways to whichever coding agent started it. Speech recognition, synthesis and the voiceprint all run on your own machine. No GPU required.",
+            "Moniker: voice-tunnel",
+            "Tags:",
+            "- voice",
+            "- speech",
+            "- cli",
+            "- agents",
+            "ManifestType: defaultLocale",
+            "ManifestVersion: $manifestVersion"
+          ) | Set-Content (Join-Path $manifestDir "$packageId.locale.en-US.yaml")
+
+          # zip + nested portable, NOT a bare portable: the bundle is a PyInstaller --onedir tree,
+          # because --onefile costs 4.5-14.9 s of unpacking on every invocation (spec 002).
+          # RelativeFilePath points at the launcher inside the archive.
+          @(
+            "# yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.$manifestVersion.schema.json",
+            "PackageIdentifier: $packageId",
+            "PackageVersion: $version",
+            "InstallerType: zip",
+            "NestedInstallerType: portable",
+            "NestedInstallerFiles:",
+            "- RelativeFilePath: voice-tunnel.exe",
+            "  PortableCommandAlias: voice-tunnel",
+            "UpgradeBehavior: uninstallPrevious",
+            "Installers:",
+            "- Architecture: x64",
+            "  InstallerUrl: $url",
+            "  InstallerSha256: $sha256",
+            "ManifestType: installer",
+            "ManifestVersion: $manifestVersion"
+          ) | Set-Content (Join-Path $manifestDir "$packageId.installer.yaml")
+
+          Get-ChildItem -Path $manifestDir -Filter "*.yaml" | ForEach-Object {
+            Write-Host "--- $($_.Name)"; Get-Content $_.FullName
+          }
+
+          # Without uninstallPrevious an upgrade leaves both versions installed and `winget list`
+          # shows duplicates. Asserted against the SUBMITTED manifest rather than trusting that
+          # the lines above were written correctly.
+          $installer = Join-Path $manifestDir "$packageId.installer.yaml"
+          if (-not (Select-String -Path $installer -Pattern "UpgradeBehavior: uninstallPrevious" -Quiet)) {
+            Write-Error "UpgradeBehavior validation failed"; exit 1
+          }
+
+          .\wingetcreate.exe submit $manifestDir --token $env:WINGET_TOKEN
+          if ($LASTEXITCODE -ne 0) { Write-Error "wingetcreate failed ($LASTEXITCODE)"; exit $LASTEXITCODE }

@@ -29,7 +29,8 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 from . import config
 
@@ -39,7 +40,7 @@ SHERPA_BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 DEFAULT_VOICE = "en_GB-alan-medium"
 """What `download voice` picks with no argument — the voice this project settled on by ear."""
 
-VOICE_CATALOG: Dict[str, str] = {
+VOICE_CATALOG: dict[str, str] = {
     # A curated shortlist, not the whole of piper-voices (~100 voices). Any valid piper name
     # works — the URL is derived from the name — so this is a starting point, not a whitelist.
     "en_GB-alan-medium": "British male, measured. The default here.",
@@ -51,7 +52,7 @@ VOICE_CATALOG: Dict[str, str] = {
     "en_US-lessac-high": "American female, the LJSpeech-style reference voice.",
 }
 
-ASR_MODELS: Dict[str, Dict[str, str]] = {
+ASR_MODELS: dict[str, dict[str, str]] = {
     "parakeet": {
         "dir": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
         "url": f"{SHERPA_BASE}/asr-models/"
@@ -89,7 +90,7 @@ def piper_voice_urls(name: str) -> tuple:
     return stem, stem + ".json"
 
 
-def _fetch(url: str, dest: str, on_progress: Optional[Callable] = None) -> int:
+def _fetch(url: str, dest: str, on_progress: Callable | None = None) -> int:
     """Stream `url` to `dest`, atomically. Returns bytes written.
 
     **Atomic because a partial model is worse than a missing one.** A truncated .onnx does not
@@ -142,7 +143,7 @@ def voice_installed(name: str) -> bool:
             and os.path.exists(os.path.join(d, f"{name}.onnx.json")))
 
 
-def download_voice(name: str, force: bool = False, on_progress=None) -> Dict:
+def download_voice(name: str, force: bool = False, on_progress=None) -> dict:
     """Fetch a piper voice (the model and its config sidecar, which is required to load it)."""
     models = config.models_dir()
     onnx = os.path.join(models, f"{name}.onnx")
@@ -159,7 +160,7 @@ def download_voice(name: str, force: bool = False, on_progress=None) -> Dict:
         os.unlink(onnx)
         raise RuntimeError(f"{name} downloaded but is too small to be a model — removed")
     try:
-        with open(meta, "r", encoding="utf-8") as fh:
+        with open(meta, encoding="utf-8") as fh:
             json.load(fh)
     except Exception as exc:
         raise RuntimeError(f"{name}.onnx.json is not valid JSON: {exc}") from exc
@@ -189,7 +190,7 @@ def _safe_extract(archive: str, dest: str) -> None:
         tar.extractall(dest)
 
 
-def download_asr(which: str = "parakeet", force: bool = False, on_progress=None) -> Dict:
+def download_asr(which: str = "parakeet", force: bool = False, on_progress=None) -> dict:
     """Fetch and unpack an ASR model directory."""
     if which not in ASR_MODELS:
         raise ValueError(f"unknown ASR model {which!r}; known: {', '.join(ASR_MODELS)}")
@@ -210,7 +211,7 @@ def download_asr(which: str = "parakeet", force: bool = False, on_progress=None)
 
         # The archive contains one top-level directory; move it into place rather than merging,
         # so a re-download cannot leave files from two versions mixed together.
-        entries = [e for e in os.listdir(staging)]
+        entries = os.listdir(staging)
         root = os.path.join(staging, entries[0]) if len(entries) == 1 else staging
         if os.path.isdir(target):
             shutil.rmtree(target)
@@ -220,7 +221,7 @@ def download_asr(which: str = "parakeet", force: bool = False, on_progress=None)
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def download_voiceprint(force: bool = False, on_progress=None) -> Dict:
+def download_voiceprint(force: bool = False, on_progress=None) -> dict:
     """Fetch the speaker-embedding model that makes the wake phrase optional."""
     dest = os.path.join(config.models_dir(), VOICEPRINT_MODEL["file"])
     if _looks_like_a_model(dest) and not force:
@@ -234,7 +235,7 @@ def download_voiceprint(force: bool = False, on_progress=None) -> Dict:
             "already_present": False, "bytes": written}
 
 
-def catalog() -> Dict[str, Any]:
+def catalog() -> dict[str, Any]:
     """What can be fetched and what is already here — answerable with no network."""
     return {
         "voices": [

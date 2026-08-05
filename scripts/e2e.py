@@ -17,7 +17,6 @@ import argparse
 import json
 import os
 import socket
-import struct
 import subprocess
 import sys
 import tempfile
@@ -172,7 +171,7 @@ def run(headed: bool, keep: bool) -> int:
     env = dict(os.environ, VOICE_TUNNEL_DIR=workdir, VOICE_TUNNEL_TOKEN=token, VOICE_TUNNEL_TTS="sapi")
 
     wav = os.path.join(workdir, "mic.wav")
-    print(f"\n== build the fake microphone ==")
+    print("\n== build the fake microphone ==")
     build_fake_mic(wav)
     check(os.path.getsize(wav) > 1000, "AC-E0 fake mic WAV synthesized",
           f"{os.path.getsize(wav)} bytes, {wav_duration(wav):.1f}s")
@@ -471,8 +470,11 @@ def run(headed: bool, keep: bool) -> int:
             )
             try:
                 return json.loads(r.stdout or "{}"), r.returncode
-            except json.JSONDecodeError:
-                raise Failure(f"`voice-tunnel {' '.join(argv)}` did not emit JSON: {r.stdout[:200]}{r.stderr[:200]}")
+            except json.JSONDecodeError as exc:
+                raise Failure(
+                    f"`voice-tunnel {' '.join(argv)}` did not emit JSON: "
+                    f"{r.stdout[:200]}{r.stderr[:200]}"
+                ) from exc
 
         desc, rc = cli("describe")
         check(rc == 0 and desc.get("tool") == "voice-tunnel", "voice-tunnel describe returns the contract")

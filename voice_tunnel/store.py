@@ -20,7 +20,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from . import config
 
@@ -44,7 +44,7 @@ def validate_session(session: str) -> str:
     return session
 
 
-def log_path(session: str, base: Optional[str] = None) -> str:
+def log_path(session: str, base: str | None = None) -> str:
     """Absolute path to a session's log, creating the base directory if needed."""
     validate_session(session)
     base = base or config.session_dir()
@@ -52,14 +52,14 @@ def log_path(session: str, base: Optional[str] = None) -> str:
     return os.path.join(base, f"{session}.jsonl")
 
 
-def read_turns(session: str, base: Optional[str] = None) -> List[Dict[str, Any]]:
+def read_turns(session: str, base: str | None = None) -> list[dict[str, Any]]:
     """Every turn in the log, in id order. Malformed lines are skipped rather than fatal —
     a partially-written final line must never make the whole log unreadable."""
     path = log_path(session, base)
     if not os.path.exists(path):
         return []
-    out: List[Dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as fh:
+    out: list[dict[str, Any]] = []
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -71,7 +71,7 @@ def read_turns(session: str, base: Optional[str] = None) -> List[Dict[str, Any]]
     return out
 
 
-def next_id(session: str, base: Optional[str] = None) -> int:
+def next_id(session: str, base: str | None = None) -> int:
     turns = read_turns(session, base)
     return (max((int(t.get("id", -1)) for t in turns), default=-1)) + 1
 
@@ -83,9 +83,9 @@ def append_turn(
     t_end: float,
     addressed: bool,
     final: bool = True,
-    base: Optional[str] = None,
+    base: str | None = None,
     reason: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Append one turn and return it (with its assigned `id`)."""
     validate_session(session)
     turn = {
@@ -110,8 +110,8 @@ def append_turn(
 
 
 def turns_since(
-    session: str, cursor: int, base: Optional[str] = None
-) -> Tuple[List[Dict[str, Any]], int]:
+    session: str, cursor: int, base: str | None = None
+) -> tuple[list[dict[str, Any]], int]:
     """Every turn with `id > cursor`, plus the new cursor.
 
     Returning *all* of them is the contract, not an optimization: the agent reasons for an
@@ -129,8 +129,8 @@ def watch(
     cursor: int,
     timeout: float = 30.0,
     poll: float = 0.1,
-    base: Optional[str] = None,
-) -> Tuple[List[Dict[str, Any]], int]:
+    base: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     """Block until at least one turn with `id > cursor` exists, or `timeout` elapses.
 
     On timeout returns `([], cursor)` — an empty result is a heartbeat, not an error, so a
@@ -146,7 +146,7 @@ def watch(
         time.sleep(poll)
 
 
-def list_sessions(base: Optional[str] = None) -> List[str]:
+def list_sessions(base: str | None = None) -> list[str]:
     base = base or config.session_dir()
     if not os.path.isdir(base):
         return []

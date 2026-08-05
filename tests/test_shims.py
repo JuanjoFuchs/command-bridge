@@ -49,7 +49,7 @@ def test_the_launcher_needs_no_environment(tmp_path):
 def test_the_launcher_puts_this_checkout_first_on_sys_path():
     """A shim named after a directory must mean that directory, even if another copy of the
     package is installed in the interpreter's site-packages."""
-    source = open(os.path.join(BIN, "voice-tunnel-run.py"), "r", encoding="utf-8").read()
+    source = open(os.path.join(BIN, "voice-tunnel-run.py"), encoding="utf-8").read()
     assert "sys.path.insert(0" in source
 
 
@@ -122,7 +122,7 @@ def test_the_bash_shim_has_no_carriage_returns():
 
 
 def test_line_endings_are_pinned_for_both_shims():
-    attributes = open(os.path.join(config.ROOT, ".gitattributes"), "r", encoding="utf-8").read()
+    attributes = open(os.path.join(config.ROOT, ".gitattributes"), encoding="utf-8").read()
     assert "bin/voice-tunnel" in attributes and "eol=lf" in attributes
     assert "*.cmd" in attributes and "eol=crlf" in attributes
 
@@ -132,5 +132,5 @@ def test_no_shim_invokes_python_dash_c():
     splice a path into a raw string, so a root ending in a backslash closed the string early and
     produced a SyntaxError instead of a CLI."""
     for name in ("voice-tunnel", "voice-tunnel.cmd"):
-        source = open(os.path.join(BIN, name), "r", encoding="utf-8").read()
+        source = open(os.path.join(BIN, name), encoding="utf-8").read()
         assert "-c " not in source, f"{name} still invokes python with an inline program"

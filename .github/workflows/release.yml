@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-packages:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Read the version from package metadata
+        id: version
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # BEFORE anything is built, so a mistyped tag costs nothing and — more importantly —
+      # cannot publish a version to PyPI under a name that disagrees with it. PyPI has no
+      # unpublish; a wrong version number there is permanent.
+      - name: Fail if the tag disagrees with the metadata
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "$TAG_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "Tag v$TAG_VERSION does not match pyproject version ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Build
+        run: python -m build
+
+      - name: Validate metadata
+        run: twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-packages
+          path: dist/
+
+      # Trusted Publishing (OIDC). `password` is deliberately absent — see spec 002. The first
+      # release uses PYPI_API_TOKEN because a pending publisher cannot create the project; that
+      # fallback is added by hand for release one and removed immediately after.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  build-windows-bundle:
+    # WINDOWS ONLY, and --onedir not --onefile. Both choices are measured in spec 002: a onefile
+    # bootloader unpacks 56 MB to temp on EVERY invocation (4.5-14.9 s per command against 0.25 s
+    # for the pip console script), and this CLI is called several times per conversational turn.
+    # onedir does not unpack and starts in 0.49 s. The bundle exists for the one audience pip does
+    # not serve — Windows users without Python, which is who WinGet is for.
+    needs: build-packages
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install with every backend
+        run: pip install -e ".[all]" pyinstaller
+
+      # piper.train pulls torch and pytorch_lightning — the training half of piper-tts, useless
+      # for inference and gigabytes on its own. Excluding it is the difference between a 304 MB
+      # bundle and an unusable one.
+      - name: Build the bundle
+        shell: bash
+        run: |
+          python -m PyInstaller --onedir --name voice-tunnel --console \
+            --collect-submodules onnxruntime --collect-data piper --collect-binaries sherpa_onnx \
+            --hidden-import sherpa_onnx --hidden-import piper --hidden-import piper.voice \
+            --exclude-module piper.train --exclude-module torch --exclude-module torchaudio \
+            --exclude-module pytorch_lightning --exclude-module matplotlib --exclude-module tkinter \
+            voice_tunnel/__main__.py
+
+      # Not "did it build" — did it build something that WORKS. A bundle whose native extensions
+      # failed to collect still produces an .exe; it fails at the first real command.
+      - name: Smoke test the bundle
+        shell: bash
+        run: |
+          ./dist/voice-tunnel/voice-tunnel.exe describe > /dev/null
+          ./dist/voice-tunnel/voice-tunnel.exe doctor || true
+          ./dist/voice-tunnel/voice-tunnel.exe download --list > /dev/null
+
+      - name: Zip it
+        shell: pwsh
+        run: |
+          $v = "${{ needs.build-packages.outputs.version }}"
+          Compress-Archive -Path dist/voice-tunnel/* -DestinationPath "voice-tunnel-$v-windows-x64.zip"
+          Get-Item "voice-tunnel-$v-windows-x64.zip" | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: voice-tunnel-*-windows-x64.zip
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build-packages, build-windows-bundle]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir -p release-files
+          find artifacts -type f \( -name "*.whl" -o -name "*.tar.gz" -o -name "*.zip" \) \
+            -exec cp {} release-files/ \;
+          ls -la release-files/
+
+      - uses: softprops/action-gh-release@v1
+        with:
+          files: release-files/*
+          generate_release_notes: true
+
+  trigger-winget:
+    runs-on: ubuntu-latest
+    needs: [build-packages, create-release]
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'winget-publish.yml',
+              ref: 'main',
+              inputs: { release_tag: '${{ github.ref_name }}' }
+            })
+
+  trigger-npm:
+    runs-on: ubuntu-latest
+    needs: [build-packages, create-release]
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'npm-publish.yml',
+              ref: 'main',
+              inputs: { version: '${{ needs.build-packages.outputs.version }}' }
+            })

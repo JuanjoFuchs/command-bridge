@@ -1,193 +1,210 @@
 # voice-tunnel
 
-**Talk to your coding agent from your phone.** One command opens a page any phone browser can
-load — no app, no App Store — and carries audio both ways to the agent that started it.
+[![CI](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/voice-tunnel/ci.yml?branch=main&label=CI)](https://github.com/JuanjoFuchs/voice-tunnel/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/voice-tunnel/release.yml?label=Release)](https://github.com/JuanjoFuchs/voice-tunnel/actions/workflows/release.yml)
+[![PyPI](https://img.shields.io/pypi/v/voice-tunnel)](https://pypi.org/project/voice-tunnel/)
+[![npm](https://img.shields.io/npm/v/%40juanjofuchs%2Fvoice-tunnel)](https://www.npmjs.com/package/@juanjofuchs/voice-tunnel)
+[![Python](https://img.shields.io/pypi/pyversions/voice-tunnel)](https://pypi.org/project/voice-tunnel/)
+[![GitHub Release](https://img.shields.io/github/v/release/JuanjoFuchs/voice-tunnel)](https://github.com/JuanjoFuchs/voice-tunnel/releases)
+[![License](https://img.shields.io/github/license/JuanjoFuchs/voice-tunnel)](LICENSE)
 
-It works with **any** agent. The tool holds no LLM: it turns speech into lines in a log and text
-into speech, and every ounce of intelligence lives in whatever is driving it. Claude Code, Codex
-and Grok have each driven this one unchanged; the only thing that knows which is the name you
-give it (`serve --wake codex`).
+**Talk to your coding agent from your phone.** One command opens a page any phone browser can
+load — no app, no App Store — and carries audio both ways.
+
+```bash
+pipx install voice-tunnel
+voice-tunnel serve --wake claude
+```
+
+Open the printed URL on your phone, tap once, and say *"hey Claude, what's the status?"*
+
+Everything runs on your machine. **No GPU. No account. No speech API.**
+
+## What this is
+
+The tool holds no model and makes no decisions. It turns your speech into lines in a log and text
+into speech; the agent that started it does the thinking. That is why it works with **any** agent
+— Claude Code, Codex and Grok have each driven it unchanged.
 
 ```
 Phone browser (no install)
    |  HTTPS
    v
 voice-tunnel serve  ── the dumb half ──────────────────────────────┐
-   mic  -> wake gate -> ASR -> append turn to a JSONL log          │
-   spkr <- TTS  <- text handed to `voice-tunnel say`               │
+   mic  -> wake gate -> speech recognition -> a line in a log      │
+   spkr <- speech synthesis <- text handed to `voice-tunnel say`   │
                                                                    v
                                        The agent that started it (the smart half)
                                        watch --since <cursor> -> reason -> say
 ```
 
-## What it does
+## Install
 
-- **It runs on your machine.** Speech recognition, speech synthesis, the voiceprint, and every
-  turn of the transcript. Nothing is sent to a speech API and there is no account. Reaching your
-  phone needs *some* tunnel, and `tailscale serve` is the one with no third party able to decrypt
-  the audio — see `ai-docs/reference/security.md` for what each option costs.
-- **It learns to recognise your voice, and the wake phrase becomes optional.** Every turn
-  confirmed by the phrase enrols another sample, so the speaker model sharpens with use. Measured
-  here: 0.711 / 0.782 / 0.801 for the owner against a highest impostor of 0.132 — a 5.4× margin
-  around the threshold — and it generalised to a phone microphone having learned only from
-  desktop recordings. Once it knows you, you are addressed without saying anything.
-- **It answers to whatever your agent is called.** `serve --wake codex`, live-changeable, with a
-  greeting always required — which is what keeps ordinary words like `grok` and `cursor` safe as
-  names.
-- **Your files are yours.** Turn logs, audio, and the voiceprint are plain files in a directory
-  `voice-tunnel config path` will tell you. The voiceprint is a 192-dimension centroid; speech
-  cannot be reconstructed from it.
-- **Models are downloaded, not bundled**, and `voice-tunnel download` fetches them. See below.
-
-## Quick start
+### pipx (recommended)
 
 ```bash
-python -m venv venv
-venv/Scripts/python -m pip install -r requirements.txt
+pipx install voice-tunnel
+voice-tunnel doctor
+```
 
-# Put the shims on PATH once, and `voice-tunnel` works from any directory with no venv activation.
-#   PowerShell:  [Environment]::SetEnvironmentVariable('Path', "$env:Path;$PWD\bin", 'User')
-#   bash:        export PATH="$PATH:$PWD/bin"
-voice-tunnel doctor            # anything missing? every failing check names the command that fixes it
+### pip
 
-# Models are NOT bundled — a Parakeet checkpoint is ~600 MB and a voice 60–120 MB. It works
-# without them (whisper + the system voice); these are the upgrades, and all three are optional.
-voice-tunnel download --list       # what is available, what you already have
-voice-tunnel download asr          # Parakeet: 8x faster than whisper, more accurate
-voice-tunnel download voice        # a neural voice instead of the robotic system one
+```bash
+pip install voice-tunnel
+```
+
+### npm
+
+```bash
+npm install -g @juanjofuchs/voice-tunnel
+```
+
+The npm package is a launcher, not a bundle — **it needs Python 3.10+ on PATH** and builds a
+private environment inside itself on install. `pip install voice-tunnel` does the same thing with
+one less layer.
+
+### WinGet (Windows, no Python needed)
+
+```powershell
+winget install JuanjoFuchs.voice-tunnel
+```
+
+The only channel that needs nothing else installed. Windows may flag it on first run: the bundle
+is unsigned, and Defender's heuristic dislikes unsigned Python bundles.
+
+### Better voice and better recognition
+
+The default install works immediately using your system voice and `whisper base.en`. Both are
+upgradeable, and the upgrades are worth it:
+
+```bash
+pip install voice-tunnel[all]      # or [piper] / [parakeet] individually
+
+voice-tunnel download asr          # Parakeet — 8x faster than whisper, more accurate
+voice-tunnel download voice        # a neural voice instead of the robotic one
 voice-tunnel download voiceprint   # learns your voice, so the wake phrase becomes optional
-
-voice-tunnel serve --session dev --wake claude   # `--wake` = YOUR name: claude, codex, grok
-# -> http://127.0.0.1:8765/?token=<generated>
+voice-tunnel download --list       # what is available, what you already have
 ```
 
-Open that URL, tap once to start, and say *"hey claude, what's the status?"*
+Models are downloaded, never bundled — a Parakeet checkpoint is 631 MB and would make the package
+unusable on a slow connection.
 
-Then, from anywhere:
+## Use it
+
+Start the tunnel with **your agent's own name**, and put its page somewhere your phone can reach.
 
 ```bash
-voice-tunnel watch  --session dev --since -1      # blocks until you speak; returns turns + a cursor
-voice-tunnel say    --session dev "All green."    # speaks back
-voice-tunnel rate   --session dev --speed 1.3     # talk faster, now and every session after
-voice-tunnel status --session dev
-voice-tunnel describe                             # the live contract — read this first
+voice-tunnel serve --wake claude          # or codex, grok, whatever is driving
 ```
 
-`bin/voice-tunnel` and `bin/voice-tunnel.cmd` resolve the repo root and the venv themselves, from any cwd, under Git
-Bash and PowerShell alike. If `voice-tunnel` is not on PATH, call the shim by absolute path — never reach
-for `python -c "import sys; sys.path.insert(...)"`.
-
-## Settings
-
-Anything you would otherwise re-export on every call lives in a gitignored `.env` at the repo
-root, loaded automatically by every command:
-
-```bash
-voice-tunnel config set VOICE_TUNNEL_TTS piper       # persist it once
-voice-tunnel config show                   # every setting, its live value, and where it came from
-```
-
-Precedence is **process env > `.env` > built-in default**, so a one-off override is still just a
-prefix: `VOICE_TUNNEL_TTS=none voice-tunnel say --session dev "hi"`. Piper's binary and voice are discovered from the
-checkout (`venv/Scripts/piper.exe`, `models/en_GB-alan-medium.onnx`), so `VOICE_TUNNEL_TTS=piper` is
-usually the only setting a piper session needs. `.env.example` documents every variable.
-
-### How it sounds
-
-Speed and sentence pause are tuned by ear during a live conversation, so `voice-tunnel rate` changes them
-**immediately and permanently** — no restart, and the value is still there next session:
-
-```bash
-voice-tunnel rate --session dev --speed 1.4      # a MULTIPLE of native pace; higher is faster
-voice-tunnel rate --session dev --pause 0.6      # silence between sentences
-voice-tunnel rate --session dev                  # what is it now
-```
-
-Speed is deliberately not piper's `length_scale`, which is inverted — asking for 2.0 and getting
-half speed is a defect, not a quirk, so the inversion lives in exactly one function and nothing
-above it ever sees it. Raise `--pause` before reading a list aloud: speech has no scrollback, so
-the pause is the punctuation.
-
-### Why replies are fast
-
-The piper voice is **loaded once into the server process**, not spawned per reply. Measured on
-this machine through the live server, same text, same voice:
-
-| | spawning `piper.exe` | resident |
-|---|---|---|
-| "All green." | 4.39 s | 1.20 s |
-| one sentence | 4.43 s | 1.29 s |
-| three sentences | 5.45 s | 1.59 s |
-
-Nearly all of the old cost was startup — interpreter, onnxruntime, and the ONNX model — re-paid
-on every sentence spoken, which had made TTS more than 10x slower than transcription without
-anyone measuring it. The remaining ~0.8 s is `SPEAK_GRACE_S`, the deliberate pause that keeps the
-agent from talking over you. The model is warmed on a background thread at `serve` time so the
-first reply is not the slow one. `VOICE_TUNNEL_PIPER_INPROCESS=0` goes back to spawning; `voice-tunnel status` says
-which path is live, because a silent fall back is a 20x regression that only presents as "it
-feels slow again".
-
-## Putting it on your phone
-
-The page needs a **secure context** to reach a microphone. `localhost` qualifies; a LAN IP does
-**not** — on `http://192.168.x.x` the browser leaves `navigator.mediaDevices` undefined and there
-is no microphone at all. So:
+Your phone needs HTTPS to reach a microphone at all — that is a browser rule, and a plain LAN
+address like `http://192.168.1.20:8765` gives **no microphone**, not a broken one. The simplest
+fix:
 
 ```bash
 tailscale serve --bg 8765
-export VOICE_TUNNEL_ALLOW_CIDRS=100.64.0.0/10
+voice-tunnel config set VOICE_TUNNEL_ALLOW_CIDRS 100.64.0.0/10
 ```
 
-That gives a real Let's Encrypt certificate on `<host>.<tailnet>.ts.net` with nothing exposed to
-the public internet. Open that URL on the phone.
-
-**Tailscale is the recommended transport, and the reason is not convenience.** It is the only
-common option where TLS terminates on your own device, so nobody else can decrypt what you say.
-An ngrok or Cloudflare tunnel works and is sometimes the only thing that works — on a network
-where Tailscale conflicts with a corporate VPN, for instance — but it terminates TLS at the
-vendor's edge, which puts the plaintext of every word on a machine you do not control. If you go
-that way, put real authentication in front of it (`ngrok --oauth google --oauth-allow-email …`):
-the CIDR allowlist cannot help, because a tunnel forwards from localhost and every request
-therefore arrives from an allowed peer. Full comparison in `ai-docs/reference/security.md`.
-
-**Android Chrome, session-based.** The mic only records while the tab is foreground — that is a
-platform rule, not a bug, and true background capture would need a native app. The page holds a
-Screen Wake Lock so the screen stays on without installing anything.
-
-## Verifying it
+Then, from the agent's side, this is the whole loop:
 
 ```bash
-venv/Scripts/python -m pytest tests/ -q     # unit tests, no mic and no model
-venv/Scripts/python scripts/e2e.py          # the pipeline, through a real browser
-venv/Scripts/python scripts/layout.py       # the page geometry, at five viewports
+voice-tunnel watch --session dev --since -1   # BLOCKS until you speak; returns turns + a cursor
+voice-tunnel say   --session dev "All green." # speaks back
+voice-tunnel watch --session dev --since 7    # always resume from the cursor you were given
 ```
 
-The end-to-end run drives a real Chrome, feeds it a synthesized WAV as its microphone, and
-asserts the whole path: capture → WebSocket → Whisper → wake gate → turn log → cursor → TTS →
-playback → acknowledgement, plus the CLI an agent actually uses.
+`voice-tunnel describe` prints the full contract as JSON. **Point your agent at that** — it is
+written to be read by a machine, and it carries the rules that matter, including the one an agent
+gets wrong first: `watch` blocks, so an agent not sitting in it has left you talking to nobody.
 
-It substitutes the **device layer only** — Chrome's own fake-capture flags deliver silence on
-this machine (see `ai-docs/reference/browser.md`), so `getUserMedia` is replaced with a real
-`MediaStream` built from the WAV. Everything above the OS driver is genuine. A real phone with a
-real microphone is the one thing still needing a human.
+### Saying its name
 
-`scripts/layout.py` checks something neither of the others looks at: **geometry**. It asserts the
-page never outgrows the viewport and that the newest transcript row is actually on screen, across
-five viewports — including a Pixel 7 both with and without the URL bar showing, a 183px
-difference that is larger than most desktop breakpoints and is where a real cropping bug lived
-while every other test stayed green. `--shots DIR` writes a PNG per viewport.
+The summons is a greeting plus a name: *"hey claude"*, *"hi codex"*, *"ok grok"*. **The greeting
+is always required**, which is what makes any name safe — `grok` is an English verb and `cursor`
+is a word you say constantly, but nobody says "hey grok" by accident.
 
-## Layout
+```bash
+voice-tunnel wake --name codex     # change it, live, no restart
+```
+
+Once the voiceprint knows you, you are addressed **without saying anything**.
+
+## Requirements
+
+**No GPU.** Every model here is CPU inference by construction — nothing in the codebase can use a
+graphics card. Measured on a 20-core desktop CPU:
+
+| | Memory | Disk | Speech recognition |
+|---|---|---|---|
+| **Minimum** — system voice + `whisper base.en` | 219 MB | ~150 MB | usable |
+| **Recommended** — Parakeet + neural voice + voiceprint | ~1.0 GB | 788 MB | **RTF 0.11** — 7.4 s of speech in 0.85 s |
+
+- **Python 3.10+** for pip and npm. WinGet needs nothing.
+- **A phone browser.** Android Chrome is what this is tested on. The tab must stay in the
+  foreground — background recording needs a native app, which this deliberately is not.
+- **HTTPS to the phone**, via Tailscale or any tunnel. See [Privacy](#privacy).
+- A slower CPU raises the real-time factor but does not break anything; the recognizer runs
+  faster than real time with a lot of headroom.
+
+## Privacy
+
+Speech recognition, synthesis, the voiceprint, and every turn of the transcript stay on your
+machine. There is no account and nothing is sent to a speech API.
+
+**The transport is your choice and they are not equivalent.** Tailscale terminates TLS on your
+own device, so nobody else can decrypt the audio. An ngrok or Cloudflare tunnel terminates it at
+the vendor's edge — which puts the plaintext of everything you say on a machine you do not
+control. Sometimes that is the only thing that works, and it is still a trade worth making
+knowingly. If you expose it publicly, put real authentication in front of it: the built-in CIDR
+allowlist cannot help you there, because a tunnel forwards from localhost and every request
+therefore arrives from an allowed peer.
+
+Your files are plain files. `voice-tunnel config path` says where. The voiceprint is a
+192-dimension centroid — speech cannot be reconstructed from it.
+
+## Settings
+
+```bash
+voice-tunnel config show           # every setting, its value, and where it came from
+voice-tunnel rate --speed 1.4      # talk faster — applies now and every session after
+voice-tunnel verbose on            # narrate every action before doing it
+voice-tunnel timing                # where the time actually went, per exchange
+```
+
+Precedence is **process env > settings file > built-in default**. `.env.example` documents every
+variable.
+
+## For agents
+
+```bash
+voice-tunnel describe
+```
+
+That is the product wedge, borrowed from [agent-mail][am]: an agent runs it, reads the JSON, and
+learns the whole contract without MCP setup, a daemon, or separate documentation. Every command
+also returns a `next` field telling the agent what to do at the moment it applies.
+
+[am]: https://github.com/JuanjoFuchs/agent-mail-cli
+
+## Development
+
+```bash
+python -m venv venv
+venv/Scripts/python -m pip install -e ".[dev,all]"
+
+venv/Scripts/python -m pytest tests/ -q     # unit tests, no mic and no model
+venv/Scripts/python scripts/e2e.py          # the pipeline, through a real browser
+venv/Scripts/python scripts/layout.py       # page geometry, at five viewports
+```
 
 | Path | What |
 |---|---|
-| `voice_tunnel/` | store, asr, wake, tts, security, server, cli, config |
+| `voice_tunnel/` | store, asr, wake, tts, voiceprint, security, server, cli, config |
 | `voice_tunnel/web/index.html` | the phone client, self-contained, no build step |
-| `specs/` | numbered metaspecs — WHAT and acceptance criteria |
+| `specs/` | 001 the tunnel · 002 packaging · 003 npm |
 | `ai-docs/reference/` | security model, turn-log contract, browser constraints |
-| `scripts/e2e.py` | the acceptance gate |
-| `scripts/probe_capture.py` | diagnostic for "is the browser sending silence?" |
-| `bin/` | PATH shims — `voice-tunnel` (bash), `voice-tunnel.cmd` (PowerShell/cmd), both exec `voice-tunnel-run.py` |
-| `.env.example` | every setting, with its default and the reason for it |
 
-Start at `AGENTS.md` if you are an agent, `PROJECT_UNDERSTANDING.md` if you are a person.
+## License
+
+MIT.

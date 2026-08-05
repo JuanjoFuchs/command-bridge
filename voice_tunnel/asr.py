@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -119,7 +118,7 @@ class UtteranceBuffer:
     def seconds_buffered(self) -> float:
         return self._buf.size / float(self.sr)
 
-    def snapshot(self) -> Optional[np.ndarray]:
+    def snapshot(self) -> np.ndarray | None:
         """A copy of the audio buffered so far, or None if there isn't speech in it yet.
 
         For live partial transcription: the in-flight utterance can be transcribed repeatedly
@@ -140,7 +139,7 @@ class UtteranceBuffer:
         """
         return self._seen_speech and self._trailing_silence < self.end_silence_samples
 
-    def feed(self, samples: np.ndarray) -> Optional[Tuple[np.ndarray, float, float]]:
+    def feed(self, samples: np.ndarray) -> tuple[np.ndarray, float, float] | None:
         """Add audio. Returns `(samples, t_start, t_end)` when an utterance completes."""
         if samples is None or samples.size == 0:
             return None
@@ -217,7 +216,7 @@ class UtteranceBuffer:
         self._seen_speech = False
         self._buf_start_total = self._total_fed
 
-    def flush(self) -> Optional[Tuple[np.ndarray, float, float]]:
+    def flush(self) -> tuple[np.ndarray, float, float] | None:
         """End of stream: emit whatever is buffered if it looks like speech."""
         if self._buf.size < self.min_samples or is_silent(self._buf, self.silence_floor):
             self._reset_buffer()
@@ -243,10 +242,10 @@ class Recognizer:
 
     def __init__(
         self,
-        model_name: Optional[str] = None,
+        model_name: str | None = None,
         device: str = "cpu",
         compute_type: str = "int8",
-        engine: Optional[str] = None,
+        engine: str | None = None,
     ) -> None:
         self.engine = (engine or config.asr_engine()).lower()
         self.model_name = model_name or (
@@ -334,7 +333,7 @@ class Recognizer:
         with self._lock:
             return self._run(samples)
 
-    def try_transcribe(self, samples: np.ndarray) -> Optional[str]:
+    def try_transcribe(self, samples: np.ndarray) -> str | None:
         """Transcribe only if the model is free; return None if it is busy.
 
         For the live partial preview. Skipping is the correct behaviour under contention — the

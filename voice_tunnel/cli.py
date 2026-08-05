@@ -14,7 +14,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, Optional
+from typing import Any
 
 from . import __version__, config, store
 
@@ -64,7 +64,7 @@ INVOCATION = {
     "first_call": "voice-tunnel doctor   # is anything missing, and what is the command that fixes it",
 }
 
-DESCRIBE: Dict[str, Any] = {
+DESCRIBE: dict[str, Any] = {
     "tool": "voice-tunnel",
     "version": __version__,
     "summary": (
@@ -311,12 +311,12 @@ def write_runtime(session: str, host: str, port: int, token: str) -> str:
     return path
 
 
-def read_runtime(session: str) -> Optional[Dict[str, Any]]:
+def read_runtime(session: str) -> dict[str, Any] | None:
     path = runtime_path(session)
     if not os.path.exists(path):
         return None
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
@@ -332,7 +332,7 @@ def _serve_remedy(session: str) -> str:
     )
 
 
-def _request(session: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _request(session: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     rt = read_runtime(session)
     if not rt:
         # `error` keeps its exact original wording — callers may already match on it. `code` and
@@ -373,7 +373,7 @@ def _request(session: str, path: str, payload: Optional[Dict[str, Any]] = None) 
 # -------------------------------------------------------------------- commands
 
 
-def cmd_describe(_args) -> Dict[str, Any]:
+def cmd_describe(_args) -> dict[str, Any]:
     return DESCRIBE
 
 
@@ -402,7 +402,7 @@ def cmd_serve(args) -> None:
     )
 
 
-def _next_action(turns, live: Optional[Dict[str, Any]]) -> str:
+def _next_action(turns, live: dict[str, Any] | None) -> str:
     """What the agent should do RIGHT NOW, given the state this call just observed.
 
     JJ, live 2026-08-03: *"let's not only encode this in describe. I think on every command, for
@@ -442,7 +442,7 @@ def _next_action(turns, live: Optional[Dict[str, Any]]) -> str:
     return "run `voice-tunnel watch` again from this cursor"
 
 
-def cmd_watch(args) -> Dict[str, Any]:
+def cmd_watch(args) -> dict[str, Any]:
     turns, cursor = store.watch(args.session, args.since, timeout=args.timeout)
     if turns:
         # Delivering the turns IS the acknowledgement — JJ, 2026-07-31: "the moment you receive
@@ -518,8 +518,8 @@ def cmd_watch(args) -> Dict[str, Any]:
     return result
 
 
-def cmd_say(args) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"text": args.text}
+def cmd_say(args) -> dict[str, Any]:
+    payload: dict[str, Any] = {"text": args.text}
     if getattr(args, "voice", None):
         payload["voice"] = args.voice
     if getattr(args, "now", False):
@@ -537,7 +537,7 @@ def cmd_say(args) -> Dict[str, Any]:
     return result
 
 
-def cmd_rate(args) -> Dict[str, Any]:
+def cmd_rate(args) -> dict[str, Any]:
     """Read or change how fast the agent talks — and make the change survive a restart.
 
     PERSISTS BY DEFAULT, which is the whole point. These are preferences tuned by ear over a live
@@ -604,7 +604,7 @@ def cmd_rate(args) -> Dict[str, Any]:
     }
 
 
-def cmd_wake(args) -> Dict[str, Any]:
+def cmd_wake(args) -> dict[str, Any]:
     """Read or change the name the agent answers to. Persists, like `voice-tunnel rate`.
 
     **The agent that starts the tunnel should name itself** — `serve --wake claude` under Claude,
@@ -661,7 +661,7 @@ def cmd_wake(args) -> Dict[str, Any]:
     }
 
 
-def cmd_verbose(args) -> Dict[str, Any]:
+def cmd_verbose(args) -> dict[str, Any]:
     """Turn narration on or off, live and permanently — so he can flip it by ASKING.
 
     Persists like `voice-tunnel rate` and for the same reason: this is a preference about the AGENT, held
@@ -694,17 +694,17 @@ def cmd_verbose(args) -> Dict[str, Any]:
     }
 
 
-def cmd_consumed(args) -> Dict[str, Any]:
+def cmd_consumed(args) -> dict[str, Any]:
     return _request(
         args.session, "/consumed", {"cursor": args.cursor, "state": args.state}
     )
 
 
-def cmd_cue(args) -> Dict[str, Any]:
+def cmd_cue(args) -> dict[str, Any]:
     return _request(args.session, "/cue", {"name": args.name})
 
 
-def cmd_voiceprint(args) -> Dict[str, Any]:
+def cmd_voiceprint(args) -> dict[str, Any]:
     from . import voiceprint
 
     if getattr(args, "owner", None) is None:
@@ -737,13 +737,13 @@ def cmd_voiceprint(args) -> Dict[str, Any]:
     }
 
 
-def cmd_voices(_args) -> Dict[str, Any]:
+def cmd_voices(_args) -> dict[str, Any]:
     from . import tts
 
     return {"voices": tts.list_voices(), "backend": tts.available()}
 
 
-def cmd_download(args) -> Dict[str, Any]:
+def cmd_download(args) -> dict[str, Any]:
     """Fetch a model. The command that makes a fresh install usable at all.
 
     Nothing else here downloads anything — `voices` only lists what is already on disk — so
@@ -815,11 +815,11 @@ def cmd_download(args) -> Dict[str, Any]:
     return result
 
 
-def cmd_status(args) -> Dict[str, Any]:
+def cmd_status(args) -> dict[str, Any]:
     return _request(args.session, "/status")
 
 
-def cmd_config(args) -> Dict[str, Any]:
+def cmd_config(args) -> dict[str, Any]:
     """Read and write the persisted settings file.
 
     Argument-shaped (`config set VOICE_TUNNEL_TTS piper`), not payload-shaped (`config set --json {...}`),
@@ -875,11 +875,11 @@ def cmd_config(args) -> Dict[str, Any]:
     raise ValueError(f"unknown config subcommand {args.config_cmd!r}")
 
 
-def _check(name: str, ok: bool, detail: str, remedy: str = "") -> Dict[str, Any]:
+def _check(name: str, ok: bool, detail: str, remedy: str = "") -> dict[str, Any]:
     return {"name": name, "ok": ok, "detail": detail, "remedy": (remedy if not ok else None)}
 
 
-def cmd_doctor(_args) -> Dict[str, Any]:
+def cmd_doctor(_args) -> dict[str, Any]:
     """Say what is broken AND the command that fixes it.
 
     This is the one place both articles agree without qualification: an agent cannot infer a
@@ -946,13 +946,24 @@ def cmd_doctor(_args) -> Dict[str, Any]:
 
     backend = config.tts_backend()
     if backend == "piper":
-        binary, voice = config.piper_bin(), config.piper_voice()
+        # TWO WAYS TO RUN PIPER, and this check used to demand both. The resident path holds the
+        # voice in this process via the `piper` Python package and needs NO executable at all —
+        # it has been the default since it made replies 7-26x faster. Requiring `piper_bin`
+        # anyway failed a working install for everyone who ran `pip install voice-tunnel[piper]`,
+        # which is all of them: the wheel ships a library, not a `piper.exe`. Found by running
+        # `doctor` inside a PyInstaller bundle, where it reported `bin=(not found)` while
+        # synthesis was demonstrably working.
+        voice = config.piper_voice()
+        resident = config.piper_inprocess() and config.have_module("piper")
+        binary = config.piper_bin()
+        engine_ok = resident or bool(binary)
+        how = "resident (in-process)" if resident else f"spawning {binary}" if binary else "none"
         checks.append(_check(
-            "tts", bool(binary) and bool(voice),
-            f"piper bin={binary or '(not found)'} voice={voice or '(not chosen)'}",
-            "install piper into the venv (`pip install piper-tts`), then get a voice with "
-            "`voice-tunnel download voice` — or point VOICE_TUNNEL_PIPER_VOICE at one you "
-            "already have (`voice-tunnel voices` lists what is on disk)",
+            "tts", engine_ok and bool(voice),
+            f"piper via {how}, voice={voice or '(none installed)'}",
+            ("`pip install voice-tunnel[piper]` for the engine, then `voice-tunnel download "
+             "voice` for a voice" if not engine_ok else
+             "`voice-tunnel download voice` — the engine is here but no voice is installed"),
         ))
     elif backend == "sapi":
         checks.append(_check(
@@ -1032,7 +1043,7 @@ def cmd_doctor(_args) -> Dict[str, Any]:
     return {"ok": not failed, "checks": checks, "failed": failed}
 
 
-def cmd_timing(args) -> Dict[str, Any]:
+def cmd_timing(args) -> dict[str, Any]:
     """Where the time went, per exchange — read straight from disk, no server needed.
 
     Exists because "why is this slow" was answered twice by hand in one session, from clip IDs
@@ -1045,7 +1056,7 @@ def cmd_timing(args) -> Dict[str, Any]:
     return timing.report(args.session, limit=args.limit)
 
 
-def cmd_turns(args) -> Dict[str, Any]:
+def cmd_turns(args) -> dict[str, Any]:
     turns = store.read_turns(args.session)
     if args.limit:
         turns = turns[-args.limit :]

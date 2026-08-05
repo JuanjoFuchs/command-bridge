@@ -17,11 +17,10 @@ STDLIB ONLY — pure logic, unit-testable with no audio.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from difflib import SequenceMatcher
-from typing import Iterable, Optional, Tuple
 
 from . import config
-
 
 GREETINGS = config.GREETINGS
 """Openers that mark an utterance as a summons even when the name that follows was garbled.
@@ -79,7 +78,7 @@ class WakeGate:
 
     def __init__(
         self,
-        phrases: Optional[Iterable[str]] = None,
+        phrases: Iterable[str] | None = None,
         window_s: float = config.CONVERSATION_WINDOW_S,
         enabled: bool = True,
     ) -> None:
@@ -91,7 +90,7 @@ class WakeGate:
         )
         self.window_s = float(window_s)
         self.enabled = bool(enabled)
-        self._last_addressed_at: Optional[float] = None
+        self._last_addressed_at: float | None = None
 
     def reset(self) -> None:
         self._last_addressed_at = None
@@ -106,7 +105,7 @@ class WakeGate:
         """
         self.phrases = sorted((_norm(p) for p in phrases), key=len, reverse=True)
 
-    def _find_phrase(self, normalized: str) -> Tuple[Optional[str], bool]:
+    def _find_phrase(self, normalized: str) -> tuple[str | None, bool]:
         """Return `(phrase, at_start)`. Detection is generous; stripping is not.
 
         A phrase anywhere wakes the agent, but only a phrase at the START is a summons we may
@@ -155,7 +154,7 @@ class WakeGate:
         # Now the greeting is mandatory (see config.GREETINGS), so a name alone is just a word.
         return None, False
 
-    def evaluate(self, text: str, now: float, ended: Optional[float] = None) -> Tuple[bool, str]:
+    def evaluate(self, text: str, now: float, ended: float | None = None) -> tuple[bool, str]:
         """Return `(addressed, text_for_the_agent)`.
 
         A **leading** wake phrase is stripped, because the agent should receive the request

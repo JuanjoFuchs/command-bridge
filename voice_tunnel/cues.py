@@ -22,16 +22,15 @@ from __future__ import annotations
 
 import math
 import struct
-from typing import Dict, List, Tuple
 
-from . import config, tts
+from . import tts
 
 CUE_SR = 22050
 CUE_AMPLITUDE = 0.18
 """Deliberately well below speech level — a cue is punctuation, not a statement."""
 
 # name -> (frequency ramp in Hz, duration seconds)
-CUES: Dict[str, Tuple[Tuple[float, float], float]] = {
+CUES: dict[str, tuple[tuple[float, float], float]] = {
     "heard": ((660.0, 990.0), 0.11),
     "thinking": ((520.0, 520.0), 0.09),
     "tool": ((320.0, 320.0), 0.06),
@@ -49,11 +48,11 @@ while the agent works, so it has to read as a background tick rather than an ann
 run of them should feel like activity, not like being paged four times."""
 
 
-def names() -> List[str]:
+def names() -> list[str]:
     return sorted(CUES)
 
 
-def render(name: str) -> Tuple[bytes, int]:
+def render(name: str) -> tuple[bytes, int]:
     """Return `(padded mono 16-bit PCM, sample_rate)` for a cue. Raises KeyError if unknown."""
     (f0, f1), seconds = CUES[name]
     n = int(CUE_SR * seconds)

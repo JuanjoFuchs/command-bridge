@@ -274,7 +274,7 @@ def main() -> int:
 
         # PASS 2 — instrumented. Transcription quality is NOT asserted here; this pass exists
         # only to prove the ring moves and a live partial renders while speech is flowing.
-        print(f"\n  speaking (instrumented, for UI only)")
+        print("\n  speaking (instrumented, for UI only)")
         speak_into_cable(
             "Checking whether the level ring moves while I am speaking to you now.",
             out_dev, on_tick=tick,

@@ -18,10 +18,9 @@ import os
 import threading
 import time
 import wave
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 import numpy as np
-
 from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
@@ -40,19 +39,19 @@ checkout always has the directory in both places."""
 class TunnelState:
     """Everything the server knows. Deliberately small — state that grows is state that lies."""
 
-    def __init__(self, session: str, token: Optional[str], gate_enabled: bool = True) -> None:
+    def __init__(self, session: str, token: str | None, gate_enabled: bool = True) -> None:
         self.session = session
         self.token = token
         self.started_at = time.time()
-        self.clients: Set[web.WebSocketResponse] = set()
+        self.clients: set[web.WebSocketResponse] = set()
         self.wake = WakeGate(enabled=gate_enabled)
         self.recognizer = asr_mod.Recognizer()
         self.buffer = asr_mod.UtteranceBuffer()
         self.turns_logged = 0
         self.frames_received = 0
         self.samples_received = 0
-        self.last_played: Optional[str] = None
-        self.last_error: Optional[str] = None
+        self.last_played: str | None = None
+        self.last_error: str | None = None
         self.client_sr: int = config.TARGET_SR
         self.consumed_cursor: int = -1
         self.agent_state: str = "idle"
@@ -135,7 +134,7 @@ class TunnelState:
         # Failsafe capture: everything the server actually received, at 16 kHz. Borrowed from
         # meeting-copilot, where it repeatedly turned "the ASR is bad" into a question you can
         # answer by listening — is the audio quiet, clipped, or fine and the model just wrong?
-        self._wav: Optional[wave.Wave_write] = None
+        self._wav: wave.Wave_write | None = None
 
     def capture(self, samples) -> None:
         """Append to the failsafe WAV, opening it on first audio."""
@@ -156,7 +155,7 @@ class TunnelState:
             finally:
                 self._wav = None
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "session": self.session,
             "uptime_s": round(time.time() - self.started_at, 1),
@@ -195,7 +194,7 @@ def _peer_ip(request: web.Request) -> str:
     return (request.remote or "").strip() or "0.0.0.0"
 
 
-def _request_token(request: web.Request) -> Optional[str]:
+def _request_token(request: web.Request) -> str | None:
     """Accept the token from a query param (the phone opens a URL) or a Bearer header
     (scripts). Both are equivalent; neither is more trusted than the other."""
     tok = request.query.get("token")
@@ -227,7 +226,7 @@ async def _set_agent_state(state: TunnelState, value: str) -> None:
     await _broadcast_json(state, {"type": "agent_state", "state": value})
 
 
-async def _broadcast_json(state: TunnelState, payload: Dict[str, Any]) -> None:
+async def _broadcast_json(state: TunnelState, payload: dict[str, Any]) -> None:
     dead = []
     for ws in list(state.clients):
         try:
@@ -303,7 +302,7 @@ async def handle_say(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
-async def _speak(state: TunnelState, text: str, voice: Optional[str]) -> Dict[str, Any]:
+async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, Any]:
     """Synthesize, hold if the speaker is mid-sentence, then push the audio.
 
     Shared by the blocking and fire-and-forget paths so the interruption guard cannot be
@@ -413,7 +412,7 @@ async def _flush_undelivered(state: TunnelState) -> int:
     return len(queued)
 
 
-async def _send_clip(state: TunnelState, header: Dict[str, Any], pcm: bytes) -> None:
+async def _send_clip(state: TunnelState, header: dict[str, Any], pcm: bytes) -> None:
     """Send one clip's header and its bytes as an indivisible pair.
 
     The lock is the whole function. Everything that puts audio on the wire goes through here so
@@ -858,7 +857,7 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     await _set_agent_state(state, "idle")
 
 
-def build_app(session: str, token: Optional[str], gate_enabled: bool = True) -> web.Application:
+def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web.Application:
     app = web.Application()
     app["state"] = TunnelState(session, token, gate_enabled)
     app.add_routes(
@@ -882,7 +881,7 @@ def run(
     session: str = "dev",
     host: str = config.DEFAULT_HOST,
     port: int = config.DEFAULT_PORT,
-    token: Optional[str] = None,
+    token: str | None = None,
     gate_enabled: bool = True,
 ) -> None:
     store.validate_session(session)

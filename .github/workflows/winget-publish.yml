@@ -1,0 +1,57 @@
+name: Publish to WinGet
+
+# Every release AFTER the first. `wingetcreate update` requires the package to already exist in
+# microsoft/winget-pkgs, so the first version must go through winget-init.yml and be approved by
+# a Microsoft reviewer before this can succeed. Until then this workflow failing is expected, not
+# a defect — agent-mail-cli's history records exactly that sequence.
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Resolve the tag and the bundle
+        id: release
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.release_tag }}"
+          } else {
+            $tag = "${{ github.event.release.tag_name }}"
+          }
+          $version = $tag -replace '^v', ''
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" -Headers @{
+            "Accept" = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $zip = $release.assets | Where-Object { $_.name -match "voice-tunnel-$version-windows-x64\.zip$" }
+          if ($null -eq $zip) { Write-Error "Windows bundle not found for $tag"; exit 1 }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "installer_url=$($zip.browser_download_url)" >> $env:GITHUB_OUTPUT
+
+      - name: Download wingetcreate
+        shell: pwsh
+        run: Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+
+      - name: Submit the update
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          .\wingetcreate.exe update JuanjoFuchs.voice-tunnel `
+            --version "${{ steps.release.outputs.version }}" `
+            --urls "${{ steps.release.outputs.installer_url }}" `
+            --submit --token $env:WINGET_TOKEN
+          if ($LASTEXITCODE -ne 0) { Write-Error "wingetcreate update failed ($LASTEXITCODE)"; exit $LASTEXITCODE }

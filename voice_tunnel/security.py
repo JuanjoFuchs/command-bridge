@@ -17,7 +17,7 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import secrets
-from typing import Iterable, Optional, Sequence
+from collections.abc import Iterable, Sequence
 
 from . import config
 
@@ -49,8 +49,8 @@ def allowed_cidrs() -> tuple[str, ...]:
 
 def client_ip(
     peer_ip: str,
-    forwarded_for: Optional[str] = None,
-    trusted_proxies: Optional[Sequence[str]] = None,
+    forwarded_for: str | None = None,
+    trusted_proxies: Sequence[str] | None = None,
 ) -> str:
     """Resolve the real client IP.
 
@@ -75,15 +75,15 @@ def client_ip(
 
 def peer_allowed(
     peer_ip: str,
-    forwarded_for: Optional[str] = None,
-    trusted_proxies: Optional[Sequence[str]] = None,
-    cidrs: Optional[Sequence[str]] = None,
+    forwarded_for: str | None = None,
+    trusted_proxies: Sequence[str] | None = None,
+    cidrs: Sequence[str] | None = None,
 ) -> bool:
     resolved = client_ip(peer_ip, forwarded_for, trusted_proxies)
     return ip_in_cidrs(resolved, cidrs if cidrs is not None else allowed_cidrs())
 
 
-def token_ok(provided: Optional[str], expected: Optional[str]) -> bool:
+def token_ok(provided: str | None, expected: str | None) -> bool:
     """Constant-time token check. A plain `!=` on a secret is timing-attack shaped (AC-9).
 
     An unset expected token means auth is disabled — only legitimate for loopback dev, and the
@@ -99,15 +99,15 @@ def token_ok(provided: Optional[str], expected: Optional[str]) -> bool:
 class Gate:
     """Bundles the two checks so a connection handler cannot accidentally do only one."""
 
-    def __init__(self, token: Optional[str], cidrs: Optional[Sequence[str]] = None) -> None:
+    def __init__(self, token: str | None, cidrs: Sequence[str] | None = None) -> None:
         self.token = token
         self.cidrs = tuple(cidrs) if cidrs is not None else allowed_cidrs()
 
     def check(
         self,
         peer_ip: str,
-        provided_token: Optional[str],
-        forwarded_for: Optional[str] = None,
+        provided_token: str | None,
+        forwarded_for: str | None = None,
     ) -> tuple[bool, str]:
         """Return `(ok, reason)`. Reason is safe to log and safe to send to the client —
         it never echoes the expected token."""

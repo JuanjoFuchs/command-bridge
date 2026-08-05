@@ -14,7 +14,6 @@ import pytest
 
 from voice_tunnel import config, tts
 
-
 # ----------------------------------------------------------------- a stub voice
 
 

@@ -30,6 +30,7 @@ const path = require('path');
 const PKG_ROOT = path.resolve(__dirname, '..');
 const VENV = path.join(PKG_ROOT, '.venv');
 const MIN_PYTHON = [3, 10];
+const PKG_VERSION = require('../package.json').version;
 
 /** Where a venv puts its executables, which differs by platform and is a classic silent break. */
 function venvBin(name) {
@@ -90,7 +91,12 @@ function main() {
     }
     console.log('voice-tunnel: installing (this pulls native wheels and takes a minute)');
     run(venvBin('python'), ['-m', 'pip', 'install', '--quiet', '--upgrade', 'pip'], 'pip upgrade');
-    run(venvBin('python'), ['-m', 'pip', 'install', '--quiet', 'voice-tunnel'], 'pip install');
+    // PINNED to this package's own version. Unpinned, `npm install @juanjofuchs/voice-tunnel@0.1.0`
+    // would fetch whatever PyPI has latest — so the version a user asked for and the version they
+    // get could differ, and a bad PyPI release would reach back into every previously-published
+    // npm version. The two registries carry the same number or the install fails loudly.
+    run(venvBin('python'),
+        ['-m', 'pip', 'install', '--quiet', `voice-tunnel==${PKG_VERSION}`], 'pip install');
     console.log(
       '\nvoice-tunnel installed. Next:\n' +
       '  voice-tunnel doctor              what is missing, and the command that fixes it\n' +

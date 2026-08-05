@@ -16,13 +16,11 @@ Output is always mono 16-bit PCM at :data:`voice_tunnel.config.TTS_SR`.
 from __future__ import annotations
 
 import os
-import shutil
 import struct
 import subprocess
 import tempfile
 import threading
 import wave
-from typing import List, Optional, Tuple
 
 from . import config
 
@@ -60,7 +58,7 @@ def pad(pcm: bytes, sample_rate: int) -> bytes:
     return lead + pcm + trail
 
 
-def _read_wav_mono16(path: str) -> Tuple[bytes, int]:
+def _read_wav_mono16(path: str) -> tuple[bytes, int]:
     """Read a WAV as mono 16-bit PCM. Downmixes stereo; refuses non-16-bit rather than guess."""
     with wave.open(path, "rb") as w:
         n_ch, width, rate, n_frames = (
@@ -83,7 +81,7 @@ def _read_wav_mono16(path: str) -> Tuple[bytes, int]:
     return raw, rate
 
 
-def _synth_sapi(text: str) -> Tuple[bytes, int]:
+def _synth_sapi(text: str) -> tuple[bytes, int]:
     """Speak via Windows System.Speech into a temp WAV, then read it back.
 
     Goes through a file rather than a stream because SAPI's streaming API is COM-bound and
@@ -132,7 +130,7 @@ def list_voices() -> list:
     return config.piper_voices()
 
 
-def resolve_voice(name: Optional[str]) -> Optional[str]:
+def resolve_voice(name: str | None) -> str | None:
     """Map a voice NAME to its model path inside the models dir.
 
     Deliberately not an arbitrary path: `/say` is reachable over the tunnel, and letting a
@@ -170,9 +168,9 @@ class _ResidentVoice:
 
     def __init__(self) -> None:
         self._voice = None
-        self._path: Optional[str] = None
+        self._path: str | None = None
         self._lock = threading.Lock()
-        self.unavailable_reason: Optional[str] = None
+        self.unavailable_reason: str | None = None
 
     @property
     def loaded(self) -> bool:
@@ -201,7 +199,7 @@ class _ResidentVoice:
 
     def synthesize(
         self, text: str, voice_path: str, length_scale: float, pause: float
-    ) -> Optional[Tuple[bytes, int]]:
+    ) -> tuple[bytes, int] | None:
         """Mono 16-bit PCM, or None if the resident path is unusable and the caller should spawn.
 
         Sentence silence is inserted BETWEEN chunks and never after the last one, matching
@@ -251,7 +249,7 @@ def warm() -> dict:
     }
 
 
-def _piper_paths(voice_path: Optional[str]) -> Tuple[str, str]:
+def _piper_paths(voice_path: str | None) -> tuple[str, str]:
     """Resolve (binary, voice), raising a TTSError that names the remedy if either is missing.
 
     Resolution lives in config: the binary is findable in the repo venv and the voice in the
@@ -275,9 +273,9 @@ def _piper_paths(voice_path: Optional[str]) -> Tuple[str, str]:
     return binary, voice
 
 
-def _synth_piper(text: str, voice_path: Optional[str] = None,
-                 speed: Optional[float] = None,
-                 pause: Optional[float] = None) -> Tuple[bytes, int]:
+def _synth_piper(text: str, voice_path: str | None = None,
+                 speed: float | None = None,
+                 pause: float | None = None) -> tuple[bytes, int]:
     binary, voice = _piper_paths(voice_path)
     # THE ONE PLACE the inversion happens. Everything above here speaks SPEED (higher is faster);
     # piper wants length_scale (lower is faster). See config.length_scale_for.
@@ -325,16 +323,16 @@ def _synth_piper(text: str, voice_path: Optional[str] = None,
             pass
 
 
-def _synth_none(text: str) -> Tuple[bytes, int]:
+def _synth_none(text: str) -> tuple[bytes, int]:
     """Silence roughly as long as the text would take to say (~14 chars/second)."""
     seconds = max(0.4, len(text) / 14.0)
     return b"\x00\x00" * int(config.TTS_SR * seconds), config.TTS_SR
 
 
 def synthesize(
-    text: str, backend: str | None = None, voice: Optional[str] = None,
-    speed: Optional[float] = None, pause: Optional[float] = None,
-) -> Tuple[bytes, int]:
+    text: str, backend: str | None = None, voice: str | None = None,
+    speed: float | None = None, pause: float | None = None,
+) -> tuple[bytes, int]:
     """Return `(padded mono 16-bit PCM, sample_rate)`. Raises TTSError on failure.
 
     `voice` is a NAME from :func:`list_voices`, not a path — see :func:`resolve_voice`.

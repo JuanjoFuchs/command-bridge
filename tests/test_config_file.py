@@ -11,7 +11,6 @@ import pytest
 
 from voice_tunnel import config
 
-
 # ------------------------------------------------------------------- parsing
 
 
@@ -289,7 +288,7 @@ def test_env_example_documents_every_setting():
     listed 8 of the 17 variables the code read, and the omitted ones were exactly the piper
     settings a session could not start without."""
     text = (
-        open(os.path.join(config.ROOT, ".env.example"), "r", encoding="utf-8").read()
+        open(os.path.join(config.ROOT, ".env.example"), encoding="utf-8").read()
     )
     undocumented = [s["key"] for s in config.SETTINGS if s["key"] not in text]
     assert not undocumented, f"add these to .env.example: {undocumented}"

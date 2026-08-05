@@ -27,7 +27,7 @@ import json
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from . import config
 
@@ -77,11 +77,11 @@ def stamp(session: str, stage: str, **fields: Any) -> None:
         pass
 
 
-def read(session: str, limit: int = 0) -> List[Dict[str, Any]]:
+def read(session: str, limit: int = 0) -> list[dict[str, Any]]:
     """Every event, oldest first. A malformed line is skipped rather than fatal."""
-    events: List[Dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
     try:
-        with open(path(session), "r", encoding="utf-8") as fh:
+        with open(path(session), encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -95,15 +95,15 @@ def read(session: str, limit: int = 0) -> List[Dict[str, Any]]:
     return events[-limit:] if limit else events
 
 
-def _exchanges(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _exchanges(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group events into exchanges, one per turn, each with its stage-to-stage deltas.
 
     An exchange starts at `utterance_end` and runs to the next one. Stages that never fired are
     simply absent — a turn the agent chose not to answer has no `say_requested`, and that is
     information, not a gap to paper over.
     """
-    grouped: List[Dict[str, Any]] = []
-    current: Optional[Dict[str, Any]] = None
+    grouped: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
     for ev in events:
         if ev.get("stage") == "utterance_end":
             if current:
@@ -121,7 +121,9 @@ def _exchanges(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         first, last = evs[0], evs[-1]
         ex["total_s"] = round(last["mono"] - first["mono"], 2)
         steps = []
-        for prev, nxt in zip(evs, evs[1:]):
+        # strict=False is correct here: evs[1:] is deliberately one shorter, which is what
+        # makes this pair CONSECUTIVE events rather than requiring equal lengths.
+        for prev, nxt in zip(evs, evs[1:], strict=False):
             steps.append({
                 "from": prev["stage"],
                 "to": nxt["stage"],
@@ -132,7 +134,7 @@ def _exchanges(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return grouped
 
 
-def report(session: str, limit: int = 0) -> Dict[str, Any]:
+def report(session: str, limit: int = 0) -> dict[str, Any]:
     """The `voice-tunnel timing` payload: recent exchanges, their slowest step, and the overall culprit."""
     events = read(session)
     if not events:
@@ -148,7 +150,7 @@ def report(session: str, limit: int = 0) -> Dict[str, Any]:
 
     # Which STAGE TRANSITION costs the most across the whole session. One slow exchange is
     # anecdote; the same transition topping every exchange is the thing to go fix.
-    totals: Dict[str, List[float]] = {}
+    totals: dict[str, list[float]] = {}
     for ex in exchanges:
         for step in ex["steps"]:
             totals.setdefault(f"{step['from']} -> {step['to']}", []).append(step["seconds"])

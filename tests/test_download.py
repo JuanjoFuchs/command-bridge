@@ -73,7 +73,13 @@ def test_a_tar_cannot_write_outside_its_target(tmp_path):
 
     dest = tmp_path / "unpack"
     dest.mkdir()
-    with pytest.raises(Exception):
+
+    # Named exception types, not a blind `Exception`. A bare catch-all would pass if the code
+    # blew up for an unrelated reason — a typo raising AttributeError reads as "the guard works".
+    # Two types because the guard has two implementations: tarfile's own `filter="data"` on
+    # interpreters that have it, and the explicit path check on those that do not.
+    refusals = (tarfile.TarError, RuntimeError)
+    with pytest.raises(refusals):
         dl._safe_extract(str(archive), str(dest))
     assert not (tmp_path.parent / "escaped.txt").exists()
 
@@ -146,3 +152,27 @@ def test_both_halves_present_selects_parakeet(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "have_module", lambda name: True)
 
     assert config.asr_engine() == "parakeet"
+
+
+def test_doctor_accepts_piper_without_an_executable(monkeypatch, tmp_path, capsys):
+    """The resident path needs no `piper.exe`, and `doctor` used to demand one anyway.
+
+    That failed a working install for everyone who ran `pip install voice-tunnel[piper]` — the
+    wheel ships a library, not an executable. Found by running `doctor` inside a PyInstaller
+    bundle, which reported `bin=(not found)` while synthesis was demonstrably working.
+    """
+
+    from voice_tunnel import cli, config
+
+    voice = tmp_path / "en_GB-alan-medium.onnx"
+    voice.write_bytes(b"\0" * (2 << 20))
+    (tmp_path / "en_GB-alan-medium.onnx.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("VOICE_TUNNEL_TTS", "piper")
+    monkeypatch.setattr(config, "piper_bin", lambda: None)          # no executable anywhere
+    monkeypatch.setattr(config, "have_module", lambda name: name == "piper")
+
+    tts = next(c for c in cli.cmd_doctor(None)["checks"] if c["name"] == "tts")
+    assert tts["ok"] is True, f"resident piper must pass without a binary: {tts['detail']}"
+    assert "resident" in tts["detail"]

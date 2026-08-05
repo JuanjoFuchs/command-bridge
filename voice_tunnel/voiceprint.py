@@ -30,7 +30,6 @@ import threading
 import time
 import wave
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -69,18 +68,18 @@ def gallery_path() -> str:
     return os.path.join(config.session_dir(), "voiceprints.json")
 
 
-def _load(path: Optional[str] = None) -> Dict:
+def _load(path: str | None = None) -> dict:
     path = path or gallery_path()
     if not os.path.exists(path):
         return {"version": 1, "speakers": {}}
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return {"version": 1, "speakers": {}}
 
 
-def _save(data: Dict, path: Optional[str] = None) -> None:
+def _save(data: dict, path: str | None = None) -> None:
     """Write the gallery atomically, retrying the rename on Windows lock contention.
 
     `os.replace` is atomic and a torn gallery would be silently wrong, so the write must go
@@ -98,7 +97,7 @@ def _save(data: Dict, path: Optional[str] = None) -> None:
         json.dump(data, fh, indent=2)
         fh.flush()
         os.fsync(fh.fileno())
-    last: Optional[Exception] = None
+    last: Exception | None = None
     for attempt in range(6):
         try:
             os.replace(tmp, path)
@@ -126,7 +125,7 @@ class Embedder:
     """TitaNet-large speaker embeddings. Loads lazily and is serialized, for the same reason
     the ASR model is: one ONNX session shared by the ingest path and any offline analysis."""
 
-    def __init__(self, model_path: Optional[str] = None) -> None:
+    def __init__(self, model_path: str | None = None) -> None:
         self.model_path = model_path or os.path.join(
             config.models_dir(), "nemo_en_titanet_large.onnx"
         )
@@ -163,7 +162,7 @@ class Embedder:
             return np.asarray(ex.compute(stream), dtype=np.float32)
 
 
-def enroll(name: str, embedding, path: Optional[str] = None) -> Dict:
+def enroll(name: str, embedding, path: str | None = None) -> dict:
     """Merge an embedding into `name`'s running centroid and return that speaker's record."""
     if embedding is None:
         return {}
@@ -183,7 +182,7 @@ def enroll(name: str, embedding, path: Optional[str] = None) -> Dict:
     return rec
 
 
-def match(embedding, path: Optional[str] = None) -> Tuple[Optional[str], float]:
+def match(embedding, path: str | None = None) -> tuple[str | None, float]:
     """Best (name, similarity) in the gallery, or (None, 0.0)."""
     if embedding is None:
         return None, 0.0
@@ -196,7 +195,7 @@ def match(embedding, path: Optional[str] = None) -> Tuple[Optional[str], float]:
     return best, best_sim
 
 
-def known(path: Optional[str] = None) -> List[Dict]:
+def known(path: str | None = None) -> list[dict]:
     data = _load(path)
     return [
         {"name": n, "count": r.get("count", 0), "updated": r.get("updated")}
@@ -204,7 +203,7 @@ def known(path: Optional[str] = None) -> List[Dict]:
     ]
 
 
-def forget(name: str, path: Optional[str] = None) -> bool:
+def forget(name: str, path: str | None = None) -> bool:
     data = _load(path)
     if name in data.get("speakers", {}):
         del data["speakers"][name]
@@ -219,7 +218,7 @@ def speech_windows(
     window_s: float = 4.0,
     max_windows: int = 40,
     floor: float = 0.02,
-) -> List[np.ndarray]:
+) -> list[np.ndarray]:
     """Pick the loudest non-overlapping windows that plausibly contain speech.
 
     Deliberately crude — this is enrolment, not recognition. Taking the loudest windows spread
@@ -245,11 +244,11 @@ def speech_windows(
 def enroll_from_wav(
     path: str,
     name: str,
-    embedder: "Embedder",
+    embedder: Embedder,
     channel: int = 0,
     max_windows: int = 25,
-    gallery: Optional[str] = None,
-) -> Dict[str, int]:
+    gallery: str | None = None,
+) -> dict[str, int]:
     """Learn a voice from one recording's channel. Returns `{windows, enrolled}`.
 
     Built for `meeting-copilot` session WAVs, which are 16 kHz stereo with **mic on the left and
@@ -287,8 +286,8 @@ def enroll_from_wav(
 
 
 def should_address(
-    wake_said: bool, speaker: Optional[str], similarity: float, owner: str = "me"
-) -> Tuple[bool, str]:
+    wake_said: bool, speaker: str | None, similarity: float, owner: str = "me"
+) -> tuple[bool, str]:
     """Combine the wake gate and the voice gate. Returns `(addressed, reason)`.
 
     **Additive by construction.** If the wake phrase fired, this returns True regardless of what

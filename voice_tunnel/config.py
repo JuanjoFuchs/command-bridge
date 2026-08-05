@@ -699,7 +699,7 @@ def read_env_file(path: str | None = None) -> dict:
     """{KEY: value} from the settings file, or {} if there isn't one."""
     path = path or env_file_path()
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return parse_env_text(fh.read())
     except OSError:
         return {}
@@ -812,7 +812,7 @@ def write_setting(key: str, value: str | None, path: str | None = None) -> dict:
         raise ValueError(f"{key!r} is not a settable key (upper-case, VOICE_TUNNEL_ prefix)")
 
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             lines = fh.read().splitlines()
         existed = True
     except OSError:
