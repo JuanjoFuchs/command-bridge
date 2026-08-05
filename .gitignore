@@ -25,3 +25,11 @@ tests/artifacts/
 # OS
 Thumbs.db
 .DS_Store
+
+# Build artifacts (pip)
+dist/
+build/
+
+# The npm launcher's private virtualenv, created at postinstall
+npm/.venv/
+npm/node_modules/

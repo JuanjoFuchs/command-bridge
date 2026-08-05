@@ -800,8 +800,18 @@ def cmd_download(args) -> Dict[str, Any]:
             print("", file=sys.stderr)
 
     result["models_dir"] = config.models_dir()
-    if args.what == "voice" and not result.get("already_present"):
-        result["use_it_with"] = f"voice-tunnel config set VOICE_TUNNEL_TTS piper"
+
+    # A model is half the answer — the runtime that loads it ships as an extra. Downloading
+    # 600 MB and only discovering at the first spoken word that nothing can read it is the worst
+    # possible place to learn this, so say it here, where the user is already waiting.
+    if args.what == "voice" and not config.have_module("piper"):
+        result["also_needed"] = ("`pip install voice-tunnel[piper]` — the voice is downloaded but "
+                                 "piper-tts is not installed, so it cannot be used yet")
+    elif args.what == "voice":
+        result["use_it_with"] = "voice-tunnel config set VOICE_TUNNEL_TTS piper"
+    elif args.what in ("asr", "voiceprint") and not config.have_module("sherpa_onnx"):
+        result["also_needed"] = ("`pip install voice-tunnel[parakeet]` — the model is downloaded "
+                                 "but sherpa-onnx is not installed, so it cannot be loaded")
     return result
 
 
@@ -882,7 +892,14 @@ def cmd_doctor(_args) -> Dict[str, Any]:
     checks = [
         _check(
             "interpreter",
-            os.path.abspath(sys.prefix).startswith(os.path.abspath(config.ROOT)),
+            # In a CHECKOUT the question is "did you get the repo venv" — a bare `python` has
+            # none of the dependencies, and that mistake has cost sessions. INSTALLED, the
+            # question is meaningless: pip put the console script next to whichever interpreter
+            # owns the package, so any interpreter reaching this code is the right one. Asking
+            # the checkout question of an installed copy fails a perfectly good install, which is
+            # worse than not asking — `doctor` is the first thing a new user runs.
+            (os.path.abspath(sys.prefix).startswith(os.path.abspath(config.ROOT))
+             if config._in_source_checkout() else True),
             f"running {sys.executable}",
             f"use the shim so the repo venv is picked automatically: {config.ROOT}/bin/voice-tunnel — "
             f"a bare `python` has none of the dependencies",
@@ -898,7 +915,9 @@ def cmd_doctor(_args) -> Dict[str, Any]:
     checks.append(_check(
         "dependencies", not missing,
         "installed" if not missing else f"missing: {', '.join(missing)}",
-        f"{config.ROOT}/venv/Scripts/python -m pip install -r {config.ROOT}/requirements.txt",
+        (f"{config.ROOT}/venv/Scripts/python -m pip install -r {config.ROOT}/requirements.txt"
+         if config._in_source_checkout() else
+         "reinstall: pip install --force-reinstall voice-tunnel"),
     ))
 
     report = config.load_report()
@@ -945,15 +964,30 @@ def cmd_doctor(_args) -> Dict[str, Any]:
                              "VOICE_TUNNEL_TTS must be sapi | piper | none"))
 
     engine = config.asr_engine()
-    asr_ok = engine == "whisper" or bool(config.parakeet_dir())
-    checks.append(_check(
-        "asr", asr_ok,
-        f"{engine}" + (f" at {config.parakeet_dir()}" if engine == "parakeet" else
-                       f" model={config.whisper_model()}"),
-        "VOICE_TUNNEL_ASR=parakeet but no model directory was found — run "
-        "`voice-tunnel download asr`, or fall back with `voice-tunnel config set "
-        "VOICE_TUNNEL_ASR whisper`",
-    ))
+    if engine == "parakeet":
+        # Two independent ways to be half-configured, and they need different fixes: the model
+        # without the runtime (`pip install voice-tunnel[parakeet]`) or the runtime without the
+        # model (`download asr`). Reporting "parakeet is broken" for both sends people to the
+        # wrong one.
+        have_model, have_runtime = bool(config.parakeet_dir()), config.have_module("sherpa_onnx")
+        asr_ok = have_model and have_runtime
+        if asr_ok:
+            detail, remedy = f"parakeet at {config.parakeet_dir()}", ""
+        elif have_model:
+            detail = "parakeet model is present but sherpa-onnx is not installed"
+            remedy = ("`pip install voice-tunnel[parakeet]`, or fall back with "
+                      "`voice-tunnel config set VOICE_TUNNEL_ASR whisper`")
+        else:
+            detail = "VOICE_TUNNEL_ASR=parakeet but no model directory was found"
+            remedy = ("run `voice-tunnel download asr`, or fall back with "
+                      "`voice-tunnel config set VOICE_TUNNEL_ASR whisper`")
+    else:
+        asr_ok, remedy = True, ""
+        detail = f"whisper model={config.whisper_model()}"
+        if config.parakeet_dir() and not config.have_module("sherpa_onnx"):
+            detail += " — a parakeet model is on disk but unusable without "
+            detail += "`pip install voice-tunnel[parakeet]` (8x faster when installed)"
+    checks.append(_check("asr", asr_ok, detail, remedy))
 
     # Not a failure: the voiceprint is additive. A match can grant attention but never withhold
     # it, so its absence costs nothing except having to say the wake phrase every time. Reported
@@ -971,13 +1005,27 @@ def cmd_doctor(_args) -> Dict[str, Any]:
             "`voice-tunnel download voiceprint`",
         ))
 
+    # Where `voice-tunnel` SHOULD be found differs by install: a checkout has shims in bin/ that
+    # nothing puts on PATH for you, while pip already installed a console script beside the
+    # interpreter. Pointing an installed user at `<site-packages>/bin` — which does not exist —
+    # is worse than saying nothing.
     on_path = _shutil.which("voice-tunnel")
+    if config._in_source_checkout():
+        bin_dir = os.path.join(config.ROOT, "bin")
+        remedy = (
+            f"add {bin_dir} to PATH (PowerShell, once: "
+            f"[Environment]::SetEnvironmentVariable('Path', $env:Path + ';{bin_dir}', 'User')), "
+            f"or call {config.ROOT}/bin/voice-tunnel by absolute path"
+        )
+    else:
+        scripts = os.path.dirname(sys.executable)
+        remedy = (
+            f"pip installed the console script in {scripts} — activate that environment, add "
+            f"the directory to PATH, or install with `pipx install voice-tunnel` which does it "
+            f"for you"
+        )
     checks.append(_check(
-        "shim_on_path", bool(on_path), on_path or "`voice-tunnel` is not on PATH",
-        f"add {os.path.join(config.ROOT, 'bin')} to PATH (PowerShell, once: "
-        f"[Environment]::SetEnvironmentVariable('Path', "
-        f"$env:Path + ';{os.path.join(config.ROOT, 'bin')}', 'User')), "
-        f"or call {config.ROOT}/bin/voice-tunnel by absolute path",
+        "shim_on_path", bool(on_path), on_path or "`voice-tunnel` is not on PATH", remedy,
     ))
 
     failed = [c["name"] for c in checks if not c["ok"]]

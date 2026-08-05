@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice-tunnel"
+version = "0.1.0"
+description = "A local voice tunnel: talk to your coding agent from a phone browser, no app"
+authors = [{ name = "JuanjoFuchs" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["voice", "speech", "asr", "tts", "cli", "coding-agents", "agents", "tunnel"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    # No "License :: OSI Approved :: MIT License" classifier: PEP 639 supersedes it with the
+    # SPDX `license` field above, and setuptools now rejects a build that carries both.
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+
+# The floor, not the good experience. These three carry a working tunnel — the WebSocket, the
+# audio buffers, and an ASR that needs nothing downloaded beyond its own model. Everything that
+# makes it GOOD (a neural voice, Parakeet, the voiceprint) is an extra, because each one drags in
+# a large native runtime and a first install that pulls onnxruntime twice over for features the
+# user has not asked for yet is a worse introduction than one that works and can be upgraded.
+dependencies = [
+    "aiohttp>=3.9",
+    "numpy>=1.24",
+    "faster-whisper>=1.0",
+]
+
+[project.optional-dependencies]
+# A neural voice instead of the robotic system one. `piper-tts` is the Python API, not the
+# executable — the model is held in-process, which is 7-26x faster than spawning per reply.
+piper = ["piper-tts>=1.6"]
+# NVIDIA Parakeet TDT via sherpa-onnx: RTF 0.077 against whisper small.en's 0.88 on the same
+# utterance, from a more accurate model. Also carries the speaker embeddings the voiceprint uses.
+parakeet = ["sherpa-onnx>=1.10"]
+all = ["piper-tts>=1.6", "sherpa-onnx>=1.10"]
+dev = [
+    "build>=1.0.0",
+    "playwright>=1.40",
+    "pytest>=8.0",
+    "ruff>=0.1.0",
+    "twine>=4.0.0",
+]
+
+[project.scripts]
+voice-tunnel = "voice_tunnel.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/JuanjoFuchs/voice-tunnel"
+Repository = "https://github.com/JuanjoFuchs/voice-tunnel.git"
+Issues = "https://github.com/JuanjoFuchs/voice-tunnel/issues"
+Documentation = "https://github.com/JuanjoFuchs/voice-tunnel#readme"
+
+[tool.setuptools.packages.find]
+include = ["voice_tunnel*"]
+
+# The client page is DATA and must ship inside the wheel. It lives at voice_tunnel/web/ rather
+# than beside the package for exactly this reason: an installed copy has no repo root to find it
+# in, and the failure mode is the entire user interface returning 500 while every test on a
+# developer's machine passes.
+[tool.setuptools.package-data]
+voice_tunnel = ["web/*.html"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]

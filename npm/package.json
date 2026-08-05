@@ -1,0 +1,45 @@
+{
+  "name": "@juanjofuchs/voice-tunnel",
+  "version": "0.1.0",
+  "description": "A local voice tunnel: talk to your coding agent from a phone browser, no app",
+  "author": "JuanjoFuchs",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JuanjoFuchs/voice-tunnel.git"
+  },
+  "homepage": "https://github.com/JuanjoFuchs/voice-tunnel#readme",
+  "bugs": {
+    "url": "https://github.com/JuanjoFuchs/voice-tunnel/issues"
+  },
+  "keywords": [
+    "voice",
+    "speech",
+    "asr",
+    "tts",
+    "cli",
+    "agents",
+    "coding-agents",
+    "tunnel"
+  ],
+  "bin": {
+    "voice-tunnel": "bin/voice-tunnel.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ]
+}

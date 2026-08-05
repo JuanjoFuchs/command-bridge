@@ -107,3 +107,42 @@ def test_the_sherpa_release_tag_typo_is_preserved():
     """Upstream's release tag really is spelled 'recongition'. Correcting it 404s, so this
     asserts the typo stays — a future reader will otherwise 'fix' it."""
     assert "speaker-recongition-models" in dl.VOICEPRINT_MODEL["url"]
+
+
+# --- a downloaded model is only half the answer -------------------------------
+# The runtime that loads it ships as an extra (`pip install voice-tunnel[parakeet]`). In a
+# checkout both always arrived together, so this distinction did not exist until the tool became
+# installable and the split became real.
+
+def test_a_parakeet_model_without_sherpa_falls_back_to_whisper(tmp_path, monkeypatch):
+    """THE regression. Selecting on model presence alone means `download asr` — 600 MB — flips
+    the engine to an implementation that is not installed, and the failure lands at the first
+    spoken word rather than at the download."""
+    from voice_tunnel import config
+
+    monkeypatch.setenv("VOICE_TUNNEL_PARAKEET_DIR", str(tmp_path))
+    monkeypatch.delenv("VOICE_TUNNEL_ASR", raising=False)
+    monkeypatch.setattr(config, "have_module", lambda name: name != "sherpa_onnx")
+
+    assert config.asr_engine() == "whisper"
+
+
+def test_an_explicit_engine_is_still_obeyed(tmp_path, monkeypatch):
+    """Someone who names an engine deserves the error, not a silent substitution — and `doctor`
+    is where the mismatch gets explained."""
+    from voice_tunnel import config
+
+    monkeypatch.setenv("VOICE_TUNNEL_ASR", "parakeet")
+    monkeypatch.setattr(config, "have_module", lambda name: name != "sherpa_onnx")
+
+    assert config.asr_engine() == "parakeet"
+
+
+def test_both_halves_present_selects_parakeet(tmp_path, monkeypatch):
+    from voice_tunnel import config
+
+    monkeypatch.setenv("VOICE_TUNNEL_PARAKEET_DIR", str(tmp_path))
+    monkeypatch.delenv("VOICE_TUNNEL_ASR", raising=False)
+    monkeypatch.setattr(config, "have_module", lambda name: True)
+
+    assert config.asr_engine() == "parakeet"

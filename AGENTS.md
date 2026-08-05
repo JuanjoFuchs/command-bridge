@@ -39,7 +39,7 @@ judgment in the agent is what makes the assistant *yours* rather than a generic 
 | Browser/mic/audio behavior, Android limits | @ai-docs/reference/browser.md | Secure context, foreground-only mic, wake lock |
 | Adding or changing a spec | @specs/ | One numbered spec per unit of work; WHAT + acceptance, not HOW |
 | Running the end-to-end check | `python -m pytest tests/ -v` then `python scripts/e2e.py` | e2e drives a real Chrome with a WAV as the fake mic |
-| Changing anything in `web/index.html` that affects SIZE or POSITION | `python scripts/layout.py` | Asserts the page never outgrows the viewport and the newest row is on screen, at five viewports. The unit tests and e2e both pass while the bottom of the transcript is cropped off a phone — geometry is invisible to them |
+| Changing anything in `voice_tunnel/web/index.html` that affects SIZE or POSITION | `python scripts/layout.py` | Asserts the page never outgrows the viewport and the newest row is on screen, at five viewports. The unit tests and e2e both pass while the bottom of the transcript is cropped off a phone — geometry is invisible to them |
 
 ## Conventions
 

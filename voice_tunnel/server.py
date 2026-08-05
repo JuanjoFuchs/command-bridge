@@ -28,7 +28,13 @@ from . import asr as asr_mod
 from . import config, cues, security, store, timing, tts, voiceprint
 from .wake import WakeGate
 
-WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+"""The client page ships INSIDE the package, not beside it.
+
+This used to resolve to the parent of the package — correct in a checkout, and in an installed
+wheel it points at `site-packages/web`, which does not exist. The failure would have been the
+entire user interface returning 500 while every test on a developer's machine passed, because a
+checkout always has the directory in both places."""
 
 
 class TunnelState:
@@ -237,7 +243,7 @@ async def handle_index(request: web.Request) -> web.StreamResponse:
     phone flow to a single URL, and it can do nothing without a valid token on the socket."""
     path = os.path.join(WEB_DIR, "index.html")
     if not os.path.exists(path):
-        return web.Response(status=500, text="web/index.html missing")
+        return web.Response(status=500, text="voice_tunnel/web/index.html missing")
     # Never cache the client. The page is edited constantly during development and a stale copy
     # is the worst kind of bug to chase: the server has the fix, the user reloads, and nothing
     # changes — so you conclude the fix did not work and go break something else.

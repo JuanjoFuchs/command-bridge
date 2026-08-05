@@ -443,12 +443,38 @@ def parakeet_dir() -> str:
     return default if os.path.isdir(default) else ""
 
 
+def have_module(name: str) -> bool:
+    """Is an optional runtime package importable? Checked WITHOUT importing it.
+
+    `sherpa-onnx` and `piper-tts` are extras (`pip install voice-tunnel[all]`), so unlike in a
+    checkout — where everything arrived together and this question never came up — either can be
+    absent at runtime. `find_spec` answers it for the price of a path search rather than loading
+    an ONNX runtime to find out.
+    """
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def asr_engine() -> str:
-    """`parakeet` when its model is present, else `whisper`. Force with VOICE_TUNNEL_ASR."""
+    """`parakeet` when its model AND its runtime are both present, else `whisper`.
+
+    **Both halves, and the second one is why this is not a one-liner.** Selecting on the model
+    alone means `download asr` — which fetches 600 MB — flips the engine to Parakeet on an
+    install that has no `sherpa-onnx` to load it with, and the failure lands at the first spoken
+    word rather than at the download. A checkout always had both, so the distinction did not
+    exist until this became installable with extras.
+
+    An explicit VOICE_TUNNEL_ASR is still obeyed either way: someone who names an engine deserves
+    the error rather than a silent substitution. `doctor` reports the mismatch.
+    """
     forced = _env("VOICE_TUNNEL_ASR").lower()
     if forced in ("parakeet", "whisper"):
         return forced
-    return "parakeet" if parakeet_dir() else "whisper"
+    return "parakeet" if (parakeet_dir() and have_module("sherpa_onnx")) else "whisper"
 
 
 def asr_threads() -> int:

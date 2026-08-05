@@ -1,7 +1,7 @@
 ---
 title: Browser and Android constraints
 description: Secure-context rules, why a LAN IP can never work, the foreground-only mic ceiling on Android, wake lock, and the Bluetooth playback padding.
-applies_to: web/index.html, voice_tunnel/server.py
+applies_to: voice_tunnel/web/index.html, voice_tunnel/server.py
 read_before: touching the web client, changing how the phone reaches the server, or debugging "no mic"
 ---
 

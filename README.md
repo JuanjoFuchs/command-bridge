@@ -152,7 +152,7 @@ while every other test stayed green. `--shots DIR` writes a PNG per viewport.
 | Path | What |
 |---|---|
 | `voice_tunnel/` | store, asr, wake, tts, security, server, cli, config |
-| `web/index.html` | the phone client, self-contained, no build step |
+| `voice_tunnel/web/index.html` | the phone client, self-contained, no build step |
 | `specs/` | numbered metaspecs — WHAT and acceptance criteria |
 | `ai-docs/reference/` | security model, turn-log contract, browser constraints |
 | `scripts/e2e.py` | the acceptance gate |
