@@ -54,11 +54,21 @@ jobs:
           name: python-packages
           path: dist/
 
-      # Trusted Publishing (OIDC). `password` is deliberately absent — see spec 002. The first
-      # release uses PYPI_API_TOKEN because a pending publisher cannot create the project; that
-      # fallback is added by hand for release one and removed immediately after.
+      # FIRST-RELEASE FALLBACK — remove this `password:` line once 0.1.0 is live.
+      #
+      # A PENDING Trusted Publisher cannot create a PyPI project. ccburn hit it, agent-mail-cli
+      # hit it again and recorded the exact error: `invalid-pending-publisher: valid token, but
+      # project already exists`. The proven sequence is a one-time API token for release one,
+      # then a NORMAL Trusted Publisher added to the now-existing project, then this line and the
+      # PYPI_API_TOKEN secret both deleted.
+      #
+      # `password` falls back to OIDC when the secret is absent, so removing the secret alone is
+      # enough to move to token-free publishing — but delete the line too, so nobody has to infer
+      # which mechanism is live from an empty variable.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
   build-windows-bundle:
     # WINDOWS ONLY, and --onedir not --onefile. Both choices are measured in spec 002: a onefile
