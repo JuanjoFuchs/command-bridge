@@ -1,24 +1,25 @@
 """Wake gating — spec 001 AC-4, AC-5, AC-6.
 
-The assistant's name is configurable (`VOICE_TUNNEL_WAKE_NAME`) and is no longer "claude". The tests below
-still exercise the ORIGINAL name on purpose: they encode behaviour discovered against real
-speech — the greeting-prefix rule, the two fuzzy thresholds, mid-sentence mentions that must not
-be stripped — and rewriting them for a new name would throw that history away to prove nothing.
-The autouse fixture pins the name so they keep testing behaviour rather than configuration.
+The name is configurable (`VOICE_TUNNEL_WAKE_NAME`) and defaults to a role, not a product. The
+tests below still exercise "claude" on purpose: they encode behaviour discovered against real
+speech — the greeting-prefix rule, the fuzzy threshold, mid-sentence mentions that must not be
+stripped — and rewriting them for a new name would throw that history away to prove nothing. The
+autouse fixture pins the name so they keep testing behaviour rather than configuration.
 
-`test_configurable_name` and the greeting-required tests at the bottom cover the new setting.
+The tests at the bottom cover the rule that a GREETING IS ALWAYS REQUIRED, which replaced the
+per-name `VOICE_TUNNEL_WAKE_BARE` opt-in.
 """
 import pytest
 
+from voice_tunnel import config
 from voice_tunnel.wake import WakeGate
 
 
 @pytest.fixture(autouse=True)
 def _classic_name(monkeypatch):
-    """Pin the historical name and allow the bare form, which is what these tests were written
-    against. Without this every assertion below would be testing today's default instead."""
+    """Pin the historical name, which is what these tests were written against. Without this
+    every assertion below would be testing today's default instead."""
     monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "1")
 
 
 def test_turn_without_wake_phrase_is_not_addressed():
@@ -67,11 +68,23 @@ def test_each_exchange_extends_the_window():
     assert g.evaluate("much later", now=200.0)[0] is False
 
 
-def test_bare_claude_still_wakes_but_longest_phrase_wins_for_stripping():
-    addressed, text = WakeGate().evaluate("claude status please", now=1.0)
-    assert addressed is True
-    assert text == "status please"
+def test_a_bare_name_never_wakes_however_uncommon_it_is(monkeypatch):
+    """The rule that replaced a setting. JJ: "I would make it a default to always require the
+    hey, and the only thing the agent or the user can choose is the wake word."
 
+    This used to be opt-in per name, on the theory that "claude" is uncommon enough to say bare
+    while "thursday" is not. Deleting the option deleted a class of bug: it was the tool asking
+    every user to predict whether their agent's name collides with ordinary speech, a judgment
+    they can only get wrong, and whose failure is an agent interrupting a conversation it was
+    never part of. `grok` is a verb, `cursor` and `gemini` are words — none of it matters now.
+    """
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    addressed, text = WakeGate().evaluate("claude status please", now=1.0)
+    assert addressed is False
+    assert text == "claude status please", "an unaddressed turn must not be edited"
+
+
+def test_the_greeting_form_wakes_and_strips():
     addressed, text = WakeGate().evaluate("okay claude status please", now=1.0)
     assert addressed is True
     assert text == "status please"
@@ -195,7 +208,6 @@ def test_the_name_is_configurable(monkeypatch):
     JJ, live 2026-08-03: "my goal is to be able to use this with any AI agent, not just cloud."
     """
     monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "0")
 
     addressed, text = WakeGate().evaluate("Hey Thursday, what is the status?", now=100.0)
 
@@ -211,7 +223,6 @@ def test_a_common_word_name_does_not_fire_bare(monkeypatch):
     GREETING PLUS A NAME, and nobody says "hey Thursday" by accident.
     """
     monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "0")
 
     for said in ["let's ship it thursday",
                  "see you thursday",
@@ -224,7 +235,6 @@ def test_a_common_word_name_does_not_fire_bare(monkeypatch):
 
 def test_the_greeting_form_still_wakes_a_common_word_name(monkeypatch):
     monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "0")
 
     for said in ["hey thursday what's the status",
                  "Hi Thursday, are you there?",
@@ -234,11 +244,69 @@ def test_the_greeting_form_still_wakes_a_common_word_name(monkeypatch):
         assert "thursday" not in text.lower(), "the summons should be stripped"
 
 
-def test_bare_is_opt_in_per_name_not_a_hard_rule(monkeypatch):
-    """An uncommon name is safe bare; a common one is not. The constraint belongs to the NAME."""
+def test_a_greeting_is_mandatory_and_cannot_be_switched_off(monkeypatch):
+    """The old escape hatch is gone, and setting it must not resurrect the bare-name path.
+
+    `VOICE_TUNNEL_WAKE_BARE=1` was the opt-in. A user carrying it in an old `.env`, or copying it
+    from a stale README, must not silently get a gate that fires on an ordinary word.
+    """
     monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "1")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "1")   # the setting no longer exists
 
-    addressed, _ = WakeGate().evaluate("thursday what's the status", now=1.0)
+    assert WakeGate().evaluate("thursday what's the status", now=1.0)[0] is False
+    assert WakeGate().evaluate("hey thursday what's the status", now=1.0)[0] is True
 
-    assert addressed is True
+
+def test_every_greeting_builds_a_phrase(monkeypatch):
+    """The phrase list and the matcher must come from ONE list.
+
+    They were two separate paths once, and that is precisely how removing the bare form from
+    `wake_phrases()` failed to stop a bare "thursday" from waking the agent — the matcher had its
+    own rule. `config.GREETINGS` is now the single source for both.
+    """
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "codex")
+    for greeting in config.GREETINGS:
+        addressed, text = WakeGate().evaluate(f"{greeting} codex what is the status", now=1.0)
+        assert addressed is True, f"{greeting!r} should open a summons"
+        assert text == "what is the status", f"{greeting!r} should strip fully"
+
+
+def test_an_ordinary_word_name_is_safe_because_the_greeting_is_mandatory(monkeypatch):
+    """The payoff. A user can name their agent after a verb and nothing breaks."""
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "grok")
+
+    for said in ["I finally grok the cursor problem",
+                 "did you grok that",
+                 "grok is the model we tested"]:
+        assert WakeGate().evaluate(said, now=1.0)[0] is False, f"{said!r} must not wake"
+    assert WakeGate().evaluate("hey grok what is the status", now=1.0)[0] is True
+
+
+def test_renaming_does_not_end_the_conversation_in_progress(monkeypatch):
+    """`set_phrases` exists instead of rebuilding the gate, and this is why.
+
+    Renaming mid-session is real — the agent hands off, or the user finds their ASR cannot
+    recover the name they picked. A fresh WakeGate would start with no `_last_addressed_at`, so
+    the very next sentence would come back unaddressed and they would have to say the new phrase
+    to resume something they never stopped doing.
+    """
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    g = WakeGate(window_s=30.0)
+    assert g.evaluate("hey claude what is running", now=100.0)[0] is True
+
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "codex")
+    g.set_phrases(config.wake_phrases())
+
+    # Mid-conversation, so no phrase is needed at all.
+    assert g.evaluate("and the other one", now=110.0)[0] is True
+
+    # STRIPPING is what proves the phrase list actually changed, not waking. "hey claude" still
+    # wakes after the rename, and that is rule 3 working as designed: an utterance opening with a
+    # greeting is a summons whatever follows it, because Parakeet renders the name as grab / grub
+    # / Crawley and no fuzzy match can recover a sound that is not there. The gate is generous
+    # about listening and conservative about editing, so the two cases separate cleanly:
+    assert g.evaluate("hey codex status", now=500.0) == (True, "status")
+    assert g.evaluate("hey claude status", now=900.0) == (True, "hey claude status")
+
+    # The bare old name, with no greeting, is now simply a word.
+    assert g.evaluate("claude status", now=1300.0)[0] is False

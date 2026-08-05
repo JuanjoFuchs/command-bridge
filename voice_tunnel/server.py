@@ -544,6 +544,45 @@ async def handle_verbose(request: web.Request) -> web.Response:
     return web.json_response({"verbose": state.verbose, "previous": previous})
 
 
+async def handle_wake(request: web.Request) -> web.Response:
+    """Change what the agent answers to, live.
+
+    The name is the one string that ties this tool to any particular agent, so the party that
+    knows it is whatever started the tunnel — not the tool. Changing it without a restart matters
+    because the alternative is telling someone mid-conversation to stop, restart the server, and
+    reopen the page on their phone.
+
+    The broadcast is not cosmetic. The page prints "say hey <name>" as its instruction, and a page
+    still showing the old name would be telling the user to say something the gate no longer
+    accepts — the tool actively teaching a wrong password.
+    """
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    name = (body or {}).get("name")
+    if not isinstance(name, str) or not name.strip():
+        return web.json_response({"error": "name must be a non-empty string"}, status=400)
+
+    previous = config.wake_name()
+    # Set it in this process's environment so config.wake_name() — the single reader every other
+    # layer goes through — returns the new value. Writing state.wake.phrases alone would leave the
+    # ready frame and `describe` reporting the old name.
+    os.environ["VOICE_TUNNEL_WAKE_NAME"] = name.strip().lower()
+    state.wake.set_phrases(config.wake_phrases())
+    await _broadcast_json(
+        state, {"type": "wake", "name": config.wake_name(),
+                "phrases": list(state.wake.phrases)}
+    )
+    return web.json_response(
+        {"wake": config.wake_name(), "previous": previous, "phrases": list(state.wake.phrases)}
+    )
+
+
 async def handle_consumed(request: web.Request) -> web.Response:
     """The agent reports how far it has read — mirrors `mc consumed`.
 
@@ -826,6 +865,7 @@ def build_app(session: str, token: Optional[str], gate_enabled: bool = True) -> 
             web.post("/cue", handle_cue),
             web.post("/rate", handle_rate),
             web.post("/verbose", handle_verbose),
+            web.post("/wake", handle_wake),
             web.get("/ws", handle_ws),
         ]
     )
@@ -862,6 +902,17 @@ def run(
     print(f"voice-tunnel serving   http://{host}:{port}/?token={token}", flush=True)
     print(f"  session            {session}", flush=True)
     print(f"  log                {store.log_path(session)}", flush=True)
+    # The banner is what the operator reads before speaking, so it has to say the phrase. Without
+    # this line the one thing you must know to use the tool at all was the one thing it never
+    # told you — and a name set on a previous run persists, so it is not safely guessable either.
+    if gate_enabled:
+        print(
+            f'  say                "hey {config.wake_name()}"  '
+            f"(`voice-tunnel serve --wake <your name>` to change it)",
+            flush=True,
+        )
+    else:
+        print("  wake gate          OFF — every turn is treated as addressed", flush=True)
     print(f"  tts                {tts.available()}", flush=True)
     print(
         f"  voice              speed {config.speech_speed()}x, "

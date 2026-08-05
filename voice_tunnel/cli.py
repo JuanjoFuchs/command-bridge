@@ -122,6 +122,9 @@ DESCRIBE: Dict[str, Any] = {
                 "--port": f"port (default {config.DEFAULT_PORT})",
                 "--token": "shared secret; generated and printed if omitted",
                 "--no-wake-gate": "treat every turn as addressed (push-to-talk mode)",
+                "--wake": "NAME the user says after a greeting. PASS YOUR OWN NAME — 'claude', "
+                          "'codex', 'grok'. This tool holds no model and cannot know what is "
+                          "driving it; you are the only party that does. Persists, so pass it once.",
             },
             "returns": "runs until stopped; prints the client URL including the token",
             "notes": "A phone needs HTTPS — `tailscale serve` this port. A LAN IP yields NO microphone.",
@@ -139,6 +142,21 @@ DESCRIBE: Dict[str, Any] = {
                      "the acknowledgement — so you do NOT need to call `consumed` after a watch. "
                      "**If `verbose` is true, narrate what you are about to do before you do it** "
                      "— he toggled it from the page and expects every action described.",
+        },
+        "wake": {
+            "args": {"--session": "session id",
+                     "--name": "single word, no spaces; omit to read the current name",
+                     "--no-save": "apply live only, do not persist"},
+            "returns": {"wake": "str", "phrases": "[str, ...] — every accepted summons",
+                        "persisted": "{KEY: value} or null", "applied_live": "bool"},
+            "notes": "The name the user says AFTER a greeting. **Set it to your own name** — "
+                     "'hey claude', 'hey codex', 'hey grok' — because this tool holds no model "
+                     "and cannot know what is on the other end of it. A GREETING IS ALWAYS "
+                     "REQUIRED and cannot be turned off: 'hey grok' wakes it, a bare 'grok' "
+                     "never does. That is what makes any name safe, including ordinary words "
+                     "like grok, cursor and gemini. Persists and applies live, so a name that "
+                     "turns out to be unrecognisable can be changed mid-conversation. Note the "
+                     "phrase is only the FALLBACK — a recognised voice is addressed without it.",
         },
         "verbose": {
             "args": {"--session": "session id", "on|off": "positional; omit to read",
@@ -340,6 +358,17 @@ def cmd_describe(_args) -> Dict[str, Any]:
 
 def cmd_serve(args) -> None:
     from . import security, server
+
+    # Persist the name before the server reads it. `serve --wake claude` is how the agent that
+    # starts the tunnel says what it is, and persisting means it is a once-per-machine argument
+    # rather than one more flag to remember on every restart — the same reasoning as `rate`.
+    wake = getattr(args, "wake", None)
+    if wake:
+        wake = wake.strip().lower()
+        if " " in wake:
+            raise ValueError("--wake must be a single word; the greeting is added automatically")
+        os.environ["VOICE_TUNNEL_WAKE_NAME"] = wake
+        config.write_setting("VOICE_TUNNEL_WAKE_NAME", wake)
 
     token = args.token or os.environ.get("VOICE_TUNNEL_TOKEN") or security.generate_token()
     write_runtime(args.session, args.host, args.port, token)
@@ -547,6 +576,63 @@ def cmd_rate(args) -> Dict[str, Any]:
         "applied_live": applied,
         # Not an error: persisting with no server running is a normal thing to do. Say what
         # happened so nobody concludes the setting was lost.
+        "note": None if applied else (
+            f"saved, and it applies the next time you `voice-tunnel serve --session {args.session}` "
+            f"— no server is running to change right now"
+        ),
+    }
+
+
+def cmd_wake(args) -> Dict[str, Any]:
+    """Read or change the name the agent answers to. Persists, like `voice-tunnel rate`.
+
+    **The agent that starts the tunnel should name itself** — `serve --wake claude` under Claude,
+    `--wake codex` under Codex, `--wake grok` under Grok. The tool holds no model and cannot know
+    what is on the other end of it; only the thing that ran the command knows that.
+
+    The user gets the last word, which is why this is a persisting command and not only a serve
+    flag. An agent can pick a name whose sound its own ASR cannot recover — Parakeet rendered
+    "claude" as grab, grub, God, Well, Joe, Clock and Crawley, and never once got it right from a
+    headset. The person doing the speaking is the one who finds that out, and they need to be able
+    to change it without restarting anything.
+
+    A greeting is always required and is not settable — see `config.GREETINGS`. That is what keeps
+    any name safe, including the ones that are ordinary words.
+    """
+    name = getattr(args, "name", None)
+
+    if name is None:
+        live = _request(args.session, "/status")
+        persisted = {"name": config.wake_name(), "file": config.env_file_path()}
+        if live.get("running") is False:
+            return {"persisted": persisted, "live": None, "note": live.get("error"),
+                    "phrases": list(config.wake_phrases())}
+        return {"persisted": persisted,
+                "live": {"name": live.get("wake"), "phrases": live.get("wake_phrases")}}
+
+    name = name.strip().lower()
+    # Validate before writing. A name with whitespace would build a phrase the matcher can never
+    # produce, since the transcript is normalized to single-spaced tokens and compared word by
+    # word — it would persist cleanly and then silently never match anything.
+    if not name or " " in name:
+        raise ValueError(
+            "--name must be a single word with no spaces; the greeting is added automatically, "
+            f"so `--name claude` accepts {', '.join(g + ' claude' for g in config.GREETINGS[:3])}, ..."
+        )
+
+    written = {}
+    if not args.no_save:
+        config.write_setting("VOICE_TUNNEL_WAKE_NAME", name)
+        written["VOICE_TUNNEL_WAKE_NAME"] = name
+
+    live = _request(args.session, "/wake", {"name": name})
+    applied = live.get("running") is not False and not live.get("error")
+    return {
+        "wake": name,
+        "phrases": live.get("phrases") if applied else [f"{g} {name}" for g in config.GREETINGS],
+        "persisted": written or None,
+        "file": config.env_file_path() if written else None,
+        "applied_live": applied,
         "note": None if applied else (
             f"saved, and it applies the next time you `voice-tunnel serve --session {args.session}` "
             f"— no server is running to change right now"
@@ -851,6 +937,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--port", type=int, default=config.DEFAULT_PORT)
     s.add_argument("--token", default=None)
     s.add_argument("--no-wake-gate", action="store_true")
+    s.add_argument(
+        "--wake",
+        default=None,
+        metavar="NAME",
+        help="what the agent answers to, said after a greeting: `--wake claude` accepts "
+        "'hey claude'. USE YOUR OWN NAME — this tool holds no model and cannot know what is "
+        "driving it. Persists, so it only has to be passed once.",
+    )
 
     w = sub.add_parser("watch", help="block until a turn lands")
     w.add_argument("--session", default="dev")
@@ -903,6 +997,13 @@ def build_parser() -> argparse.ArgumentParser:
     vb.add_argument("--no-save", action="store_true",
                     help="apply to the running server only; do not persist")
 
+    wk = sub.add_parser("wake", help="what the agent answers to after 'hey'; persists, live")
+    wk.add_argument("--session", default="dev")
+    wk.add_argument("--name", default=None,
+                    help="single word, no spaces; omit to read the current name")
+    wk.add_argument("--no-save", action="store_true",
+                    help="apply to the running server only; do not persist")
+
     c = sub.add_parser("consumed", help="tell the client how far you have read (mc-style)")
     c.add_argument("--session", default="dev")
     c.add_argument("--cursor", type=int, required=True)
@@ -948,6 +1049,7 @@ def main(argv=None) -> int:
         "rate": cmd_rate,
         "timing": cmd_timing,
         "verbose": cmd_verbose,
+        "wake": cmd_wake,
     }
     try:
         result = handlers[args.cmd](args)

@@ -23,8 +23,12 @@ from typing import Iterable, Optional, Tuple
 from . import config
 
 
-GREETINGS = ("hey", "hi", "ok", "okay", "yo", "hello")
-"""Openers that mark an utterance as a summons even when the name that follows was garbled."""
+GREETINGS = config.GREETINGS
+"""Openers that mark an utterance as a summons even when the name that follows was garbled.
+
+Lives in config alongside the reason a greeting is mandatory — see `config.GREETINGS`. Aliased
+here because this module is where it is read, and one list has to build the phrases and match
+them or the two drift apart."""
 
 def _name() -> str:
     """The assistant's name, read live rather than frozen at import.
@@ -35,17 +39,17 @@ def _name() -> str:
     return config.wake_name()
 
 _RATIO_AFTER_GREETING = 0.55
-"""Threshold when the token directly follows a greeting.
+"""How close a token has to be to the name — and the ONLY threshold, because a greeting always
+precedes it.
 
 Loose on purpose: "hey ___" already establishes that someone is being addressed, so the only
-question is whether the garbled token is the name. Accepts clod / cloud / claud."""
+question left is whether the garbled token is the name. Accepts clod / cloud / claud, which is
+what makes the gate survive an ASR that renders "claude" as grab, grub, God, Joe or Crawley.
 
-_RATIO_BARE = 0.80
-"""Threshold for a token standing alone mid-sentence, with no greeting to disambiguate.
-
-Strict on purpose: without context, "the cloud is over there" and "cloud9 is down" would
-otherwise wake the agent constantly. Context is what buys leniency; absent it, demand a close
-match."""
+There used to be a second, stricter threshold (0.80) for a bare token standing alone
+mid-sentence, where "the cloud is over there" and "cloud9 is down" would otherwise wake the
+agent constantly. **Requiring a greeting deleted that path, and the threshold with it.** Context
+is what buys leniency; now there is always context."""
 
 
 def _norm(text: str) -> str:
@@ -55,7 +59,7 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-def _is_nameish(word: str, threshold: float = _RATIO_BARE) -> bool:
+def _is_nameish(word: str, threshold: float = _RATIO_AFTER_GREETING) -> bool:
     """True if `word` is plausibly a mangled form of the assistant's name."""
     if not word:
         return False
@@ -91,6 +95,16 @@ class WakeGate:
 
     def reset(self) -> None:
         self._last_addressed_at = None
+
+    def set_phrases(self, phrases: Iterable[str]) -> None:
+        """Swap the accepted summons without ending the conversation in progress.
+
+        Renaming mid-session is a real case — the agent that started the tunnel hands off, or the
+        user finds that their ASR mangles the name they chose. Rebuilding the whole gate would
+        drop `_last_addressed_at`, so the very next sentence would come back unaddressed and they
+        would have to say the (new) phrase to resume something they never stopped doing.
+        """
+        self.phrases = sorted((_norm(p) for p in phrases), key=len, reverse=True)
 
     def _find_phrase(self, normalized: str) -> Tuple[Optional[str], bool]:
         """Return `(phrase, at_start)`. Detection is generous; stripping is not.
@@ -129,19 +143,16 @@ class WakeGate:
         if len(words) >= 2 and words[0] in GREETINGS:
             return words[0], False
 
-        # 4. A mangled name anywhere else — wake, but never edit their words.
+        # 4. A full greeting-plus-name anywhere else — wake, but never edit their words.
         for p in self.phrases:
             if (" " + p + " ") in (" " + normalized + " "):
                 return p, False
-        # 5. The BARE name, anywhere in the sentence. Only when the name is uncommon enough to
-        #    carry that on its own — "claude" can, "thursday" cannot. Without this gate, "let's
-        #    ship it Thursday" wakes the agent, which is the objection that nearly killed a
-        #    perfectly good wake word. The constraint belongs to the NAME, not to the design,
-        #    which is why it is a setting rather than a rule.
-        if config.wake_allows_bare():
-            for w in words:
-                if _is_nameish(w):
-                    return w, False
+
+        # There is deliberately no rule for the BARE name. It used to be rule 5, gated on
+        # `config.wake_allows_bare()`, and it is the reason "let's ship it Thursday" kept waking
+        # the agent after the bare form had already been removed from `wake_phrases()` — the
+        # phrase list and the matcher were two separate paths and only one of them was fixed.
+        # Now the greeting is mandatory (see config.GREETINGS), so a name alone is just a word.
         return None, False
 
     def evaluate(self, text: str, now: float, ended: Optional[float] = None) -> Tuple[bool, str]:

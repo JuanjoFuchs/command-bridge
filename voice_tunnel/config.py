@@ -131,53 +131,54 @@ MAX_UTTERANCE_MS = 120_000
 
 # -------------------------------------------------------------------- wake word
 
-WAKE_NAME = "thursday"
-"""The name he calls the assistant. Override with VOICE_TUNNEL_WAKE_NAME.
+WAKE_NAME = "assistant"
+"""What you call the agent on the other end. Set it with `serve --wake <name>`.
 
-**Not "claude", and the tool is not Claude-specific.** It holds no model, so the only thing tying
-it to one vendor was this string and some copy. JJ, live 2026-08-03: *"my goal is to be able to
-use this with any AI agent, not just cloud [Claude]."*
+**The tool holds no model, so nothing ties it to any vendor except this string.** JJ, live
+2026-08-03: *"my goal is to be able to use this with any AI agent, not just cloud [Claude]."*
 
-**"thursday", chosen deliberately over "jarvis".** Jarvis is a Marvel trademark — fine in a
-private tool, a real problem the moment it ships. A day of the week initially looks like the worst
-possible wake word, because he says "let's ship it Thursday" constantly. **He spotted why that
-does not apply here: the wake phrase is a GREETING PLUS A NAME.** Nobody says "hey Thursday" in
-ordinary speech, so the combination is safe even though the bare word is not — which is exactly
-why `WAKE_REQUIRE_GREETING` below exists and why it is on."""
+**The name should be the agent's own** — `--wake claude` when Claude starts it, `--wake codex`
+under Codex, `--wake grok` under Grok. That is not a convention the tool enforces, because it
+cannot know: it is a dumb pipe, and whatever started it is the only party that knows what it is.
+The default here is deliberately a role rather than a product, so an unconfigured tunnel answers
+to something true instead of to somebody else's trademark.
 
-WAKE_REQUIRE_GREETING = True
-"""Demand "hey <name>", never the bare name on its own. Override with VOICE_TUNNEL_WAKE_BARE=1.
+**"assistant" over "jarvis"**: Jarvis is a Marvel trademark — fine in a private tool, a real
+problem the moment it ships."""
 
-With "claude" this could be off, because nobody says "claude" by accident. With a common word it
-must be on, or ordinary scheduling talk wakes the agent all day. Making it a setting rather than a
-hard rule keeps an uncommon name usable bare — the constraint belongs to the *name*, not to the
-design."""
+GREETINGS = ("hey", "hi", "ok", "okay", "yo", "hello")
+"""Openers that mark an utterance as a summons. One of these is ALWAYS required.
+
+**A greeting is not optional and is not configurable, and that is what makes any name safe.**
+The wake phrase is a GREETING PLUS A NAME, and the combination is what nobody says by accident:
+"let's ship it Thursday" is ordinary speech, "hey Thursday" is not. The same rule rescues every
+name a user might actually pick — `grok` is an English verb, `cursor` and `gemini` are ordinary
+words, and none of that matters once "hey" has to come first.
+
+This started as a per-name setting (`WAKE_REQUIRE_GREETING`, overridable with
+`VOICE_TUNNEL_WAKE_BARE`) on the theory that an uncommon name like "claude" could safely be said
+bare. JJ removed the option: *"I would make it a default to always require the hey, and the only
+thing the agent or the user can choose is the wake word that is pronounced after hey."*
+
+**Deleting the option deleted a class of bug rather than a feature.** It is the tool asking every
+user to correctly predict whether their agent's name collides with ordinary speech — a judgment
+they can only get wrong, and whose failure mode is an agent that interrupts conversations it was
+never part of."""
 
 
 def wake_name() -> str:
     return (_env("VOICE_TUNNEL_WAKE_NAME") or WAKE_NAME).lower().strip()
 
 
-def wake_allows_bare() -> bool:
-    """Whether the bare name (no greeting) counts as a summons."""
-    raw = _env("VOICE_TUNNEL_WAKE_BARE")
-    if raw:
-        return raw not in ("0", "false", "no", "off")
-    return not WAKE_REQUIRE_GREETING
-
-
 def wake_phrases() -> tuple:
-    """Every accepted summons, longest first so the greeting form strips fully.
+    """Every accepted summons: one greeting, then the name. Longest first so it strips fully.
 
     Text-level matching rather than an acoustic wake model: the ASR already runs on every buffer,
     so this needs no extra dependency, no model download, and no per-phrase training. The cost is
     that gating happens after transcription, which is fine because we are not trying to save
     power."""
     name = wake_name()
-    phrases = [f"{g} {name}" for g in ("hey", "hi", "ok", "okay")]
-    if wake_allows_bare():
-        phrases.append(name)
-    return tuple(phrases)
+    return tuple(f"{g} {name}" for g in GREETINGS)
 
 CONVERSATION_WINDOW_S = 30.0
 """After an addressed turn, further turns stay addressed for this long (AC-6). Without it a
@@ -801,11 +802,10 @@ SETTINGS: tuple = (
              "set live with `voice-tunnel verbose on`",
              lambda: "1" if verbose_default() else "0"),
     _setting("VOICE_TUNNEL_OWNER", "name the voiceprint gallery learns under", owner_name),
-    _setting("VOICE_TUNNEL_WAKE_NAME", "what you call the assistant; 'hey <name>' summons it", wake_name),
-    _setting("VOICE_TUNNEL_WAKE_BARE",
-             "1 | 0 — does the bare name summon it, or is a greeting required? Keep 0 for a "
-             "name that is also an ordinary word",
-             lambda: "1" if wake_allows_bare() else "0"),
+    _setting("VOICE_TUNNEL_WAKE_NAME",
+             "what you call the agent; 'hey <name>' summons it, and a greeting is always "
+             "required. Set it to the agent's own name with `serve --wake <name>`",
+             wake_name),
 )
 """Every VOICE_TUNNEL_* variable, in one place, with what it does and how to read its live value.
 

@@ -1011,6 +1011,12 @@
       } else if (msg.type === "verbose") {
         // Someone flipped it elsewhere — another device, or the agent via `voice-tunnel verbose on`.
         paintVerbose(msg.value);
+      } else if (msg.type === "wake") {
+        // The agent renamed itself mid-session (`voice-tunnel wake --name codex`). Repaint
+        // immediately: this line is the instruction for what to SAY, so a stale name here is the
+        // page telling you to use a phrase the gate has already stopped accepting.
+        wakeName = msg.name || wakeName;
+        if (running && !muted) setState(wakePrompt());
       } else if (msg.type === "agent_state") {
         // Silence is ambiguous. Naming the state is what separates "it did not hear me" from
         // "it heard me and is working" from "it is holding back so as not to cut me off".
