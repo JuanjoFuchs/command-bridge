@@ -7,6 +7,8 @@ cost an agent a session's worth of guessing at env vars that were never written 
 import argparse
 import json
 
+import pytest
+
 from voice_tunnel import cli, config
 
 
