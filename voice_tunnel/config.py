@@ -10,16 +10,75 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 
 # ------------------------------------------------------------------ repo root
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-"""Absolute path to the repo root, derived from THIS FILE rather than the cwd.
+"""Absolute path to the directory containing the package, derived from THIS FILE, never the cwd.
 
-Every default path in this module hangs off it. An agent invokes `voice-tunnel` from wherever its own turn
-happens to be standing, so any default resolved against `os.getcwd()` would scatter turn logs and
-settings across whatever directories the caller passed through — the exact class of bug that
-makes a tool "work on my machine" and nowhere else."""
+An agent invokes `voice-tunnel` from wherever its own turn happens to be standing, so any default
+resolved against `os.getcwd()` would scatter turn logs and settings across whatever directories
+the caller passed through — the exact class of bug that makes a tool "work on my machine" and
+nowhere else.
+
+In a source checkout this IS the repo root. **After `pip install` it is `site-packages`**, which
+is why nothing may hang off it unconditionally — see `_in_source_checkout`."""
+
+
+def _in_source_checkout() -> bool:
+    """Is this running from a git checkout, or from an installed package?
+
+    **This distinction is the whole reason the tool is installable.** Every runtime path used to
+    hang off ROOT — `<root>/.env`, `<root>/sessions`, `<root>/models`. That is correct in a
+    checkout and actively wrong once installed, where ROOT is `site-packages`: turn logs and a
+    600 MB ASR model would be written into the interpreter's library directory, to be silently
+    destroyed by the next `pip install --upgrade` and to fail outright wherever site-packages is
+    read-only (a system Python, a container, any managed environment).
+
+    `pyproject.toml` is the marker because it sits beside the package in a checkout and is never
+    installed to the site-packages root. `.git` alone would miss an sdist or a zip download.
+    """
+    return (
+        os.path.isfile(os.path.join(ROOT, "pyproject.toml"))
+        or os.path.isdir(os.path.join(ROOT, ".git"))
+    )
+
+
+def _user_dir(kind: str) -> str:
+    """Per-user directory for `kind` ("config" or "data"), following each platform's convention.
+
+    Conventions rather than one invented location, because these are directories a person has to
+    find later — to read a transcript, to delete a voiceprint, to back something up. A tool that
+    invents its own home makes every one of those a support question.
+
+        Windows   %LOCALAPPDATA%\\voice-tunnel        (Local, not Roaming: models are large and
+                                                       must not follow a roaming profile onto a
+                                                       network share)
+        macOS     ~/Library/Application Support/voice-tunnel
+        Linux     $XDG_CONFIG_HOME | $XDG_DATA_HOME, else ~/.config | ~/.local/share
+    """
+    home = os.path.expanduser("~")
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+    elif sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Application Support")
+    elif kind == "config":
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
+    return os.path.join(base, "voice-tunnel")
+
+
+def _default_path(name: str, kind: str = "data") -> str:
+    """`<repo>/<name>` in a checkout, `<user dir>/<name>` once installed.
+
+    A checkout keeps its state local so a dev run leaves nothing behind in $HOME and two working
+    trees cannot fight over one turn log — the original rationale, still true. An installed copy
+    has no repo to be local to.
+    """
+    base = ROOT if _in_source_checkout() else _user_dir(kind)
+    return os.path.join(base, name)
 
 
 def _int_env(name: str, default: int) -> int:
@@ -326,8 +385,8 @@ def _env(name: str, default: str = "") -> str:
 
 
 def session_dir() -> str:
-    """Where turn logs live. Repo-local by default so a dev run leaves no trace in $HOME."""
-    return _env("VOICE_TUNNEL_DIR") or os.path.join(ROOT, "sessions")
+    """Where turn logs and voiceprints live. Repo-local in a checkout, per-user when installed."""
+    return _env("VOICE_TUNNEL_DIR") or _default_path("sessions")
 
 
 def verbose_default() -> bool:
@@ -357,9 +416,9 @@ def owner_name() -> str:
 
 
 def models_dir() -> str:
-    """Where downloaded models live (Piper voices, Parakeet). Gitignored — models are
-    downloaded, never vendored."""
-    return _env("VOICE_TUNNEL_MODELS_DIR") or os.path.join(ROOT, "models")
+    """Where downloaded models live (Piper voices, Parakeet). Never vendored — a Parakeet
+    checkpoint is ~600 MB, which belongs in a cache the user owns, not in a wheel."""
+    return _env("VOICE_TUNNEL_MODELS_DIR") or _default_path("models")
 
 
 def parakeet_dir() -> str:
@@ -540,7 +599,13 @@ def piper_voice() -> str:
 #   * Python 3.11's tomllib is READ-ONLY, so `voice-tunnel config set` would have needed a hand-rolled
 #     TOML writer: a new way to corrupt a file, bought for no behaviour anyone asked for.
 
-ENV_FILE_DEFAULT = os.path.join(ROOT, ".env")
+def env_file_default() -> str:
+    """`<repo>/.env` in a checkout, `<user config dir>/.env` once installed.
+
+    A function rather than the module-level constant this used to be: the answer depends on how
+    the tool was installed, and a constant froze it at import time.
+    """
+    return _default_path(".env", kind="config")
 
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 """What counts as a variable name when READING the file — the POSIX shell rule, permissive."""
@@ -559,14 +624,17 @@ at load time or not at all."""
 
 
 def env_file_path() -> str:
-    """Where persisted settings live: `<repo>/.env`, or VOICE_TUNNEL_ENV_FILE if pointed elsewhere.
+    """Where persisted settings live, or VOICE_TUNNEL_ENV_FILE if pointed elsewhere.
 
-    Repo-local and gitignored for the same reason session logs are: settings that travel with the
-    checkout need no per-machine setup step, and a shared secret that never leaves the working
-    tree cannot be committed by accident. VOICE_TUNNEL_ENV_FILE exists so tests can point somewhere
-    disposable — a suite that reads the developer's real settings is not a suite, it's a mood.
+    In a checkout: `<repo>/.env`, gitignored, for the same reason session logs are repo-local —
+    settings that travel with the working tree need no per-machine setup, and a shared secret
+    that never leaves it cannot be committed by accident. Installed: the per-user config
+    directory, because there is no working tree to travel with.
+
+    VOICE_TUNNEL_ENV_FILE exists so tests can point somewhere disposable — a suite that reads the
+    developer's real settings is not a suite, it's a mood.
     """
-    return _env("VOICE_TUNNEL_ENV_FILE") or ENV_FILE_DEFAULT
+    return _env("VOICE_TUNNEL_ENV_FILE") or env_file_default()
 
 
 def parse_env_text(text: str) -> dict:

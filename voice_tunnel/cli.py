@@ -48,7 +48,8 @@ ERROR_SHAPE = {
 INVOCATION = {
     "run_it": "voice-tunnel <command>            # bin/voice-tunnel (bash) and bin/voice-tunnel.cmd (PowerShell/cmd)",
     "no_env_vars_needed": (
-        "Settings persist in a gitignored .env at the repo root and are loaded by every command. "
+        "Settings persist in a .env file loaded by every command — `voice-tunnel config path` "
+        "says where (repo-local in a checkout, your user config dir once installed). "
         "`voice-tunnel config set VOICE_TUNNEL_TTS piper` once, not four exports per call. Process environment "
         "variables still win over the file, so a one-off override is still one prefix."
     ),
@@ -253,7 +254,11 @@ DESCRIBE: Dict[str, Any] = {
     "exit_codes": EXIT_CODES,
     "errors": ERROR_SHAPE,
     "config_file": {
-        "path": "<repo>/.env — gitignored, loaded automatically by every command",
+        # The LIVE path, not a description of one. It differs between a checkout (repo-local and
+        # gitignored) and an installed copy (the per-user config dir), so a hardcoded "<repo>/.env"
+        # is wrong for exactly the audience that most needs to find the file.
+        "path": config.env_file_path(),
+        "also": "`voice-tunnel config path` prints this; `voice-tunnel doctor` says if it is writable",
         "precedence": "process env > .env file > built-in default",
         "write_it_with": "voice-tunnel config set VOICE_TUNNEL_TTS piper",
         "read_it_with": "voice-tunnel config show",
