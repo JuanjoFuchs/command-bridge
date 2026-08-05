@@ -1,13 +1,13 @@
 ---
 title: Turn log and cursor contract
 description: The JSONL schema, why the id is the cursor, and the guarantee that no turn is dropped while the agent is thinking.
-applies_to: vm/store.py, vm/cli.py (watch)
+applies_to: voice_tunnel/store.py, voice_tunnel/cli.py (watch)
 read_before: changing the turn schema, watch semantics, or anything that appends
 ---
 
 # Turn log and cursor contract
 
-One JSONL file per session at `<VM_DIR>/<session>.jsonl`, one turn per line. The server appends;
+One JSONL file per session at `<VOICE_TUNNEL_DIR>/<session>.jsonl`, one turn per line. The server appends;
 readers read. Single writer, many readers, line-buffered append — safe without locking.
 
 ## Schema

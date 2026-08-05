@@ -11,12 +11,12 @@ carries audio both ways. The agent that starts it supplies all intelligence.
 Phone browser (no install)
    |  HTTPS (Tailscale Serve for the phone; http://localhost is already a secure context)
    v
-vm serve  ── the DUMB half, no LLM ──────────────────────────────┐
+voice-tunnel serve  ── the DUMB half, no LLM ──────────────────────────────┐
    mic  -> wake gate -> ASR -> append turn to sessions/<s>.jsonl  │
-   spkr <- TTS <- text handed to `vm say`                         │
+   spkr <- TTS <- text handed to `voice-tunnel say`                         │
                                                                   v
                                               The agent that started it (SMART)
-                                              vm watch --since <cursor> -> reason -> vm say
+                                              voice-tunnel watch --since <cursor> -> reason -> voice-tunnel say
 ```
 
 ## Why it is shaped this way

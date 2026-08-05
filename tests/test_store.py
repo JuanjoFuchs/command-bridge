@@ -1,7 +1,7 @@
 """Turn log and cursor semantics — spec 001 AC-2, AC-3."""
 import pytest
 
-from vm import store
+from voice_tunnel import store
 
 
 def test_ids_are_monotonic_from_zero(tmp_sessions):

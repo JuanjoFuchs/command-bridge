@@ -31,7 +31,7 @@ sys.path.insert(0, ROOT)
 import numpy as np  # noqa: E402
 import sounddevice as sd  # noqa: E402
 
-from vm import asr, security, store, tts  # noqa: E402
+from voice_tunnel import asr, security, store, tts  # noqa: E402
 
 OUT_MATCH = "CABLE Input"     # we play into this
 IN_MATCH = "CABLE Output"     # Chrome records from this
@@ -156,16 +156,16 @@ def main() -> int:
 
     # This process synthesizes the "user's voice" itself, so it needs Piper too — not just the
     # server subprocess it spawns.
-    os.environ.setdefault("VM_PIPER_BIN", os.path.join(ROOT, "venv", "Scripts", "piper.exe"))
+    os.environ.setdefault("VOICE_TUNNEL_PIPER_BIN", os.path.join(ROOT, "venv", "Scripts", "piper.exe"))
     os.environ.setdefault(
-        "VM_PIPER_VOICE", os.path.join(ROOT, "models", "en_GB-alan-medium.onnx")
+        "VOICE_TUNNEL_PIPER_VOICE", os.path.join(ROOT, "models", "en_GB-alan-medium.onnx")
     )
 
     os.makedirs(args.shots, exist_ok=True)
     out_dev = find_device(OUT_MATCH, want_output=True)
     in_dev = find_device(IN_MATCH, want_output=False)
     print("=" * 72)
-    print("voice-mode UI test — real Chrome, real microphone via virtual cable")
+    print("voice-tunnel UI test — real Chrome, real microphone via virtual cable")
     print("=" * 72)
     print(f"  play into : [{out_dev}] {sd.query_devices(out_dev)['name']}")
     print(f"  chrome mic: [{in_dev}] {sd.query_devices(in_dev)['name']}")
@@ -181,15 +181,15 @@ def main() -> int:
 
     env = dict(
         os.environ,
-        VM_DIR=workdir,
-        VM_TOKEN=token,
-        VM_TTS="piper",
-        VM_PIPER_BIN=os.path.join(ROOT, "venv", "Scripts", "piper.exe"),
-        VM_PIPER_VOICE=os.path.join(ROOT, "models", "en_GB-alan-medium.onnx"),
+        VOICE_TUNNEL_DIR=workdir,
+        VOICE_TUNNEL_TOKEN=token,
+        VOICE_TUNNEL_TTS="piper",
+        VOICE_TUNNEL_PIPER_BIN=os.path.join(ROOT, "venv", "Scripts", "piper.exe"),
+        VOICE_TUNNEL_PIPER_VOICE=os.path.join(ROOT, "models", "en_GB-alan-medium.onnx"),
     )
     proc = subprocess.Popen(
         [PY, "-c",
-         f"import sys; sys.path.insert(0, r'{ROOT}'); from vm.cli import main; "
+         f"import sys; sys.path.insert(0, r'{ROOT}'); from voice_tunnel.cli import main; "
          f"raise SystemExit(main(['serve','--session','{session}','--port','{port}']))"],
         cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
@@ -226,16 +226,16 @@ def main() -> int:
         shot(page, "loaded")
 
         page.click("#orb")
-        page.wait_for_function("() => window.__vm && window.__vm.connected === true", timeout=25000)
+        page.wait_for_function("() => window.__voiceTunnel && window.__voiceTunnel.connected === true", timeout=25000)
         ok("connected")
 
-        label = page.evaluate("() => window.__vm.deviceLabel")
+        label = page.evaluate("() => window.__voiceTunnel.deviceLabel")
         check(IN_MATCH.lower() in (label or "").lower(),
               "chrome is capturing the virtual cable", f"device={label!r}")
-        ok(f"capture backend = {page.evaluate('() => window.__vm.capture')}")
-        print(f"       constraints: {page.evaluate('() => window.__vm.constraints')}")
+        ok(f"capture backend = {page.evaluate('() => window.__voiceTunnel.capture')}")
+        print(f"       constraints: {page.evaluate('() => window.__voiceTunnel.constraints')}")
 
-        page.wait_for_function("() => window.__vm.framesSent > 5", timeout=25000)
+        page.wait_for_function("() => window.__voiceTunnel.framesSent > 5", timeout=25000)
         shot(page, "listening")
 
         # ---- speak, exactly as a person would --------------------------------
@@ -254,7 +254,7 @@ def main() -> int:
             if state["ticks"] % 5:          # ~every second; evaluate() stalls the audio stream
                 return
             try:
-                peak_level = max(peak_level, page.evaluate("() => window.__vm.liveLevel"))
+                peak_level = max(peak_level, page.evaluate("() => window.__voiceTunnel.liveLevel"))
                 if not state["shot"] and peak_level > 0.15 and state["ticks"] > 20:
                     shot(page, "mid-speech-ring-and-partial")
                     state["shot"] = True
@@ -284,7 +284,7 @@ def main() -> int:
 
         check(peak_level > 0.1,
               "the orb ring reacts to speech (live level)", f"peak level={peak_level:.2f}")
-        partials = page.evaluate("() => window.__vm.partials")
+        partials = page.evaluate("() => window.__voiceTunnel.partials")
         check(len(partials) > 0,
               "live partial transcription was shown while speaking",
               f"{len(partials)} partials, last={partials[-1]!r}" if partials else "none")
@@ -318,26 +318,26 @@ def main() -> int:
         said = http_json(f"http://127.0.0.1:{port}/say?token={token}",
                          {"text": "The deploy finished twelve minutes ago and all checks passed."},
                          timeout=180)
-        page.wait_for_function("() => window.__vm.played.length > 0", timeout=90000)
+        page.wait_for_function("() => window.__voiceTunnel.played.length > 0", timeout=90000)
         ok("reply played in the browser", f"held_for={said.get('held_for')}s")
         shot(page, "after-reply")
 
-        states = page.evaluate("() => window.__vm.states")
+        states = page.evaluate("() => window.__voiceTunnel.states")
         for stage in ("transcribing", "thinking", "synthesizing", "speaking"):
             check(stage in states, f"UI displayed the '{stage}' stage",
                   f"saw {sorted(set(states))}")
 
         # Cues: audible state. Assert they reached the browser AND stayed out of the speech
         # channel — a cue counted as a spoken reply would silently corrupt the played-clip check.
-        played_cues = page.evaluate("() => window.__vm.cues")
+        played_cues = page.evaluate("() => window.__voiceTunnel.cues")
         check(len(played_cues) > 0, "audio cues played in the browser",
               f"{len(played_cues)}: {played_cues[:4]}")
-        check(all(not c.startswith("cue-") for c in page.evaluate("() => window.__vm.played")),
+        check(all(not c.startswith("cue-") for c in page.evaluate("() => window.__voiceTunnel.played")),
               "cues are not mistaken for spoken replies")
         rows = page.evaluate("() => [...document.querySelectorAll('.row.claude')].length")
         check(rows <= 1, "cues add no transcript rows", f"{rows} claude rows for 1 reply")
 
-        errors = page.evaluate("() => window.__vm.errors")
+        errors = page.evaluate("() => window.__voiceTunnel.errors")
         check(not errors, "client reported no errors", json.dumps(errors))
 
         status = http_json(f"http://127.0.0.1:{port}/status?token={token}")
@@ -399,7 +399,7 @@ def _analyze_capture(wav: str, turns: list) -> None:
 
 
 def config_end_wait() -> float:
-    from vm import config
+    from voice_tunnel import config
 
     return config.END_OF_UTTERANCE_MS / 1000.0 + 2.5
 

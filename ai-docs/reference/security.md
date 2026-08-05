@@ -1,7 +1,7 @@
 ---
 title: Security model
 description: The trust boundary, why it sits on the WebSocket handshake rather than HTTP middleware, and the two mistakes borrowed from VoiceMode's CVE so we don't repeat them.
-applies_to: vm/security.py, vm/server.py
+applies_to: voice_tunnel/security.py, voice_tunnel/server.py
 read_before: changing auth, adding an endpoint, or exposing the server beyond loopback
 ---
 
@@ -13,7 +13,7 @@ is "a stranger listens to the room", because it is.
 ## Two layers, both mandatory
 
 1. **Network layer — who can reach the socket.** An IP allowlist over CIDRs. Loopback always
-   allowed; anything else opt-in via `VM_ALLOW_CIDRS`. For the phone that means the Tailscale
+   allowed; anything else opt-in via `VOICE_TUNNEL_ALLOW_CIDRS`. For the phone that means the Tailscale
    CGNAT range `100.64.0.0/10`, which is only routable inside your tailnet.
 2. **Application layer — who can open a session.** A shared token, compared in constant time,
    required on the WebSocket handshake.
@@ -24,7 +24,7 @@ token is a bearer secret (it leaks if the URL leaks).
 ## The allowlist decides on the DIRECT TCP PEER
 
 `X-Forwarded-For` is attacker-controllable. It is honored **only** when the direct peer is
-itself inside `VM_TRUSTED_PROXIES`, which defaults to empty — meaning the header is ignored
+itself inside `VOICE_TUNNEL_TRUSTED_PROXIES`, which defaults to empty — meaning the header is ignored
 entirely and the peer address decides.
 
 When a trusted proxy *is* configured, walk the forwarded chain **right to left**, skipping hops

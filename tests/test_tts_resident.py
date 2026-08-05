@@ -12,7 +12,7 @@ import threading
 
 import pytest
 
-from vm import config, tts
+from voice_tunnel import config, tts
 
 
 # ----------------------------------------------------------------- a stub voice
@@ -135,7 +135,7 @@ def test_a_missing_voice_still_names_the_remedy(monkeypatch):
     with pytest.raises(tts.TTSError) as exc:
         tts._synth_piper("hello")
 
-    assert "vm doctor" in str(exc.value)
+    assert "voice-tunnel doctor" in str(exc.value)
 
 
 def test_available_says_which_piper_path_is_live(monkeypatch, resident):

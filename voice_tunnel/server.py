@@ -1,4 +1,4 @@
-"""vm.server — the tunnel. Serves the client page and carries audio both ways.
+"""voice_tunnel.server — the tunnel. Serves the client page and carries audio both ways.
 
 Endpoints
     GET  /              the phone client (single self-contained page)
@@ -469,9 +469,9 @@ async def handle_rate(request: web.Request) -> web.Response:
     former possible — a preference the user expresses out loud should not require restarting the
     conversation to apply.
 
-    **This endpoint does not write the settings file.** Persistence belongs to `vm rate`, which
+    **This endpoint does not write the settings file.** Persistence belongs to `voice-tunnel rate`, which
     writes `.env` and then calls this. A long-running server that edits config on disk is a
-    process racing every other `vm config set`, for no behaviour anyone needs.
+    process racing every other `voice-tunnel config set`, for no behaviour anyone needs.
     """
     state: TunnelState = request.app["state"]
     ok, reason = _check(request, state)
@@ -841,12 +841,12 @@ def run(
 ) -> None:
     store.validate_session(session)
     if token is None:
-        token = os.environ.get("VM_TOKEN") or security.generate_token()
+        token = os.environ.get("VOICE_TUNNEL_TOKEN") or security.generate_token()
 
     is_loopback = security.ip_in_cidrs(host, config.LOOPBACK_CIDRS) or host in ("localhost",)
     if not is_loopback and not token:
         raise SystemExit(
-            "refusing to bind a non-loopback interface without a token; set VM_TOKEN"
+            "refusing to bind a non-loopback interface without a token; set VOICE_TUNNEL_TOKEN"
         )
 
     app = build_app(session, token, gate_enabled)
@@ -859,13 +859,13 @@ def run(
 
     # flush=True: without it the banner sits in the pipe buffer when serve is launched
     # detached (which is the normal way an agent runs it), so the operator never sees the URL.
-    print(f"voice-mode serving   http://{host}:{port}/?token={token}", flush=True)
+    print(f"voice-tunnel serving   http://{host}:{port}/?token={token}", flush=True)
     print(f"  session            {session}", flush=True)
     print(f"  log                {store.log_path(session)}", flush=True)
     print(f"  tts                {tts.available()}", flush=True)
     print(
         f"  voice              speed {config.speech_speed()}x, "
-        f"{config.sentence_pause()}s between sentences  (`vm rate` to change and persist)",
+        f"{config.sentence_pause()}s between sentences  (`voice-tunnel rate` to change and persist)",
         flush=True,
     )
     print(f"  allowlist          {', '.join(security.allowed_cidrs())}", flush=True)

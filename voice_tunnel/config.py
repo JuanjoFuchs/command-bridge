@@ -1,4 +1,4 @@
-"""vm.config — every tunable in one place, each with the reason it has that value.
+"""voice_tunnel.config — every tunable in one place, each with the reason it has that value.
 
 Config-as-data (AGENTS.md convention 5): a number scattered in code is a number nobody dares
 change. A number here with its rationale is one an operator can reason about.
@@ -16,7 +16,7 @@ import shutil
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 """Absolute path to the repo root, derived from THIS FILE rather than the cwd.
 
-Every default path in this module hangs off it. An agent invokes `vm` from wherever its own turn
+Every default path in this module hangs off it. An agent invokes `voice-tunnel` from wherever its own turn
 happens to be standing, so any default resolved against `os.getcwd()` would scatter turn logs and
 settings across whatever directories the caller passed through — the exact class of bug that
 makes a tool "work on my machine" and nowhere else."""
@@ -77,8 +77,8 @@ A rolling percentile has no memory of a moment that will never recur. Over 8 sec
 always inter-word gaps even in continuous speech, so the 20th percentile lands on the room rather
 than on the voice — and when the AC switches on, the estimate follows within seconds."""
 
-END_OF_UTTERANCE_MS = _int_env("VM_END_OF_UTTERANCE_MS", 1500)
-"""Silence that ends a turn. Override live with VM_END_OF_UTTERANCE_MS.
+END_OF_UTTERANCE_MS = _int_env("VOICE_TUNNEL_END_OF_UTTERANCE_MS", 1500)
+"""Silence that ends a turn. Override live with VOICE_TUNNEL_END_OF_UTTERANCE_MS.
 
 Raised 1000 -> 1500 after JJ, live 2026-07-31: "whenever I haven't finished speaking, it ends my
 turn and you start processing and you might interrupt me." He thinks in pauses, and a threshold
@@ -132,7 +132,7 @@ MAX_UTTERANCE_MS = 120_000
 # -------------------------------------------------------------------- wake word
 
 WAKE_NAME = "thursday"
-"""The name he calls the assistant. Override with VM_WAKE_NAME.
+"""The name he calls the assistant. Override with VOICE_TUNNEL_WAKE_NAME.
 
 **Not "claude", and the tool is not Claude-specific.** It holds no model, so the only thing tying
 it to one vendor was this string and some copy. JJ, live 2026-08-03: *"my goal is to be able to
@@ -146,7 +146,7 @@ ordinary speech, so the combination is safe even though the bare word is not —
 why `WAKE_REQUIRE_GREETING` below exists and why it is on."""
 
 WAKE_REQUIRE_GREETING = True
-"""Demand "hey <name>", never the bare name on its own. Override with VM_WAKE_BARE=1.
+"""Demand "hey <name>", never the bare name on its own. Override with VOICE_TUNNEL_WAKE_BARE=1.
 
 With "claude" this could be off, because nobody says "claude" by accident. With a common word it
 must be on, or ordinary scheduling talk wakes the agent all day. Making it a setting rather than a
@@ -155,12 +155,12 @@ design."""
 
 
 def wake_name() -> str:
-    return (_env("VM_WAKE_NAME") or WAKE_NAME).lower().strip()
+    return (_env("VOICE_TUNNEL_WAKE_NAME") or WAKE_NAME).lower().strip()
 
 
 def wake_allows_bare() -> bool:
     """Whether the bare name (no greeting) counts as a summons."""
-    raw = _env("VM_WAKE_BARE")
+    raw = _env("VOICE_TUNNEL_WAKE_BARE")
     if raw:
         return raw not in ("0", "false", "no", "off")
     return not WAKE_REQUIRE_GREETING
@@ -233,7 +233,7 @@ of distortion that is easy to misdiagnose as a bad model or a bad connection."""
 SPEECH_SPEED = 1.18
 """How fast the agent talks, as a multiple of the voice's native pace. Higher is faster.
 
-**SPEED is the unit this codebase speaks, everywhere** — settings file, `vm rate`, the `/rate`
+**SPEED is the unit this codebase speaks, everywhere** — settings file, `voice-tunnel rate`, the `/rate`
 endpoint, `status`. Piper's own knob is `length_scale`, which is INVERTED (lower is faster), and
 letting that leak out was a real defect: JJ asked for 2.0 expecting twice as fast and got half
 speed. The inversion now exists in exactly one line, `length_scale_for` below, and nothing above
@@ -242,7 +242,7 @@ the piper boundary ever sees it.
 1.18 (= 1/0.85) because en_GB-alan-medium — the voice JJ picked — reads noticeably slowly at
 native pace ("I kind of liked Alan, it's just he speaks too slowly"). This scales duration, not
 pitch, so the voice keeps its character. Above ~1.33 it starts clipping consonants and sounding
-rushed. Override with VM_SPEECH_SPEED, or live and persistently with `vm rate --speed`."""
+rushed. Override with VOICE_TUNNEL_SPEECH_SPEED, or live and persistently with `voice-tunnel rate --speed`."""
 
 SPEED_MIN, SPEED_MAX = 0.5, 2.5
 """Accepted speed range: half speed to 2.5x. Bounded because a speed of 0 divides by zero on the
@@ -264,7 +264,7 @@ def speech_speed() -> float:
 
     JJ had to re-set this on every server start, which meant the value that was right for him
     lived only in a running process — the definition of a setting that will be lost."""
-    raw = _env("VM_SPEECH_SPEED")
+    raw = _env("VOICE_TUNNEL_SPEECH_SPEED")
     if raw:
         try:
             return max(SPEED_MIN, min(SPEED_MAX, float(raw)))
@@ -272,7 +272,7 @@ def speech_speed() -> float:
             pass
     # Backwards compatibility: honour a hand-written length_scale, converted. Retired because a
     # persisted setting in the inverted unit re-creates the exact confusion SPEECH_SPEED removes.
-    legacy = _env("VM_PIPER_LENGTH_SCALE")
+    legacy = _env("VOICE_TUNNEL_PIPER_LENGTH_SCALE")
     if legacy:
         try:
             return max(SPEED_MIN, min(SPEED_MAX, 1.0 / float(legacy)))
@@ -284,7 +284,7 @@ def speech_speed() -> float:
 def sentence_pause() -> float:
     """Persisted pause between sentences. Same reason as speech_speed: tuned by ear, so it has
     to outlive the process that was tuned."""
-    raw = _env("VM_SENTENCE_PAUSE")
+    raw = _env("VOICE_TUNNEL_SENTENCE_PAUSE")
     if raw:
         try:
             return max(0.0, min(PAUSE_MAX, float(raw)))
@@ -299,9 +299,9 @@ DEFAULT_PIPER_VOICE = "en_GB-alan-medium"
 """Which voice piper uses when nothing names one.
 
 Alan is the voice JJ picked ("I kind of liked Alan") — the same choice SPEECH_SPEED above
-was tuned for. Naming a default here is what lets `VM_TTS=piper` be the ONLY setting a piper
+was tuned for. Naming a default here is what lets `VOICE_TUNNEL_TTS=piper` be the ONLY setting a piper
 session needs: with no default the backend refused to start unless the caller also threaded
-VM_PIPER_VOICE through every invocation, which is precisely the env-var tax this file exists to
+VOICE_TUNNEL_PIPER_VOICE through every invocation, which is precisely the env-var tax this file exists to
 remove. Falls back to the sole installed voice if Alan is not on disk, and to nothing if the
 choice would be a guess between several."""
 
@@ -326,7 +326,7 @@ def _env(name: str, default: str = "") -> str:
 
 def session_dir() -> str:
     """Where turn logs live. Repo-local by default so a dev run leaves no trace in $HOME."""
-    return _env("VM_DIR") or os.path.join(ROOT, "sessions")
+    return _env("VOICE_TUNNEL_DIR") or os.path.join(ROOT, "sessions")
 
 
 def verbose_default() -> bool:
@@ -340,25 +340,25 @@ def verbose_default() -> bool:
     JJ, live 2026-08-03: "I would like the verbose toggle to be server-side persisted. If I toggle
     it in a browser then it should be remembered on my phone."
     """
-    return (_env("VM_VERBOSE", "0") or "0") not in ("0", "false", "no", "off")
+    return (_env("VOICE_TUNNEL_VERBOSE", "0") or "0") not in ("0", "false", "no", "off")
 
 
 def cues_enabled() -> bool:
     """Audio cues on by default. They exist so a pause is legible without looking at the page —
-    disable with VM_CUES=0 if they ever become noise rather than information."""
-    return (_env("VM_CUES", "1") or "1") not in ("0", "false", "no", "off")
+    disable with VOICE_TUNNEL_CUES=0 if they ever become noise rather than information."""
+    return (_env("VOICE_TUNNEL_CUES", "1") or "1") not in ("0", "false", "no", "off")
 
 
 def owner_name() -> str:
     """Whose voice this tunnel belongs to. One operator, so a constant is enough — but it is a
     name rather than a boolean so a gallery can hold other speakers later (to *exclude* them)."""
-    return _env("VM_OWNER", "me")
+    return _env("VOICE_TUNNEL_OWNER", "me")
 
 
 def models_dir() -> str:
     """Where downloaded models live (Piper voices, Parakeet). Gitignored — models are
     downloaded, never vendored."""
-    return _env("VM_MODELS_DIR") or os.path.join(ROOT, "models")
+    return _env("VOICE_TUNNEL_MODELS_DIR") or os.path.join(ROOT, "models")
 
 
 def parakeet_dir() -> str:
@@ -376,7 +376,7 @@ def parakeet_dir() -> str:
     autoregressively. Whisper stays as the fallback so a fresh clone still works with nothing
     downloaded beyond faster-whisper's own model.
     """
-    explicit = _env("VM_PARAKEET_DIR")
+    explicit = _env("VOICE_TUNNEL_PARAKEET_DIR")
     if explicit:
         return explicit
     default = os.path.join(models_dir(), "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
@@ -384,8 +384,8 @@ def parakeet_dir() -> str:
 
 
 def asr_engine() -> str:
-    """`parakeet` when its model is present, else `whisper`. Force with VM_ASR."""
-    forced = _env("VM_ASR").lower()
+    """`parakeet` when its model is present, else `whisper`. Force with VOICE_TUNNEL_ASR."""
+    forced = _env("VOICE_TUNNEL_ASR").lower()
     if forced in ("parakeet", "whisper"):
         return forced
     return "parakeet" if parakeet_dir() else "whisper"
@@ -393,7 +393,7 @@ def asr_engine() -> str:
 
 def asr_threads() -> int:
     try:
-        return max(1, int(_env("VM_ASR_THREADS", "4")))
+        return max(1, int(_env("VOICE_TUNNEL_ASR_THREADS", "4")))
     except ValueError:
         return 4
 
@@ -409,7 +409,7 @@ def whisper_model() -> str:
     latency. Drop to tiny.en if you want faster still and can accept more errors on hard audio;
     raise to small.en only if base starts making mistakes that matter.
     """
-    return _env("VM_WHISPER_MODEL", "base.en")
+    return _env("VOICE_TUNNEL_WHISPER_MODEL", "base.en")
 
 
 def asr_beam_size() -> int:
@@ -417,24 +417,24 @@ def asr_beam_size() -> int:
     size dominates by ~3x — so this stays at 1 rather than being a tuning knob anyone reaches
     for expecting a win."""
     try:
-        return max(1, int(_env("VM_ASR_BEAM", "1")))
+        return max(1, int(_env("VOICE_TUNNEL_ASR_BEAM", "1")))
     except ValueError:
         return 1
 
 
 def tts_backend() -> str:
-    return _env("VM_TTS", "sapi").lower()
+    return _env("VOICE_TUNNEL_TTS", "sapi").lower()
 
 
 def extra_allow_cidrs() -> tuple[str, ...]:
-    raw = _env("VM_ALLOW_CIDRS")
+    raw = _env("VOICE_TUNNEL_ALLOW_CIDRS")
     return tuple(c.strip() for c in raw.split(",") if c.strip())
 
 
 def trusted_proxies() -> tuple[str, ...]:
     """Empty by default — see ai-docs/reference/security.md. An empty tuple means
     X-Forwarded-For is ignored entirely and the direct TCP peer decides."""
-    raw = _env("VM_TRUSTED_PROXIES")
+    raw = _env("VOICE_TUNNEL_TRUSTED_PROXIES")
     return tuple(c.strip() for c in raw.split(",") if c.strip())
 
 
@@ -451,7 +451,7 @@ def piper_voices() -> list:
     A Piper voice is an `.onnx` **plus a sidecar `.onnx.json`** describing its phonemes and
     sample rate; piper refuses to load one without the other. Requiring the sidecar is therefore
     not a heuristic, it is the format — and it is what keeps unrelated ONNX models that share the
-    directory (the titanet speaker embedder the voiceprint gallery uses) out of `vm voices`,
+    directory (the titanet speaker embedder the voiceprint gallery uses) out of `voice-tunnel voices`,
     where they read as a voice you could select and then fail at synthesis time.
     """
     d = models_dir()
@@ -471,7 +471,7 @@ def piper_bin() -> str:
     pip package here (`venv/Scripts/piper.exe`), and a globally-installed piper of a different
     version would otherwise silently win over the one this checkout's requirements pinned.
     """
-    explicit = _env("VM_PIPER_BIN")
+    explicit = _env("VOICE_TUNNEL_PIPER_BIN")
     if explicit:
         return explicit
     for candidate in (
@@ -495,10 +495,10 @@ def piper_inprocess() -> bool:
     That is 7-26x, and it made TTS slower than transcription by more than 10x — Parakeet does its
     half in 0.23 s. The model loads once and is reused, so the tax is paid at `serve` time.
 
-    Set VM_PIPER_INPROCESS=0 to go back to spawning the binary. Kept as an escape hatch because
-    VM_PIPER_BIN may point at a non-Python piper (the C++ releases), for which the resident path
+    Set VOICE_TUNNEL_PIPER_INPROCESS=0 to go back to spawning the binary. Kept as an escape hatch because
+    VOICE_TUNNEL_PIPER_BIN may point at a non-Python piper (the C++ releases), for which the resident path
     is a different implementation, not the same one held open."""
-    return (_env("VM_PIPER_INPROCESS", "1") or "1") not in ("0", "false", "no", "off")
+    return (_env("VOICE_TUNNEL_PIPER_INPROCESS", "1") or "1") not in ("0", "false", "no", "off")
 
 
 def piper_voice() -> str:
@@ -508,7 +508,7 @@ def piper_voice() -> str:
     the flag refuses paths (it is reachable over the tunnel, and a path turns text-to-speech into
     a file probe). This value is not caller-supplied, so it may be a path.
     """
-    explicit = _env("VM_PIPER_VOICE")
+    explicit = _env("VOICE_TUNNEL_PIPER_VOICE")
     if explicit:
         return explicit
     d = models_dir()
@@ -517,7 +517,7 @@ def piper_voice() -> str:
         return named
     installed = piper_voices()
     # One installed voice is not a choice, so take it. Several is a choice, and guessing which
-    # voice someone wants to hear is worse than saying "name one" — `vm doctor` says how.
+    # voice someone wants to hear is worse than saying "name one" — `voice-tunnel doctor` says how.
     return os.path.join(d, f"{installed[0]}.onnx") if len(installed) == 1 else ""
 
 
@@ -525,7 +525,7 @@ def piper_voice() -> str:
 #
 # THE PROBLEM THIS SOLVES. Before this existed, driving the tunnel with piper looked like:
 #
-#     VM_DIR=... VM_TTS=piper VM_PIPER_BIN=... VM_PIPER_VOICE=... python -c "import sys; ..."
+#     VOICE_TUNNEL_DIR=... VOICE_TUNNEL_TTS=piper VOICE_TUNNEL_PIPER_BIN=... VOICE_TUNNEL_PIPER_VOICE=... python -c "import sys; ..."
 #
 # on EVERY call, because nothing persisted and the repo shipped a `.env.example` telling you to
 # "copy to .env" that no code ever read. Four variables re-typed per invocation is not a
@@ -536,7 +536,7 @@ def piper_voice() -> str:
 #   * The repo already documents it (`.env.example`) and already gitignores it.
 #   * Keys ARE environment variable names, so "env overrides file" needs no mapping layer —
 #     it is one `setdefault` call and there is no second name for anything.
-#   * Python 3.11's tomllib is READ-ONLY, so `vm config set` would have needed a hand-rolled
+#   * Python 3.11's tomllib is READ-ONLY, so `voice-tunnel config set` would have needed a hand-rolled
 #     TOML writer: a new way to corrupt a file, bought for no behaviour anyone asked for.
 
 ENV_FILE_DEFAULT = os.path.join(ROOT, ".env")
@@ -544,12 +544,12 @@ ENV_FILE_DEFAULT = os.path.join(ROOT, ".env")
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 """What counts as a variable name when READING the file — the POSIX shell rule, permissive."""
 
-_WRITABLE_KEY_RE = re.compile(r"^VM_[A-Z0-9_]+$")
-"""What `vm config set` is allowed to WRITE — strict, this tool's own namespace only.
+_WRITABLE_KEY_RE = re.compile(r"^VOICE_TUNNEL_[A-Z0-9_]+$")
+"""What `voice-tunnel config set` is allowed to WRITE — strict, this tool's own namespace only.
 
 Permissive on read, strict on write, and the asymmetry is the point: a file a human hand-edited
 should not be second-guessed, but a machine writing into it must stay in its lane. An agent that
-hallucinates `vm config set PATH ""` should be refused, not obeyed."""
+hallucinates `voice-tunnel config set PATH ""` should be refused, not obeyed."""
 
 _LOAD_REPORT: dict = {}
 """What the last load_env_file() actually did, so `config show` can attribute each value to env
@@ -558,14 +558,14 @@ at load time or not at all."""
 
 
 def env_file_path() -> str:
-    """Where persisted settings live: `<repo>/.env`, or VM_ENV_FILE if pointed elsewhere.
+    """Where persisted settings live: `<repo>/.env`, or VOICE_TUNNEL_ENV_FILE if pointed elsewhere.
 
     Repo-local and gitignored for the same reason session logs are: settings that travel with the
     checkout need no per-machine setup step, and a shared secret that never leaves the working
-    tree cannot be committed by accident. VM_ENV_FILE exists so tests can point somewhere
+    tree cannot be committed by accident. VOICE_TUNNEL_ENV_FILE exists so tests can point somewhere
     disposable — a suite that reads the developer's real settings is not a suite, it's a mood.
     """
-    return _env("VM_ENV_FILE") or ENV_FILE_DEFAULT
+    return _env("VOICE_TUNNEL_ENV_FILE") or ENV_FILE_DEFAULT
 
 
 def parse_env_text(text: str) -> dict:
@@ -573,7 +573,7 @@ def parse_env_text(text: str) -> dict:
 
     Tolerant on purpose: this file is hand-edited, and refusing to start because line 12 has a
     stray word would be a worse failure than ignoring line 12. Anything skipped is reported by
-    `vm config show` under `ignored`, so nothing is silently swallowed.
+    `voice-tunnel config show` under `ignored`, so nothing is silently swallowed.
 
     Understands: `#` comments, blank lines, an optional `export ` prefix, and values wrapped in
     matching single or double quotes. An unquoted value may carry a trailing ` # comment`;
@@ -616,7 +616,7 @@ def load_env_file(path: str | None = None) -> dict:
     Precedence is **process env > file > built-in default**, and that direction is the entire
     contract. A caller has to be able to override one setting for one invocation without editing
     a file every other session shares — scripts/e2e.py depends on exactly this, handing its child
-    a VM_DIR/VM_TOKEN/VM_TTS triple that must beat whatever the developer has persisted.
+    a VOICE_TUNNEL_DIR/VOICE_TUNNEL_TOKEN/VOICE_TUNNEL_TTS triple that must beat whatever the developer has persisted.
 
     Idempotent: a second call is a no-op, because the first call is what set the variable.
 
@@ -662,9 +662,9 @@ def validate_setting(key: str, value: str) -> None:
     """
     if not _WRITABLE_KEY_RE.match(key or ""):
         raise ValueError(
-            f"{key!r} is not a settable key. `vm config set` writes only this tool's own "
-            f"namespace: an upper-case name starting with VM_ (e.g. VM_TTS). "
-            f"Run `vm config show` for the full list."
+            f"{key!r} is not a settable key. `voice-tunnel config set` writes only this tool's own "
+            f"namespace: an upper-case name starting with VOICE_TUNNEL_ (e.g. VOICE_TUNNEL_TTS). "
+            f"Run `voice-tunnel config show` for the full list."
         )
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         raise ValueError(
@@ -697,9 +697,9 @@ def _line_key(line: str) -> str:
 
 
 _HEADER = (
-    "# voice-mode settings. Gitignored. Read automatically by every `vm` command.\n"
+    "# voice-tunnel settings. Gitignored. Read automatically by every `voice-tunnel` command.\n"
     "# Process environment variables override anything here.\n"
-    "# Managed by `vm config set` / `vm config unset`; hand-editing is fine too.\n"
+    "# Managed by `voice-tunnel config set` / `voice-tunnel config unset`; hand-editing is fine too.\n"
 )
 
 
@@ -714,7 +714,7 @@ def write_setting(key: str, value: str | None, path: str | None = None) -> dict:
     if value is not None:
         validate_setting(key, value)
     elif not _WRITABLE_KEY_RE.match(key or ""):
-        raise ValueError(f"{key!r} is not a settable key (upper-case, VM_ prefix)")
+        raise ValueError(f"{key!r} is not a settable key (upper-case, VOICE_TUNNEL_ prefix)")
 
     try:
         with open(path, "r", encoding="utf-8") as fh:
@@ -760,56 +760,56 @@ def _setting(key: str, what: str, resolve, secret: bool = False) -> dict:
 
 
 SETTINGS: tuple = (
-    _setting("VM_ENV_FILE", "path to this settings file itself (default <repo>/.env)",
+    _setting("VOICE_TUNNEL_ENV_FILE", "path to this settings file itself (default <repo>/.env)",
              env_file_path),
-    _setting("VM_TOKEN", "shared secret for the WS handshake; generated at serve time if unset",
-             lambda: _env("VM_TOKEN"), secret=True),
-    _setting("VM_ALLOW_CIDRS", "extra CIDRs allowed (add 100.64.0.0/10 for Tailscale)",
+    _setting("VOICE_TUNNEL_TOKEN", "shared secret for the WS handshake; generated at serve time if unset",
+             lambda: _env("VOICE_TUNNEL_TOKEN"), secret=True),
+    _setting("VOICE_TUNNEL_ALLOW_CIDRS", "extra CIDRs allowed (add 100.64.0.0/10 for Tailscale)",
              lambda: ",".join(extra_allow_cidrs())),
-    _setting("VM_TRUSTED_PROXIES", "leave empty unless a real proxy fronts this",
+    _setting("VOICE_TUNNEL_TRUSTED_PROXIES", "leave empty unless a real proxy fronts this",
              lambda: ",".join(trusted_proxies())),
-    _setting("VM_DIR", "where turn logs live", session_dir),
-    _setting("VM_MODELS_DIR", "where downloaded models live", models_dir),
-    _setting("VM_TTS", "sapi | piper | none", tts_backend),
-    _setting("VM_PIPER_BIN", "piper executable; auto-found in the repo venv or on PATH",
+    _setting("VOICE_TUNNEL_DIR", "where turn logs live", session_dir),
+    _setting("VOICE_TUNNEL_MODELS_DIR", "where downloaded models live", models_dir),
+    _setting("VOICE_TUNNEL_TTS", "sapi | piper | none", tts_backend),
+    _setting("VOICE_TUNNEL_PIPER_BIN", "piper executable; auto-found in the repo venv or on PATH",
              piper_bin),
-    _setting("VM_PIPER_VOICE", "default .onnx voice; auto-found in the models dir", piper_voice),
-    _setting("VM_PIPER_INPROCESS",
+    _setting("VOICE_TUNNEL_PIPER_VOICE", "default .onnx voice; auto-found in the models dir", piper_voice),
+    _setting("VOICE_TUNNEL_PIPER_INPROCESS",
              "1 | 0 — hold the voice model in this process (7-26x faster than spawning piper)",
              lambda: "1" if piper_inprocess() else "0"),
-    _setting("VM_SPEECH_SPEED",
+    _setting("VOICE_TUNNEL_SPEECH_SPEED",
              f"how fast the agent talks; 1.0 is native pace, higher is faster "
-             f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `vm rate --speed`",
+             f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `voice-tunnel rate --speed`",
              lambda: str(speech_speed())),
-    _setting("VM_SENTENCE_PAUSE",
+    _setting("VOICE_TUNNEL_SENTENCE_PAUSE",
              f"seconds of silence between sentences (0-{PAUSE_MAX}); the pause IS the "
-             f"punctuation in speech. Set it live with `vm rate --pause`",
+             f"punctuation in speech. Set it live with `voice-tunnel rate --pause`",
              lambda: str(sentence_pause())),
-    _setting("VM_ASR", "parakeet | whisper (auto-selects parakeet when its model is present)",
+    _setting("VOICE_TUNNEL_ASR", "parakeet | whisper (auto-selects parakeet when its model is present)",
              asr_engine),
-    _setting("VM_PARAKEET_DIR", "sherpa-onnx Parakeet model dir", parakeet_dir),
-    _setting("VM_WHISPER_MODEL", "whisper fallback model (parakeet is preferred)", whisper_model),
-    _setting("VM_ASR_THREADS", "ASR worker threads", lambda: str(asr_threads())),
-    _setting("VM_ASR_BEAM", "whisper beam width; size dominates speed, not this",
+    _setting("VOICE_TUNNEL_PARAKEET_DIR", "sherpa-onnx Parakeet model dir", parakeet_dir),
+    _setting("VOICE_TUNNEL_WHISPER_MODEL", "whisper fallback model (parakeet is preferred)", whisper_model),
+    _setting("VOICE_TUNNEL_ASR_THREADS", "ASR worker threads", lambda: str(asr_threads())),
+    _setting("VOICE_TUNNEL_ASR_BEAM", "whisper beam width; size dominates speed, not this",
              lambda: str(asr_beam_size())),
-    _setting("VM_END_OF_UTTERANCE_MS", "silence that ends a turn; raise it if you get cut off",
+    _setting("VOICE_TUNNEL_END_OF_UTTERANCE_MS", "silence that ends a turn; raise it if you get cut off",
              lambda: str(END_OF_UTTERANCE_MS)),
-    _setting("VM_CUES", "1 | 0 — short non-speech cues so a pause is audible",
+    _setting("VOICE_TUNNEL_CUES", "1 | 0 — short non-speech cues so a pause is audible",
              lambda: "1" if cues_enabled() else "0"),
-    _setting("VM_VERBOSE",
+    _setting("VOICE_TUNNEL_VERBOSE",
              "1 | 0 — narrate every action before doing it. Global across devices; "
-             "set live with `vm verbose on`",
+             "set live with `voice-tunnel verbose on`",
              lambda: "1" if verbose_default() else "0"),
-    _setting("VM_OWNER", "name the voiceprint gallery learns under", owner_name),
-    _setting("VM_WAKE_NAME", "what you call the assistant; 'hey <name>' summons it", wake_name),
-    _setting("VM_WAKE_BARE",
+    _setting("VOICE_TUNNEL_OWNER", "name the voiceprint gallery learns under", owner_name),
+    _setting("VOICE_TUNNEL_WAKE_NAME", "what you call the assistant; 'hey <name>' summons it", wake_name),
+    _setting("VOICE_TUNNEL_WAKE_BARE",
              "1 | 0 — does the bare name summon it, or is a greeting required? Keep 0 for a "
              "name that is also an ordinary word",
              lambda: "1" if wake_allows_bare() else "0"),
 )
-"""Every VM_* variable, in one place, with what it does and how to read its live value.
+"""Every VOICE_TUNNEL_* variable, in one place, with what it does and how to read its live value.
 
-ONE registry, three consumers: `vm describe`'s env block, `vm config show`, and the test that
+ONE registry, three consumers: `voice-tunnel describe`'s env block, `voice-tunnel config show`, and the test that
 asserts `.env.example` documents all of it. Before this, `describe` listed eight variables and
 the code read seventeen — so the piper settings an agent could not run without were discoverable
 only by reading tts.py. A contract that omits the thing you need is worse than no contract,
@@ -818,7 +818,7 @@ because it is trusted."""
 REDACTED = "***"
 """Stand-in for a secret's value in a BULK dump.
 
-`config show` redacts; `config get VM_TOKEN` does not. The rule is that an explicit single-key
+`config show` redacts; `config get VOICE_TUNNEL_TOKEN` does not. The rule is that an explicit single-key
 read is someone asking for that secret, while a bulk dump is someone asking for orientation and
 getting the secret as a side effect — into a transcript, a log, and an agent's context."""
 

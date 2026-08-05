@@ -1,4 +1,4 @@
-"""vm.cues — short non-speech sounds that make the agent's state audible.
+"""voice_tunnel.cues — short non-speech sounds that make the agent's state audible.
 
 JJ's original 2026-06-18 capture asked for "sounds for whenever it is typing, running stuff", and
 the reason resurfaced on 2026-07-31: a pause feels dangerous because silence is ambiguous. You
@@ -15,7 +15,7 @@ A cue reaches you while you are looking at something else. That is the whole poi
   working. Contour survives cheap earbuds and a noisy room, where timbre does not.
 * **Quiet and short.** ~120 ms at low amplitude. A cue competing with speech becomes the thing
   that interrupts, which is the exact problem cues exist to solve.
-* **Padded like speech** (:func:`vm.tts.pad`) because Bluetooth sinks sleep between clips and
+* **Padded like speech** (:func:`voice_tunnel.tts.pad`) because Bluetooth sinks sleep between clips and
   swallow the first ~100 ms — an unpadded cue is an inaudible cue on the target hardware.
 """
 from __future__ import annotations

@@ -51,7 +51,7 @@ Each is objectively checkable. `AC-E*` are the end-to-end gate.
 - **AC-11** The server accepts raw 16-bit PCM frames and resamples to 16 kHz mono for ASR.
 
 ### End-to-end (the gate)
-- **AC-E1** A real Chrome instance, fed a WAV as its microphone, connects to `vm serve`, and the spoken sentence appears as a turn in the log with `addressed: true`.
+- **AC-E1** A real Chrome instance, fed a WAV as its microphone, connects to `voice-tunnel serve`, and the spoken sentence appears as a turn in the log with `addressed: true`.
 - **AC-E2** `watch --since -1` returns that turn.
 - **AC-E3** `say` causes audio to arrive at the browser and the page reports it played.
 - **AC-E4** The whole loop runs headless, unattended, with a non-zero exit on any failure.

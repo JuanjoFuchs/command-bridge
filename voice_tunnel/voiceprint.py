@@ -1,4 +1,4 @@
-"""vm.voiceprint — learn what JJ sounds like, so the wake word stops being mandatory.
+"""voice_tunnel.voiceprint — learn what JJ sounds like, so the wake word stops being mandatory.
 
 The wake word has been the weakest link in this project. A general-purpose recognizer rendered
 "Claude" as Grab, Grub, God, Well, Joe, Clock, Clos, quote, club and Crawley and never once got
@@ -45,7 +45,7 @@ Set from measurement, not taste. Against a 180-sample centroid bootstrapped from
 recordings, scored on audio captured through a *different* device and pipeline (the headset ->
 browser -> tunnel path):
 
-    JJ, three voice-mode sessions          0.711, 0.782, 0.801   <- accepted
+    JJ, three voice-tunnel sessions          0.711, 0.782, 0.801   <- accepted
     Three different TTS voices             0.000, 0.066, 0.132   <- rejected
     Real colleagues, three meetings        0.035, 0.055, 0.096   <- rejected
 

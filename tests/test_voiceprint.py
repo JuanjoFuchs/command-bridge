@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from vm import voiceprint as vp
+from voice_tunnel import voiceprint as vp
 
 
 @pytest.fixture()
@@ -111,16 +111,16 @@ def test_too_short_audio_is_not_enrolled():
     assert e.embed(tiny) is None, "a fragment carries too little voice to learn from"
 
 
-def test_gallery_follows_vm_dir_so_tests_cannot_poison_the_real_one(tmp_path, monkeypatch):
+def test_gallery_follows_the_session_dir_so_tests_cannot_poison_the_real_one(tmp_path, monkeypatch):
     """The UI harness speaks with a SYNTHETIC voice. If the gallery ever moved to a fixed
-    location (say ~/.voice-mode), every test run would enrol Piper as the owner and quietly
-    destroy the real print. Keeping it under VM_DIR is what makes the harness safe to run.
+    location (say ~/.voice-tunnel), every test run would enrol Piper as the owner and quietly
+    destroy the real print. Keeping it under VOICE_TUNNEL_DIR is what makes the harness safe to run.
     """
-    monkeypatch.setenv("VM_DIR", str(tmp_path / "isolated"))
+    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path / "isolated"))
     assert str(tmp_path / "isolated") in vp.gallery_path()
 
     vp.enroll("me", _vec(1))
     assert [s["name"] for s in vp.known()] == ["me"]
 
-    monkeypatch.setenv("VM_DIR", str(tmp_path / "elsewhere"))
-    assert vp.known() == [], "a different VM_DIR must see a different gallery"
+    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path / "elsewhere"))
+    assert vp.known() == [], "a different VOICE_TUNNEL_DIR must see a different gallery"

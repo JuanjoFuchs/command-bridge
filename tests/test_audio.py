@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from vm import asr, config, tts
+from voice_tunnel import asr, config, tts
 
 
 # --------------------------------------------------------------- PCM handling

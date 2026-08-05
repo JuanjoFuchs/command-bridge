@@ -1,6 +1,6 @@
 """Wake gating — spec 001 AC-4, AC-5, AC-6.
 
-The assistant's name is configurable (`VM_WAKE_NAME`) and is no longer "claude". The tests below
+The assistant's name is configurable (`VOICE_TUNNEL_WAKE_NAME`) and is no longer "claude". The tests below
 still exercise the ORIGINAL name on purpose: they encode behaviour discovered against real
 speech — the greeting-prefix rule, the two fuzzy thresholds, mid-sentence mentions that must not
 be stripped — and rewriting them for a new name would throw that history away to prove nothing.
@@ -10,15 +10,15 @@ The autouse fixture pins the name so they keep testing behaviour rather than con
 """
 import pytest
 
-from vm.wake import WakeGate
+from voice_tunnel.wake import WakeGate
 
 
 @pytest.fixture(autouse=True)
 def _classic_name(monkeypatch):
     """Pin the historical name and allow the bare form, which is what these tests were written
     against. Without this every assertion below would be testing today's default instead."""
-    monkeypatch.setenv("VM_WAKE_NAME", "claude")
-    monkeypatch.setenv("VM_WAKE_BARE", "1")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "1")
 
 
 def test_turn_without_wake_phrase_is_not_addressed():
@@ -194,8 +194,8 @@ def test_the_name_is_configurable(monkeypatch):
 
     JJ, live 2026-08-03: "my goal is to be able to use this with any AI agent, not just cloud."
     """
-    monkeypatch.setenv("VM_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VM_WAKE_BARE", "0")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "0")
 
     addressed, text = WakeGate().evaluate("Hey Thursday, what is the status?", now=100.0)
 
@@ -210,8 +210,8 @@ def test_a_common_word_name_does_not_fire_bare(monkeypatch):
     himself when the objection was that days are words you say constantly: the wake phrase is a
     GREETING PLUS A NAME, and nobody says "hey Thursday" by accident.
     """
-    monkeypatch.setenv("VM_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VM_WAKE_BARE", "0")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "0")
 
     for said in ["let's ship it thursday",
                  "see you thursday",
@@ -223,8 +223,8 @@ def test_a_common_word_name_does_not_fire_bare(monkeypatch):
 
 
 def test_the_greeting_form_still_wakes_a_common_word_name(monkeypatch):
-    monkeypatch.setenv("VM_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VM_WAKE_BARE", "0")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "0")
 
     for said in ["hey thursday what's the status",
                  "Hi Thursday, are you there?",
@@ -236,8 +236,8 @@ def test_the_greeting_form_still_wakes_a_common_word_name(monkeypatch):
 
 def test_bare_is_opt_in_per_name_not_a_hard_rule(monkeypatch):
     """An uncommon name is safe bare; a common one is not. The constraint belongs to the NAME."""
-    monkeypatch.setenv("VM_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VM_WAKE_BARE", "1")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "1")
 
     addressed, _ = WakeGate().evaluate("thursday what's the status", now=1.0)
 

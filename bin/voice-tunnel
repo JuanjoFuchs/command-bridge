@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# PATH shim for POSIX shells, including Git Bash / MSYS on Windows.
+#
+# Contract: `voice-tunnel <cmd>` behaves identically from any cwd, through a symlink, with no env vars set
+# and no venv activated. Everything below exists to hold one of those four.
+set -euo pipefail
+
+# Resolve symlinks before taking the dirname. A shim is *meant* to be symlinked onto PATH, and
+# without this loop `dirname` yields the symlink's directory: linking bin/voice-tunnel into /usr/local/bin
+# made VOICE_TUNNEL_ROOT resolve to /usr/local, which then produced a SyntaxError from the old inline
+# program rather than anything resembling an error message.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in
+    /*) ;;
+    *) src="$dir/$src" ;;
+  esac
+done
+VOICE_TUNNEL_ROOT="$(cd -P "$(dirname "$src")/.." && pwd)"
+
+# A shim that was COPIED rather than symlinked cannot find its repo, and the resulting failure is
+# otherwise an interpreter-level "can't open file" that reads like a broken install. Say what
+# actually happened. (Note: Git Bash's `ln -s` silently copies unless MSYS=winsymlinks:nativestrict.)
+if [ ! -f "$VOICE_TUNNEL_ROOT/bin/voice-tunnel-run.py" ]; then
+  echo "{\"error\": \"voice-tunnel shim cannot find its repo (looked in $VOICE_TUNNEL_ROOT)\", \"code\": \"detached_shim\", \"remedy\": \"this file must stay inside the checkout's bin/ — put <repo>/bin on PATH, or symlink it (Git Bash needs MSYS=winsymlinks:nativestrict), do not copy it\"}" >&2
+  exit 2
+fi
+
+# Prefer the repo venv: the dependencies (aiohttp, numpy, faster-whisper) live there and nowhere
+# else, so a bare `python` gets an ImportError three frames deep instead of a CLI.
+if [ -x "$VOICE_TUNNEL_ROOT/venv/Scripts/python.exe" ]; then      # Windows venv layout
+  VOICE_TUNNEL_PY="$VOICE_TUNNEL_ROOT/venv/Scripts/python.exe"
+elif [ -x "$VOICE_TUNNEL_ROOT/venv/bin/python" ]; then            # POSIX venv layout
+  VOICE_TUNNEL_PY="$VOICE_TUNNEL_ROOT/venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  VOICE_TUNNEL_PY="python3"
+elif command -v python >/dev/null 2>&1; then
+  VOICE_TUNNEL_PY="python"
+else
+  # Errors state the remedy, and stay machine-readable: a caller parsing stdout for JSON should
+  # find the failure on stderr in the same shape as every other voice-tunnel error.
+  echo '{"error": "no python interpreter found", "code": "no_python", "remedy": "install Python 3.11+, then: python -m venv '"$VOICE_TUNNEL_ROOT"'/venv && '"$VOICE_TUNNEL_ROOT"'/venv/Scripts/python -m pip install -r '"$VOICE_TUNNEL_ROOT"'/requirements.txt"}' >&2
+  exit 2
+fi
+
+# Under MSYS, $VOICE_TUNNEL_ROOT is a POSIX path (/c/src/...) that a native Windows Python cannot
+# open. `-m` (mixed: C:/src/...) rather than `-w` (C:\src\...) on purpose — both are valid for
+# Windows Python, and the forward-slash form has no trailing-backslash edge case to escape.
+if command -v cygpath >/dev/null 2>&1; then
+  VOICE_TUNNEL_ROOT="$(cygpath -m "$VOICE_TUNNEL_ROOT")"
+fi
+
+exec "$VOICE_TUNNEL_PY" "$VOICE_TUNNEL_ROOT/bin/voice-tunnel-run.py" "$@"

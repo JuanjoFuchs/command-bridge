@@ -16,12 +16,12 @@ import time
 
 import pytest
 
-from vm import config, server
+from voice_tunnel import config, server
 
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VM_DIR", str(tmp_path))
+    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
     return server.TunnelState("t", token=None)
 
 

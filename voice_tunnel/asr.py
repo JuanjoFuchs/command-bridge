@@ -1,4 +1,4 @@
-"""vm.asr — utterance-buffered speech recognition.
+"""voice_tunnel.asr — utterance-buffered speech recognition.
 
 **Why this is simpler than meeting-copilot's streaming ASR.** `mc` transcribes a meeting, where
 you cannot wait for a speaker to stop — it needs incremental commits (LocalAgreement-2) to react

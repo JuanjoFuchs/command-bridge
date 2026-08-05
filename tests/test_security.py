@@ -5,7 +5,7 @@ GHSA-2qvv-vjq9-g5r4 (CVSS 8.6), where a spoofed header reached microphone record
 """
 import pytest
 
-from vm import security
+from voice_tunnel import security
 
 
 def test_loopback_is_allowed_by_default():
@@ -18,7 +18,7 @@ def test_arbitrary_public_ip_is_not_allowed_by_default():
 
 def test_tailscale_range_is_opt_in(monkeypatch):
     assert not security.ip_in_cidrs("100.101.102.103", security.allowed_cidrs())
-    monkeypatch.setenv("VM_ALLOW_CIDRS", "100.64.0.0/10")
+    monkeypatch.setenv("VOICE_TUNNEL_ALLOW_CIDRS", "100.64.0.0/10")
     assert security.ip_in_cidrs("100.101.102.103", security.allowed_cidrs())
 
 

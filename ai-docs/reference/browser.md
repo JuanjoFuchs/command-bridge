@@ -1,7 +1,7 @@
 ---
 title: Browser and Android constraints
 description: Secure-context rules, why a LAN IP can never work, the foreground-only mic ceiling on Android, wake lock, and the Bluetooth playback padding.
-applies_to: web/index.html, vm/server.py
+applies_to: web/index.html, voice_tunnel/server.py
 read_before: touching the web client, changing how the phone reaches the server, or debugging "no mic"
 ---
 
@@ -84,7 +84,7 @@ frames in 6 seconds with the tab behind another window.
 Two things to keep right:
 - **Batch in the worklet.** It receives a 128-sample render quantum, ~375/sec at 48 kHz. Posting
   each one is 375 WebSocket messages a second of mostly header. Accumulate ~40 ms first.
-- **Keep the ScriptProcessor fallback**, and record which one is live in `window.__vm.capture`
+- **Keep the ScriptProcessor fallback**, and record which one is live in `window.__voiceTunnel.capture`
   — otherwise "is my audio even flowing" becomes unanswerable again.
 
 > The failsafe WAV is what made this findable. Levels-over-time showed speech, then a block of
@@ -131,7 +131,7 @@ pipeline. It does not exercise the operating system's microphone driver — whic
 browser could never reach anyway. The one thing still requiring a human is a real phone with a
 real microphone.
 
-> **The diagnostic that made this findable:** the client tracks `window.__vm.peakRms`, and the
+> **The diagnostic that made this findable:** the client tracks `window.__voiceTunnel.peakRms`, and the
 > e2e asserts on it before waiting for a transcript. Without that, "the mic is delivering
 > silence" and "the server dropped my audio" are indistinguishable from outside, and you debug
 > the wrong half for hours. Keep that assertion.

@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from vm import config
+from voice_tunnel import config
 
 
 # ------------------------------------------------------------------- parsing
@@ -18,50 +18,50 @@ from vm import config
 def test_parses_comments_blanks_and_export_prefixes():
     text = """
     # a comment
-    VM_TTS=piper
+    VOICE_TUNNEL_TTS=piper
 
-    export VM_DIR=/tmp/sessions
+    export VOICE_TUNNEL_DIR=/tmp/sessions
     """
-    assert config.parse_env_text(text) == {"VM_TTS": "piper", "VM_DIR": "/tmp/sessions"}
+    assert config.parse_env_text(text) == {"VOICE_TUNNEL_TTS": "piper", "VOICE_TUNNEL_DIR": "/tmp/sessions"}
 
 
 def test_quoted_values_keep_their_spaces_and_hashes():
     """A Windows path is the common case — `C:\\Program Files\\...` has a space in it, and an
     unquoted reader would truncate the setting at the space and then fail to find the binary."""
     parsed = config.parse_env_text(
-        'VM_PIPER_BIN="C:/Program Files/piper/piper.exe"\n'
-        "VM_OWNER='a # b'\n"
+        'VOICE_TUNNEL_PIPER_BIN="C:/Program Files/piper/piper.exe"\n'
+        "VOICE_TUNNEL_OWNER='a # b'\n"
     )
-    assert parsed["VM_PIPER_BIN"] == "C:/Program Files/piper/piper.exe"
-    assert parsed["VM_OWNER"] == "a # b"
+    assert parsed["VOICE_TUNNEL_PIPER_BIN"] == "C:/Program Files/piper/piper.exe"
+    assert parsed["VOICE_TUNNEL_OWNER"] == "a # b"
 
 
 def test_unquoted_value_drops_a_trailing_comment():
-    assert config.parse_env_text("VM_TTS=piper  # the good one")["VM_TTS"] == "piper"
+    assert config.parse_env_text("VOICE_TUNNEL_TTS=piper  # the good one")["VOICE_TUNNEL_TTS"] == "piper"
 
 
 def test_a_malformed_line_is_skipped_not_fatal():
     """The file is hand-edited. Refusing to start because line 2 is a stray word would be a
     worse failure than ignoring line 2 — and `config show` reports what was ignored."""
-    assert config.parse_env_text("VM_TTS=piper\nnonsense\nVM_CUES=0") == {
-        "VM_TTS": "piper", "VM_CUES": "0"
+    assert config.parse_env_text("VOICE_TUNNEL_TTS=piper\nnonsense\nVOICE_TUNNEL_CUES=0") == {
+        "VOICE_TUNNEL_TTS": "piper", "VOICE_TUNNEL_CUES": "0"
     }
 
 
 def test_a_value_may_contain_equals_signs():
-    assert config.parse_env_text("VM_TOKEN=ab=cd=ef")["VM_TOKEN"] == "ab=cd=ef"
+    assert config.parse_env_text("VOICE_TUNNEL_TOKEN=ab=cd=ef")["VOICE_TUNNEL_TOKEN"] == "ab=cd=ef"
 
 
 def test_crlf_line_endings_parse(tmp_path):
     """The file is edited on Windows; splitlines handles \\r\\n but a naive split on \\n would
     leave a trailing \\r glued to every value."""
     p = tmp_path / ".env"
-    p.write_bytes(b"VM_TTS=piper\r\nVM_OWNER=jj\r\n")
-    assert config.read_env_file(str(p)) == {"VM_TTS": "piper", "VM_OWNER": "jj"}
+    p.write_bytes(b"VOICE_TUNNEL_TTS=piper\r\nVOICE_TUNNEL_OWNER=jj\r\n")
+    assert config.read_env_file(str(p)) == {"VOICE_TUNNEL_TTS": "piper", "VOICE_TUNNEL_OWNER": "jj"}
 
 
 def test_the_last_duplicate_wins():
-    assert config.parse_env_text("VM_TTS=sapi\nVM_TTS=piper")["VM_TTS"] == "piper"
+    assert config.parse_env_text("VOICE_TUNNEL_TTS=sapi\nVOICE_TUNNEL_TTS=piper")["VOICE_TUNNEL_TTS"] == "piper"
 
 
 # ---------------------------------------------------------------- precedence
@@ -69,41 +69,41 @@ def test_the_last_duplicate_wins():
 
 def test_the_file_fills_in_what_the_environment_has_not_set(tmp_path, monkeypatch):
     p = tmp_path / ".env"
-    p.write_text("VM_TTS=piper\n", encoding="utf-8")
-    monkeypatch.delenv("VM_TTS", raising=False)
+    p.write_text("VOICE_TUNNEL_TTS=piper\n", encoding="utf-8")
+    monkeypatch.delenv("VOICE_TUNNEL_TTS", raising=False)
 
     report = config.load_env_file(str(p))
 
-    assert os.environ["VM_TTS"] == "piper"
-    assert report["applied"] == ["VM_TTS"]
+    assert os.environ["VOICE_TUNNEL_TTS"] == "piper"
+    assert report["applied"] == ["VOICE_TUNNEL_TTS"]
 
 
 def test_the_environment_beats_the_file(tmp_path, monkeypatch):
-    """The whole contract. scripts/e2e.py hands its child VM_DIR/VM_TOKEN/VM_TTS and must win
+    """The whole contract. scripts/e2e.py hands its child VOICE_TUNNEL_DIR/VOICE_TUNNEL_TOKEN/VOICE_TUNNEL_TTS and must win
     over whatever the developer has persisted, or the acceptance run reads the wrong turn log."""
     p = tmp_path / ".env"
-    p.write_text("VM_TTS=piper\n", encoding="utf-8")
-    monkeypatch.setenv("VM_TTS", "sapi")
+    p.write_text("VOICE_TUNNEL_TTS=piper\n", encoding="utf-8")
+    monkeypatch.setenv("VOICE_TUNNEL_TTS", "sapi")
 
     report = config.load_env_file(str(p))
 
-    assert os.environ["VM_TTS"] == "sapi"
-    assert report["shadowed"] == ["VM_TTS"]
+    assert os.environ["VOICE_TUNNEL_TTS"] == "sapi"
+    assert report["shadowed"] == ["VOICE_TUNNEL_TTS"]
     assert report["applied"] == []
 
 
 def test_loading_is_idempotent(tmp_path, monkeypatch):
     p = tmp_path / ".env"
-    p.write_text("VM_TTS=piper\n", encoding="utf-8")
-    monkeypatch.delenv("VM_TTS", raising=False)
+    p.write_text("VOICE_TUNNEL_TTS=piper\n", encoding="utf-8")
+    monkeypatch.delenv("VOICE_TUNNEL_TTS", raising=False)
 
     config.load_env_file(str(p))
     second = config.load_env_file(str(p))
 
     # The second pass sees its own work already in the environment, so it shadows rather than
     # re-applies. That is what makes calling it from main() on every command harmless.
-    assert second["shadowed"] == ["VM_TTS"]
-    assert os.environ["VM_TTS"] == "piper"
+    assert second["shadowed"] == ["VOICE_TUNNEL_TTS"]
+    assert os.environ["VOICE_TUNNEL_TTS"] == "piper"
 
 
 def test_a_missing_file_is_not_an_error(tmp_path):
@@ -113,8 +113,8 @@ def test_a_missing_file_is_not_an_error(tmp_path):
 
 def test_a_bogus_variable_name_is_reported_not_applied(tmp_path, monkeypatch):
     p = tmp_path / ".env"
-    p.write_text("9BAD=x\nVM_OWNER=jj\n", encoding="utf-8")
-    monkeypatch.delenv("VM_OWNER", raising=False)
+    p.write_text("9BAD=x\nVOICE_TUNNEL_OWNER=jj\n", encoding="utf-8")
+    monkeypatch.delenv("VOICE_TUNNEL_OWNER", raising=False)
 
     report = config.load_env_file(str(p))
 
@@ -127,12 +127,12 @@ def test_a_bogus_variable_name_is_reported_not_applied(tmp_path, monkeypatch):
 
 def test_set_creates_the_file_with_a_header(tmp_path, monkeypatch):
     p = tmp_path / ".env"
-    monkeypatch.setenv("VM_ENV_FILE", str(p))
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(p))
 
-    result = config.write_setting("VM_TTS", "piper")
+    result = config.write_setting("VOICE_TUNNEL_TTS", "piper")
 
     assert result["created"] is True
-    assert config.read_env_file(str(p)) == {"VM_TTS": "piper"}
+    assert config.read_env_file(str(p)) == {"VOICE_TUNNEL_TTS": "piper"}
     assert p.read_text(encoding="utf-8").startswith("#")
 
 
@@ -140,46 +140,46 @@ def test_set_replaces_in_place_and_keeps_comments_and_neighbours(tmp_path, monke
     """A config file that loses its comments the first time a tool touches it is a config file
     people stop letting tools touch."""
     p = tmp_path / ".env"
-    p.write_text("# keep me\nVM_TTS=sapi\nVM_OWNER=jj\n", encoding="utf-8")
-    monkeypatch.setenv("VM_ENV_FILE", str(p))
+    p.write_text("# keep me\nVOICE_TUNNEL_TTS=sapi\nVOICE_TUNNEL_OWNER=jj\n", encoding="utf-8")
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(p))
 
-    config.write_setting("VM_TTS", "piper")
+    config.write_setting("VOICE_TUNNEL_TTS", "piper")
 
     text = p.read_text(encoding="utf-8")
     assert "# keep me" in text
-    assert config.read_env_file(str(p)) == {"VM_TTS": "piper", "VM_OWNER": "jj"}
+    assert config.read_env_file(str(p)) == {"VOICE_TUNNEL_TTS": "piper", "VOICE_TUNNEL_OWNER": "jj"}
 
 
 def test_set_collapses_duplicate_keys(tmp_path, monkeypatch):
     """Leaving a stale duplicate behind would mean the file says one thing and the process
     does another — the reader keeps the last occurrence."""
     p = tmp_path / ".env"
-    p.write_text("VM_TTS=sapi\nVM_TTS=none\n", encoding="utf-8")
-    monkeypatch.setenv("VM_ENV_FILE", str(p))
+    p.write_text("VOICE_TUNNEL_TTS=sapi\nVOICE_TUNNEL_TTS=none\n", encoding="utf-8")
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(p))
 
-    result = config.write_setting("VM_TTS", "piper")
+    result = config.write_setting("VOICE_TUNNEL_TTS", "piper")
 
     assert result["replaced"] == 2
-    assert p.read_text(encoding="utf-8").count("VM_TTS=") == 1
+    assert p.read_text(encoding="utf-8").count("VOICE_TUNNEL_TTS=") == 1
 
 
 def test_values_needing_quotes_round_trip(tmp_path, monkeypatch):
     p = tmp_path / ".env"
-    monkeypatch.setenv("VM_ENV_FILE", str(p))
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(p))
 
-    config.write_setting("VM_PIPER_BIN", "C:/Program Files/piper/piper.exe")
+    config.write_setting("VOICE_TUNNEL_PIPER_BIN", "C:/Program Files/piper/piper.exe")
 
-    assert config.read_env_file(str(p))["VM_PIPER_BIN"] == "C:/Program Files/piper/piper.exe"
+    assert config.read_env_file(str(p))["VOICE_TUNNEL_PIPER_BIN"] == "C:/Program Files/piper/piper.exe"
 
 
 def test_unset_removes_the_key(tmp_path, monkeypatch):
     p = tmp_path / ".env"
-    p.write_text("VM_TTS=piper\nVM_OWNER=jj\n", encoding="utf-8")
-    monkeypatch.setenv("VM_ENV_FILE", str(p))
+    p.write_text("VOICE_TUNNEL_TTS=piper\nVOICE_TUNNEL_OWNER=jj\n", encoding="utf-8")
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(p))
 
-    config.write_setting("VM_TTS", None)
+    config.write_setting("VOICE_TUNNEL_TTS", None)
 
-    assert config.read_env_file(str(p)) == {"VM_OWNER": "jj"}
+    assert config.read_env_file(str(p)) == {"VOICE_TUNNEL_OWNER": "jj"}
 
 
 # ----------------------------------------------------------------- validation
@@ -188,34 +188,34 @@ def test_unset_removes_the_key(tmp_path, monkeypatch):
 # confused caller, not a hostile one, which is why every rejection names the remedy.
 
 
-@pytest.mark.parametrize("key", ["PATH", "vm_tts", "TTS", "", "VM tts", "VM_TTS=x"])
+@pytest.mark.parametrize("key", ["PATH", "voice_tunnel_tts", "TTS", "", "VOICE_TUNNEL tts", "VOICE_TUNNEL_TTS=x"])
 def test_only_this_tools_namespace_can_be_written(key, tmp_path, monkeypatch):
-    monkeypatch.setenv("VM_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
     with pytest.raises(ValueError, match="settable key"):
         config.write_setting(key, "x")
 
 
 def test_a_newline_in_a_value_is_refused(tmp_path, monkeypatch):
-    """Otherwise `vm config set VM_OWNER $'jj\\nVM_TOKEN=stolen'` forges a second setting."""
-    monkeypatch.setenv("VM_ENV_FILE", str(tmp_path / ".env"))
+    """Otherwise `voice-tunnel config set VOICE_TUNNEL_OWNER $'jj\\nVOICE_TUNNEL_TOKEN=stolen'` forges a second setting."""
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
     with pytest.raises(ValueError, match="newline or control character"):
-        config.write_setting("VM_OWNER", "jj\nVM_TOKEN=stolen")
+        config.write_setting("VOICE_TUNNEL_OWNER", "jj\nVOICE_TUNNEL_TOKEN=stolen")
 
 
 def test_a_quote_in_a_value_is_refused(tmp_path, monkeypatch):
-    monkeypatch.setenv("VM_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
     with pytest.raises(ValueError, match="quote character"):
-        config.write_setting("VM_OWNER", 'j"j')
+        config.write_setting("VOICE_TUNNEL_OWNER", 'j"j')
 
 
 # -------------------------------------------------------------- piper defaults
 #
-# The point of these: `VM_TTS=piper` should be the ONLY setting a piper session needs. Before
+# The point of these: `VOICE_TUNNEL_TTS=piper` should be the ONLY setting a piper session needs. Before
 # this, the binary and the voice had to be exported on every single invocation.
 
 
 def test_the_piper_binary_is_found_in_the_repo_venv(tmp_path, monkeypatch):
-    monkeypatch.delenv("VM_PIPER_BIN", raising=False)
+    monkeypatch.delenv("VOICE_TUNNEL_PIPER_BIN", raising=False)
     fake_root = tmp_path / "repo"
     scripts = fake_root / "venv" / "Scripts"
     scripts.mkdir(parents=True)
@@ -226,7 +226,7 @@ def test_the_piper_binary_is_found_in_the_repo_venv(tmp_path, monkeypatch):
 
 
 def test_an_explicit_piper_binary_wins_over_discovery(tmp_path, monkeypatch):
-    monkeypatch.setenv("VM_PIPER_BIN", "/somewhere/else/piper")
+    monkeypatch.setenv("VOICE_TUNNEL_PIPER_BIN", "/somewhere/else/piper")
     assert config.piper_bin() == "/somewhere/else/piper"
 
 
@@ -239,44 +239,44 @@ def test_only_onnx_files_with_a_sidecar_count_as_voices(tmp_path, monkeypatch):
         (models / f"{name}.onnx").write_text("", encoding="utf-8")
         (models / f"{name}.onnx.json").write_text("{}", encoding="utf-8")
     (models / "nemo_en_titanet_large.onnx").write_text("", encoding="utf-8")
-    monkeypatch.setenv("VM_MODELS_DIR", str(models))
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(models))
 
     assert config.piper_voices() == ["en_GB-alan-medium", "en_US-amy-medium"]
 
 
 def test_the_default_voice_is_chosen_when_several_are_installed(tmp_path, monkeypatch):
-    monkeypatch.delenv("VM_PIPER_VOICE", raising=False)
+    monkeypatch.delenv("VOICE_TUNNEL_PIPER_VOICE", raising=False)
     models = tmp_path / "models"
     models.mkdir()
     for name in (config.DEFAULT_PIPER_VOICE, "en_US-amy-medium"):
         (models / f"{name}.onnx").write_text("", encoding="utf-8")
         (models / f"{name}.onnx.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setenv("VM_MODELS_DIR", str(models))
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(models))
 
     assert config.piper_voice() == str(models / f"{config.DEFAULT_PIPER_VOICE}.onnx")
 
 
 def test_a_sole_installed_voice_is_taken_even_if_it_is_not_the_default(tmp_path, monkeypatch):
-    monkeypatch.delenv("VM_PIPER_VOICE", raising=False)
+    monkeypatch.delenv("VOICE_TUNNEL_PIPER_VOICE", raising=False)
     models = tmp_path / "models"
     models.mkdir()
     (models / "en_US-amy-medium.onnx").write_text("", encoding="utf-8")
     (models / "en_US-amy-medium.onnx.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setenv("VM_MODELS_DIR", str(models))
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(models))
 
     assert config.piper_voice() == str(models / "en_US-amy-medium.onnx")
 
 
 def test_no_voice_is_chosen_when_the_choice_would_be_a_guess(tmp_path, monkeypatch):
     """Several installed and none of them the default: guessing which voice someone wants to
-    hear is worse than saying "name one", which is what `vm doctor` then does."""
-    monkeypatch.delenv("VM_PIPER_VOICE", raising=False)
+    hear is worse than saying "name one", which is what `voice-tunnel doctor` then does."""
+    monkeypatch.delenv("VOICE_TUNNEL_PIPER_VOICE", raising=False)
     models = tmp_path / "models"
     models.mkdir()
     for name in ("en_US-amy-medium", "en_US-ryan-high"):
         (models / f"{name}.onnx").write_text("", encoding="utf-8")
         (models / f"{name}.onnx.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setenv("VM_MODELS_DIR", str(models))
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(models))
 
     assert config.piper_voice() == ""
 

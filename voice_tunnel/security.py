@@ -1,4 +1,4 @@
-"""vm.security — who may reach the socket, and who may open a session.
+"""voice_tunnel.security — who may reach the socket, and who may open a session.
 
 Read ai-docs/reference/security.md before changing anything here. The short version:
 
@@ -43,7 +43,7 @@ def ip_in_cidrs(ip_str: str, cidrs: Iterable[str]) -> bool:
 
 
 def allowed_cidrs() -> tuple[str, ...]:
-    """Loopback always; Tailscale and anything else strictly opt-in via VM_ALLOW_CIDRS."""
+    """Loopback always; Tailscale and anything else strictly opt-in via VOICE_TUNNEL_ALLOW_CIDRS."""
     return tuple(config.LOOPBACK_CIDRS) + tuple(config.extra_allow_cidrs())
 
 

@@ -7,7 +7,7 @@ cost an agent a session's worth of guessing at env vars that were never written 
 import argparse
 import json
 
-from vm import cli, config
+from voice_tunnel import cli, config
 
 
 def run(argv, capsys):
@@ -49,13 +49,13 @@ def test_describe_tells_the_caller_how_to_invoke_it():
     in the contract said there was a shim or a settings file."""
     invocation = cli.DESCRIBE["invocation"]
     assert "python -c" in invocation["no_python_dash_c"]
-    assert "vm config set" in cli.DESCRIBE["config_file"]["write_it_with"]
+    assert "voice-tunnel config set" in cli.DESCRIBE["config_file"]["write_it_with"]
 
 
 def test_describe_exits_zero_and_is_json(capsys):
     code, payload, _ = run(["describe"], capsys)
     assert code == cli.EXIT_OK
-    assert payload["tool"] == "voice-mode"
+    assert payload["tool"] == "voice-tunnel"
 
 
 # --------------------------------------------------------------- config command
@@ -63,77 +63,77 @@ def test_describe_exits_zero_and_is_json(capsys):
 
 def test_config_show_reports_the_source_of_every_value(capsys, tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
-    env_file.write_text("VM_OWNER=from-file\n", encoding="utf-8")
-    monkeypatch.setenv("VM_ENV_FILE", str(env_file))
-    monkeypatch.delenv("VM_OWNER", raising=False)
-    monkeypatch.setenv("VM_TTS", "none")
+    env_file.write_text("VOICE_TUNNEL_OWNER=from-file\n", encoding="utf-8")
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(env_file))
+    monkeypatch.delenv("VOICE_TUNNEL_OWNER", raising=False)
+    monkeypatch.setenv("VOICE_TUNNEL_TTS", "none")
 
     code, payload, _ = run(["config", "show"], capsys)
 
     assert code == cli.EXIT_OK
     by_key = {row["key"]: row for row in payload["settings"]}
-    assert by_key["VM_OWNER"]["source"] == "file"
-    assert by_key["VM_TTS"]["source"] == "env"
-    assert by_key["VM_ASR_THREADS"]["source"] == "default"
+    assert by_key["VOICE_TUNNEL_OWNER"]["source"] == "file"
+    assert by_key["VOICE_TUNNEL_TTS"]["source"] == "env"
+    assert by_key["VOICE_TUNNEL_ASR_THREADS"]["source"] == "default"
 
 
 def test_config_show_redacts_a_secret_but_get_reveals_it(capsys, monkeypatch, tmp_path):
     """A bulk dump lands in a transcript and an agent's context; an explicit single-key read is
     somebody actually asking for that value."""
-    monkeypatch.setenv("VM_ENV_FILE", str(tmp_path / "absent.env"))
-    monkeypatch.setenv("VM_TOKEN", "s3cret-token")
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / "absent.env"))
+    monkeypatch.setenv("VOICE_TUNNEL_TOKEN", "s3cret-token")
 
     _, shown, _ = run(["config", "show"], capsys)
-    token_row = [r for r in shown["settings"] if r["key"] == "VM_TOKEN"][0]
+    token_row = [r for r in shown["settings"] if r["key"] == "VOICE_TUNNEL_TOKEN"][0]
     assert token_row["value"] == config.REDACTED
 
-    _, got, _ = run(["config", "get", "VM_TOKEN"], capsys)
+    _, got, _ = run(["config", "get", "VOICE_TUNNEL_TOKEN"], capsys)
     assert got["value"] == "s3cret-token"
 
 
 def test_config_set_then_get_round_trips(capsys, tmp_path, monkeypatch):
-    monkeypatch.setenv("VM_ENV_FILE", str(tmp_path / ".env"))
-    monkeypatch.delenv("VM_TTS", raising=False)
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.delenv("VOICE_TUNNEL_TTS", raising=False)
 
-    code, written, _ = run(["config", "set", "VM_TTS", "none"], capsys)
+    code, written, _ = run(["config", "set", "VOICE_TUNNEL_TTS", "none"], capsys)
     assert code == cli.EXIT_OK and written["created"] is True
 
-    monkeypatch.delenv("VM_TTS", raising=False)
-    _, got, _ = run(["config", "get", "VM_TTS"], capsys)
-    assert got == {"key": "VM_TTS", "value": "none", "source": "file",
+    monkeypatch.delenv("VOICE_TUNNEL_TTS", raising=False)
+    _, got, _ = run(["config", "get", "VOICE_TUNNEL_TTS"], capsys)
+    assert got == {"key": "VOICE_TUNNEL_TTS", "value": "none", "source": "file",
                    "what": got["what"]}
 
 
 def test_config_set_warns_when_the_environment_will_shadow_the_write(capsys, tmp_path, monkeypatch):
     """Otherwise you set a value, watch the old one keep applying, and go looking in the code."""
-    monkeypatch.setenv("VM_ENV_FILE", str(tmp_path / ".env"))
-    monkeypatch.setenv("VM_TTS", "sapi")
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("VOICE_TUNNEL_TTS", "sapi")
 
-    _, payload, _ = run(["config", "set", "VM_TTS", "piper"], capsys)
+    _, payload, _ = run(["config", "set", "VOICE_TUNNEL_TTS", "piper"], capsys)
 
     assert payload["shadowed_by_env"] is True
     assert "wins over the file" in payload["note"]
 
 
 def test_config_get_on_an_unknown_key_names_the_remedy(capsys, tmp_path, monkeypatch):
-    monkeypatch.setenv("VM_ENV_FILE", str(tmp_path / "absent.env"))
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / "absent.env"))
 
-    code, payload, _ = run(["config", "get", "VM_NOPE"], capsys)
+    code, payload, _ = run(["config", "get", "VOICE_TUNNEL_NOPE"], capsys)
 
     assert code == cli.EXIT_ERROR
     assert payload["code"] == "invalid_input"
-    assert "vm config show" in payload["remedy"]
+    assert "voice-tunnel config show" in payload["remedy"]
 
 
 def test_config_set_of_a_foreign_key_exits_usage_with_a_remedy(capsys, tmp_path, monkeypatch):
-    monkeypatch.setenv("VM_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
 
     code, _, err = run(["config", "set", "PATH", "/tmp"], capsys)
 
     assert code == cli.EXIT_USAGE
     payload = json.loads(err)
     assert payload["code"] == "invalid_input"
-    assert "VM_" in payload["error"]
+    assert "VOICE_TUNNEL_" in payload["error"]
 
 
 # --------------------------------------------------------------- exit codes
@@ -146,7 +146,7 @@ def test_a_command_needing_a_server_exits_three_not_one(capsys, tmp_sessions):
 
     assert code == cli.EXIT_NO_SERVER
     assert payload["code"] == "no_server"
-    assert "vm serve" in payload["remedy"]
+    assert "voice-tunnel serve" in payload["remedy"]
 
 
 def test_the_no_server_remedy_names_the_watch_that_must_follow(capsys, tmp_sessions):
@@ -154,7 +154,7 @@ def test_the_no_server_remedy_names_the_watch_that_must_follow(capsys, tmp_sessi
     straight back into a blocking watch, which from the user's side is a crash."""
     _, payload, _ = run(["say", "--session", "ghost", "hello"], capsys)
 
-    assert "vm watch" in payload["remedy"]
+    assert "voice-tunnel watch" in payload["remedy"]
 
 
 def test_a_bad_session_name_exits_usage(capsys, tmp_sessions):
@@ -188,7 +188,7 @@ def test_doctor_gives_every_failing_check_a_remedy(capsys, tmp_sessions):
 
 
 def test_doctor_fails_when_a_check_fails(capsys, tmp_sessions, monkeypatch):
-    monkeypatch.setenv("VM_TTS", "gibberish")
+    monkeypatch.setenv("VOICE_TUNNEL_TTS", "gibberish")
     code, payload, _ = run(["doctor"], capsys)
     assert code == cli.EXIT_ERROR
     assert "tts" in payload["failed"]

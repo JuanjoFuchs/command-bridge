@@ -1,4 +1,4 @@
-"""vm.wake — the wake-phrase gate.
+"""voice_tunnel.wake — the wake-phrase gate.
 
 Decides one narrow thing: **was this turn directed at the agent?** It never decides what to do
 about it — that is the agent's job (AGENTS.md rule 1).
@@ -30,7 +30,7 @@ def _name() -> str:
     """The assistant's name, read live rather than frozen at import.
 
     A module-level constant would have baked "claude" into every fuzzy comparison, so renaming
-    would have silently kept matching the old name. Read through config so `VM_WAKE_NAME` is real.
+    would have silently kept matching the old name. Read through config so `VOICE_TUNNEL_WAKE_NAME` is real.
     """
     return config.wake_name()
 

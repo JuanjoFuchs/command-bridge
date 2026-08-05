@@ -29,7 +29,7 @@ import wave
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from vm import config, security, store, tts  # noqa: E402
+from voice_tunnel import config, security, store, tts  # noqa: E402
 
 # Built from the CONFIGURED wake name, not hardcoded. The name is a setting now, and a gate that
 # speaks the old one tests nothing except that the old one still works.
@@ -71,7 +71,7 @@ def build_fake_mic(path: str) -> str:
     """
     import numpy as np
 
-    from vm import asr as _asr
+    from voice_tunnel import asr as _asr
 
     pcm, rate = tts.synthesize(SPOKEN, backend="sapi")
 
@@ -130,7 +130,7 @@ def _fake_mic_script(wav_path: str) -> str:
         "    const src = ctx.createBufferSource();"
         "    src.buffer = buf; src.loop = true;"
         "    src.connect(dest); src.start();"
-        "    window.__vmFakeMic = { seconds: buf.duration, rate: buf.sampleRate };"
+        "    window.__vtFakeMic = { seconds: buf.duration, rate: buf.sampleRate };"
         "    return dest.stream;"
         "  };"
         "})();"
@@ -165,11 +165,11 @@ def wav_duration(path: str) -> float:
 def run(headed: bool, keep: bool) -> int:
     from playwright.sync_api import sync_playwright
 
-    workdir = tempfile.mkdtemp(prefix="vm-e2e-")
+    workdir = tempfile.mkdtemp(prefix="voice-tunnel-e2e-")
     session = "e2e"
     token = security.generate_token()
     port = free_port()
-    env = dict(os.environ, VM_DIR=workdir, VM_TOKEN=token, VM_TTS="sapi")
+    env = dict(os.environ, VOICE_TUNNEL_DIR=workdir, VOICE_TUNNEL_TOKEN=token, VOICE_TUNNEL_TTS="sapi")
 
     wav = os.path.join(workdir, "mic.wav")
     print(f"\n== build the fake microphone ==")
@@ -180,7 +180,7 @@ def run(headed: bool, keep: bool) -> int:
     print(f"\n== start the tunnel ==  (port {port}, session {session})")
     proc = subprocess.Popen(
         [PY, "-c",
-         f"import sys; sys.path.insert(0, r'{ROOT}'); from vm.cli import main; "
+         f"import sys; sys.path.insert(0, r'{ROOT}'); from voice_tunnel.cli import main; "
          f"raise SystemExit(main(['serve','--session','{session}','--port','{port}']))"],
         cwd=ROOT, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -238,19 +238,19 @@ def run(headed: bool, keep: bool) -> int:
         ok("client page loaded")
 
         page.click("#orb")   # the user gesture: mic permission + AudioContext unlock
-        page.wait_for_function("() => window.__vm && window.__vm.connected === true", timeout=20000)
+        page.wait_for_function("() => window.__voiceTunnel && window.__voiceTunnel.connected === true", timeout=20000)
         ok("websocket connected after the start tap")
 
-        page.wait_for_function("() => window.__vm.framesSent > 5", timeout=20000)
-        frames = page.evaluate("() => window.__vm.framesSent")
+        page.wait_for_function("() => window.__voiceTunnel.framesSent > 5", timeout=20000)
+        frames = page.evaluate("() => window.__voiceTunnel.framesSent")
         ok(f"browser is streaming microphone audio ({frames} frames)")
 
         # Assert the mic carries SIGNAL, not just frames. Without this check a silent fake
         # device is indistinguishable from a broken server, and you debug the wrong half.
         page.wait_for_function(
-            f"() => window.__vm.peakRms > {config.SILENCE_RMS_FLOOR}", timeout=30000
+            f"() => window.__voiceTunnel.peakRms > {config.SILENCE_RMS_FLOOR}", timeout=30000
         )
-        peak = page.evaluate("() => window.__vm.peakRms")
+        peak = page.evaluate("() => window.__voiceTunnel.peakRms")
         check(peak > config.SILENCE_RMS_FLOOR,
               "captured audio is above the silence floor",
               f"peak RMS {peak:.4f} vs floor {config.SILENCE_RMS_FLOOR}")
@@ -297,13 +297,13 @@ def run(headed: bool, keep: bool) -> int:
 
         # --- AC-E3: say -> audio arrives and plays -------------------------------
         print("\n== speaking back ==")
-        before = page.evaluate("() => window.__vm.played.length")
+        before = page.evaluate("() => window.__voiceTunnel.played.length")
         said = http_json(f"http://127.0.0.1:{port}/say?token={token}", {"text": REPLY}, timeout=120)
         check(said.get("queued") is True, "AC-E3 say queued a clip", json.dumps(said))
         page.wait_for_function(
-            f"() => window.__vm.played.length > {before}", timeout=60000
+            f"() => window.__voiceTunnel.played.length > {before}", timeout=60000
         )
-        played = page.evaluate("() => window.__vm.played")
+        played = page.evaluate("() => window.__voiceTunnel.played")
         check(played[-1] == said.get("id"), "AC-E3 the page played the clip it was sent",
               f"page={played[-1]} server={said.get('id')}")
 
@@ -326,16 +326,16 @@ def run(headed: bool, keep: bool) -> int:
         # simultaneously. JJ heard it on the move — "those two play together, overlapping
         # one on top of the other" — after asking the same question three times unanswered.
         print("\n== clips queue, never overlap ==")
-        before = page.evaluate("() => window.__vm.played.length")
+        before = page.evaluate("() => window.__voiceTunnel.played.length")
         ids = []
         for i in range(3):
             r = http_json(f"http://127.0.0.1:{port}/say?token={token}",
                           {"text": f"Queued reply number {i + 1}.", "async": True}, timeout=60)
             ids.append(r)
         page.wait_for_function(
-            f"() => window.__vm.played.length >= {before + 3}", timeout=90000
+            f"() => window.__voiceTunnel.played.length >= {before + 3}", timeout=90000
         )
-        played_ids = page.evaluate("() => window.__vm.played")[before:before + 3]
+        played_ids = page.evaluate("() => window.__voiceTunnel.played")[before:before + 3]
         check(len(set(played_ids)) == 3, "three rapid clips all played, none dropped",
               json.dumps(played_ids))
         # Every clip must have reported playback. Under the old code an overwritten reply never
@@ -374,7 +374,7 @@ def run(headed: bool, keep: bool) -> int:
                 time.sleep(0.25)
             return latest
 
-        frames_before = page.evaluate("() => window.__vm.framesSent")
+        frames_before = page.evaluate("() => window.__voiceTunnel.framesSent")
         page.click("#orb")
         muted_state = wait_for_status(lambda s: s.get("muted") is True)
         check(muted_state.get("muted") is True, "tapping the orb muted, and the server knows",
@@ -382,9 +382,9 @@ def run(headed: bool, keep: bool) -> int:
         check(page.locator("#orb").text_content().strip() == "Muted",
               "the orb itself shows the muted state",
               page.locator("#orb").text_content())
-        frames_during = page.evaluate("() => window.__vm.framesSent")
+        frames_during = page.evaluate("() => window.__voiceTunnel.framesSent")
         page.wait_for_timeout(900)
-        frames_after = page.evaluate("() => window.__vm.framesSent")
+        frames_after = page.evaluate("() => window.__voiceTunnel.framesSent")
         # The point of mute: the microphone stops SENDING. Enforced client-side, because a mute
         # that still ships audio to a server promising to ignore it is not a mute.
         check(frames_after == frames_during,
@@ -392,17 +392,17 @@ def run(headed: bool, keep: bool) -> int:
               f"before={frames_before} during={frames_during} after={frames_after}")
 
         # Crucially, muting must NOT drop the session — that was the old stop() behaviour.
-        check(page.evaluate("() => window.__vm.connected") is True,
+        check(page.evaluate("() => window.__voiceTunnel.connected") is True,
               "muting keeps the socket connected")
 
         # Speaking while muted must NOT silently un-label the mute. The old code hard-coded the
         # orb back to "Listening" when a clip finished, so every reply left him looking at a
         # listening orb over a microphone that was off. JJ, live 2026-08-03: "whenever I mute, it
         # says muted. But if you speak after that, it goes back to listening."
-        spoke = page.evaluate("() => window.__vm.played.length")
+        spoke = page.evaluate("() => window.__voiceTunnel.played.length")
         http_json(f"http://127.0.0.1:{port}/say?token={token}",
                   {"text": "Speaking while you are muted."}, timeout=120)
-        page.wait_for_function(f"() => window.__vm.played.length > {spoke}", timeout=60000)
+        page.wait_for_function(f"() => window.__voiceTunnel.played.length > {spoke}", timeout=60000)
         page.wait_for_timeout(400)
         check(page.locator("#orb").text_content().strip() == "Muted",
               "the orb still reads Muted after claude speaks",
@@ -411,9 +411,9 @@ def run(headed: bool, keep: bool) -> int:
         page.click("#orb")
         unmuted = wait_for_status(lambda s: s.get("muted") is False)
         check(unmuted.get("muted") is False, "tapping again unmuted")
-        resumed = page.evaluate("() => window.__vm.framesSent")
+        resumed = page.evaluate("() => window.__voiceTunnel.framesSent")
         page.wait_for_timeout(900)
-        check(page.evaluate("() => window.__vm.framesSent") > resumed,
+        check(page.evaluate("() => window.__voiceTunnel.framesSent") > resumed,
               "audio flows again after unmuting")
 
         # Assert the FLIP, not an absolute. Verbose is persisted in .env now, so the server may
@@ -439,7 +439,7 @@ def run(headed: bool, keep: bool) -> int:
         # connected — so restart capture before anything downstream expects playback. This also
         # exercises the path where a reply arrived while the page sat un-tapped.
         page.click("#orb")
-        page.wait_for_function("() => window.__vm.framesSent > 0", timeout=30000)
+        page.wait_for_function("() => window.__voiceTunnel.framesSent > 0", timeout=30000)
         restarted = wait_for_status(lambda s: s.get("capturing") is True)
         check(restarted.get("capturing") is True,
               "capture resumes after a reload and the server is told",
@@ -453,7 +453,7 @@ def run(headed: bool, keep: bool) -> int:
               "verbose rides back on the watch acknowledgement",
               json.dumps(ack))
 
-        errors = page.evaluate("() => window.__vm.errors")
+        errors = page.evaluate("() => window.__voiceTunnel.errors")
         check(not errors, "client reported no errors", json.dumps(errors))
 
         # --- the agent-facing surface -------------------------------------------
@@ -465,40 +465,40 @@ def run(headed: bool, keep: bool) -> int:
         def cli(*argv, timeout=180):
             r = subprocess.run(
                 [PY, "-c",
-                 f"import sys; sys.path.insert(0, r'{ROOT}'); from vm.cli import main; "
+                 f"import sys; sys.path.insert(0, r'{ROOT}'); from voice_tunnel.cli import main; "
                  f"raise SystemExit(main({list(argv)!r}))"],
                 cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout,
             )
             try:
                 return json.loads(r.stdout or "{}"), r.returncode
             except json.JSONDecodeError:
-                raise Failure(f"`vm {' '.join(argv)}` did not emit JSON: {r.stdout[:200]}{r.stderr[:200]}")
+                raise Failure(f"`voice-tunnel {' '.join(argv)}` did not emit JSON: {r.stdout[:200]}{r.stderr[:200]}")
 
         desc, rc = cli("describe")
-        check(rc == 0 and desc.get("tool") == "voice-mode", "vm describe returns the contract")
+        check(rc == 0 and desc.get("tool") == "voice-tunnel", "voice-tunnel describe returns the contract")
         check("watch" in desc.get("commands", {}), "describe documents every command")
 
         st, rc = cli("status", "--session", session)
         check(rc == 0 and st.get("session") == session,
-              "vm status reaches the running server via the runtime file",
+              "voice-tunnel status reaches the running server via the runtime file",
               json.dumps(st)[:200])
 
         w, rc = cli("watch", "--session", session, "--since", "-1", "--timeout", "5")
-        check(rc == 0 and w.get("count", 0) >= 1, "vm watch --since -1 returns the turn")
-        check(w.get("cursor") == w["turns"][-1]["id"], "vm watch returns a usable cursor")
+        check(rc == 0 and w.get("count", 0) >= 1, "voice-tunnel watch --since -1 returns the turn")
+        check(w.get("cursor") == w["turns"][-1]["id"], "voice-tunnel watch returns a usable cursor")
 
-        before2 = page.evaluate("() => window.__vm.played.length")
+        before2 = page.evaluate("() => window.__voiceTunnel.played.length")
         s2, rc = cli("say", "--session", session, "Acknowledged, standing by.")
-        check(rc == 0 and s2.get("queued") is True, "vm say queued a clip", json.dumps(s2)[:200])
-        page.wait_for_function(f"() => window.__vm.played.length > {before2}", timeout=60000)
-        ok("vm say reached the browser and played")
+        check(rc == 0 and s2.get("queued") is True, "voice-tunnel say queued a clip", json.dumps(s2)[:200])
+        page.wait_for_function(f"() => window.__voiceTunnel.played.length > {before2}", timeout=60000)
+        ok("voice-tunnel say reached the browser and played")
 
         # Use an IDLE session, not the live one. The fake mic loops, so the live session keeps
         # producing real turns and a "nothing new" assertion against it is inherently racy —
         # it would fail for the right reason and read as a bug.
         empty, rc = cli("watch", "--session", "e2eidle", "--since", "-1", "--timeout", "2")
         check(rc == 0 and empty.get("count") == 0 and empty.get("cursor") == -1,
-              "vm watch times out to an empty heartbeat, not an error",
+              "voice-tunnel watch times out to an empty heartbeat, not an error",
               json.dumps(empty)[:200])
 
         # An empty watch must say whether anyone is actually listening. This is the moment the
@@ -535,7 +535,7 @@ def run(headed: bool, keep: bool) -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
             out, _ = proc.communicate()
-        if os.environ.get("VM_E2E_SERVER_LOG"):
+        if os.environ.get("VOICE_TUNNEL_E2E_SERVER_LOG"):
             print("\n--- server output ---\n" + (out or ""))
         if keep:
             print(f"\nworkdir kept: {workdir}")
@@ -548,7 +548,7 @@ def main() -> int:
     args = ap.parse_args()
 
     print("=" * 70)
-    print("voice-mode end-to-end acceptance (spec 001)")
+    print("voice-tunnel end-to-end acceptance (spec 001)")
     print("=" * 70)
     started = time.time()
     try:

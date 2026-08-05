@@ -10,25 +10,25 @@ import json
 
 import pytest
 
-from vm import timing
+from voice_tunnel import timing
 
 
 @pytest.fixture
 def session(tmp_path, monkeypatch):
-    monkeypatch.setenv("VM_DIR", str(tmp_path))
+    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
     return "t"
 
 
 def _write(session, rows):
     """Write events with explicit monotonic values, so durations are asserted not measured."""
-    import vm.config as config
+    import voice_tunnel.config as config
 
     with open(timing.path(session), "w", encoding="utf-8") as fh:
         for stage, mono, extra in rows:
             rec = {"stage": stage, "mono": mono, "wall": "2026-07-31T19:00:00.000-04:00"}
             rec.update(extra or {})
             fh.write(json.dumps(rec) + "\n")
-    assert config  # the fixture's VM_DIR is what put the file here
+    assert config  # the fixture's VOICE_TUNNEL_DIR is what put the file here
 
 
 # ------------------------------------------------------------------- writing
@@ -48,7 +48,7 @@ def test_stamp_writes_both_clocks(session):
 
 def test_stamping_never_raises_even_when_the_directory_is_impossible(monkeypatch, tmp_path):
     """An instrument that can take down the thing it measures is worse than no instrument."""
-    monkeypatch.setenv("VM_DIR", str(tmp_path / "file-not-a-dir"))
+    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path / "file-not-a-dir"))
     (tmp_path / "file-not-a-dir").write_text("in the way", encoding="utf-8")
 
     timing.stamp("t", "utterance_end")   # must not raise

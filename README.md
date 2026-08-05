@@ -1,4 +1,4 @@
-# voice-mode
+# voice-tunnel
 
 A **voice tunnel**. One command opens a page your phone can load in a browser — no app, no
 install — and carries audio both ways to the agent that started it.
@@ -10,12 +10,12 @@ intelligence lives in the agent driving it.
 Phone browser (no install)
    |  HTTPS
    v
-vm serve  ── the dumb half ───────────────────────────────────┐
+voice-tunnel serve  ── the dumb half ───────────────────────────────────┐
    mic  -> wake gate -> ASR -> append turn to a JSONL log      │
-   spkr <- TTS <- text handed to `vm say`                      │
+   spkr <- TTS <- text handed to `voice-tunnel say`                      │
                                                                v
                                           The agent that started it (the smart half)
-                                          vm watch --since <cursor> -> reason -> vm say
+                                          voice-tunnel watch --since <cursor> -> reason -> voice-tunnel say
 ```
 
 ## Quick start
@@ -24,11 +24,11 @@ vm serve  ── the dumb half ────────────────�
 python -m venv venv
 venv/Scripts/python -m pip install -r requirements.txt
 
-# Put the shims on PATH once, and `vm` works from any directory with no venv activation.
+# Put the shims on PATH once, and `voice-tunnel` works from any directory with no venv activation.
 #   PowerShell:  [Environment]::SetEnvironmentVariable('Path', "$env:Path;$PWD\bin", 'User')
 #   bash:        export PATH="$PATH:$PWD/bin"
-vm doctor            # anything missing? every failing check names the command that fixes it
-vm serve --session dev
+voice-tunnel doctor            # anything missing? every failing check names the command that fixes it
+voice-tunnel serve --session dev
 # -> http://127.0.0.1:8765/?token=<generated>
 ```
 
@@ -37,15 +37,15 @@ Open that URL, tap once to start, and say *"hey claude, what's the status?"*
 Then, from anywhere:
 
 ```bash
-vm watch  --session dev --since -1      # blocks until you speak; returns turns + a cursor
-vm say    --session dev "All green."    # speaks back
-vm rate   --session dev --speed 1.3     # talk faster, now and every session after
-vm status --session dev
-vm describe                             # the live contract — read this first
+voice-tunnel watch  --session dev --since -1      # blocks until you speak; returns turns + a cursor
+voice-tunnel say    --session dev "All green."    # speaks back
+voice-tunnel rate   --session dev --speed 1.3     # talk faster, now and every session after
+voice-tunnel status --session dev
+voice-tunnel describe                             # the live contract — read this first
 ```
 
-`bin/vm` and `bin/vm.cmd` resolve the repo root and the venv themselves, from any cwd, under Git
-Bash and PowerShell alike. If `vm` is not on PATH, call the shim by absolute path — never reach
+`bin/voice-tunnel` and `bin/voice-tunnel.cmd` resolve the repo root and the venv themselves, from any cwd, under Git
+Bash and PowerShell alike. If `voice-tunnel` is not on PATH, call the shim by absolute path — never reach
 for `python -c "import sys; sys.path.insert(...)"`.
 
 ## Settings
@@ -54,24 +54,24 @@ Anything you would otherwise re-export on every call lives in a gitignored `.env
 root, loaded automatically by every command:
 
 ```bash
-vm config set VM_TTS piper       # persist it once
-vm config show                   # every setting, its live value, and where it came from
+voice-tunnel config set VOICE_TUNNEL_TTS piper       # persist it once
+voice-tunnel config show                   # every setting, its live value, and where it came from
 ```
 
 Precedence is **process env > `.env` > built-in default**, so a one-off override is still just a
-prefix: `VM_TTS=none vm say --session dev "hi"`. Piper's binary and voice are discovered from the
-checkout (`venv/Scripts/piper.exe`, `models/en_GB-alan-medium.onnx`), so `VM_TTS=piper` is
+prefix: `VOICE_TUNNEL_TTS=none voice-tunnel say --session dev "hi"`. Piper's binary and voice are discovered from the
+checkout (`venv/Scripts/piper.exe`, `models/en_GB-alan-medium.onnx`), so `VOICE_TUNNEL_TTS=piper` is
 usually the only setting a piper session needs. `.env.example` documents every variable.
 
 ### How it sounds
 
-Speed and sentence pause are tuned by ear during a live conversation, so `vm rate` changes them
+Speed and sentence pause are tuned by ear during a live conversation, so `voice-tunnel rate` changes them
 **immediately and permanently** — no restart, and the value is still there next session:
 
 ```bash
-vm rate --session dev --speed 1.4      # a MULTIPLE of native pace; higher is faster
-vm rate --session dev --pause 0.6      # silence between sentences
-vm rate --session dev                  # what is it now
+voice-tunnel rate --session dev --speed 1.4      # a MULTIPLE of native pace; higher is faster
+voice-tunnel rate --session dev --pause 0.6      # silence between sentences
+voice-tunnel rate --session dev                  # what is it now
 ```
 
 Speed is deliberately not piper's `length_scale`, which is inverted — asking for 2.0 and getting
@@ -94,7 +94,7 @@ Nearly all of the old cost was startup — interpreter, onnxruntime, and the ONN
 on every sentence spoken, which had made TTS more than 10x slower than transcription without
 anyone measuring it. The remaining ~0.8 s is `SPEAK_GRACE_S`, the deliberate pause that keeps the
 agent from talking over you. The model is warmed on a background thread at `serve` time so the
-first reply is not the slow one. `VM_PIPER_INPROCESS=0` goes back to spawning; `vm status` says
+first reply is not the slow one. `VOICE_TUNNEL_PIPER_INPROCESS=0` goes back to spawning; `voice-tunnel status` says
 which path is live, because a silent fall back is a 20x regression that only presents as "it
 feels slow again".
 
@@ -106,7 +106,7 @@ is no microphone at all. So:
 
 ```bash
 tailscale serve --bg 8765
-export VM_ALLOW_CIDRS=100.64.0.0/10
+export VOICE_TUNNEL_ALLOW_CIDRS=100.64.0.0/10
 ```
 
 That gives a real Let's Encrypt certificate on `<host>.<tailnet>.ts.net` with nothing exposed to
@@ -136,13 +136,13 @@ real microphone is the one thing still needing a human.
 
 | Path | What |
 |---|---|
-| `vm/` | store, asr, wake, tts, security, server, cli, config |
+| `voice_tunnel/` | store, asr, wake, tts, security, server, cli, config |
 | `web/index.html` | the phone client, self-contained, no build step |
 | `specs/` | numbered metaspecs — WHAT and acceptance criteria |
 | `ai-docs/reference/` | security model, turn-log contract, browser constraints |
 | `scripts/e2e.py` | the acceptance gate |
 | `scripts/probe_capture.py` | diagnostic for "is the browser sending silence?" |
-| `bin/` | PATH shims — `vm` (bash), `vm.cmd` (PowerShell/cmd), both exec `vm-run.py` |
+| `bin/` | PATH shims — `voice-tunnel` (bash), `voice-tunnel.cmd` (PowerShell/cmd), both exec `voice-tunnel-run.py` |
 | `.env.example` | every setting, with its default and the reason for it |
 
 Start at `AGENTS.md` if you are an agent, `PROJECT_UNDERSTANDING.md` if you are a person.

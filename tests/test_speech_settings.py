@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from vm import cli, config
+from voice_tunnel import cli, config
 
 
 def run(argv, capsys):
@@ -30,8 +30,8 @@ def run(argv, capsys):
 def env_file(tmp_path, monkeypatch):
     """A disposable settings file. A suite that reads the developer's real .env is not a suite."""
     path = tmp_path / ".env"
-    monkeypatch.setenv("VM_ENV_FILE", str(path))
-    for key in ("VM_SPEECH_SPEED", "VM_SENTENCE_PAUSE", "VM_PIPER_LENGTH_SCALE"):
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(path))
+    for key in ("VOICE_TUNNEL_SPEECH_SPEED", "VOICE_TUNNEL_SENTENCE_PAUSE", "VOICE_TUNNEL_PIPER_LENGTH_SCALE"):
         monkeypatch.delenv(key, raising=False)
     return path
 
@@ -60,7 +60,7 @@ def test_a_speed_outside_the_range_is_clamped_not_divided_by_zero():
 
 
 def test_speed_and_pause_come_from_the_settings_file(env_file, monkeypatch):
-    env_file.write_text("VM_SPEECH_SPEED=1.4\nVM_SENTENCE_PAUSE=0.3\n", encoding="utf-8")
+    env_file.write_text("VOICE_TUNNEL_SPEECH_SPEED=1.4\nVOICE_TUNNEL_SENTENCE_PAUSE=0.3\n", encoding="utf-8")
     config.load_env_file()
 
     assert config.speech_speed() == pytest.approx(1.4)
@@ -70,36 +70,36 @@ def test_speed_and_pause_come_from_the_settings_file(env_file, monkeypatch):
 def test_a_retired_length_scale_is_still_honoured_converted(env_file, monkeypatch):
     """Someone's .env may predate the unit change; silently reverting them to default speed
     would be a worse outcome than reading the old key once."""
-    monkeypatch.setenv("VM_PIPER_LENGTH_SCALE", "0.5")
+    monkeypatch.setenv("VOICE_TUNNEL_PIPER_LENGTH_SCALE", "0.5")
 
     assert config.speech_speed() == pytest.approx(2.0)
 
 
 def test_an_explicit_speed_wins_over_the_retired_key(env_file, monkeypatch):
-    monkeypatch.setenv("VM_PIPER_LENGTH_SCALE", "0.5")
-    monkeypatch.setenv("VM_SPEECH_SPEED", "1.1")
+    monkeypatch.setenv("VOICE_TUNNEL_PIPER_LENGTH_SCALE", "0.5")
+    monkeypatch.setenv("VOICE_TUNNEL_SPEECH_SPEED", "1.1")
 
     assert config.speech_speed() == pytest.approx(1.1)
 
 
 def test_a_garbage_value_falls_back_to_the_default_rather_than_crashing(env_file, monkeypatch):
     """A hand-edited file must never be able to stop the tunnel from speaking."""
-    monkeypatch.setenv("VM_SPEECH_SPEED", "fast please")
-    monkeypatch.setenv("VM_SENTENCE_PAUSE", "")
+    monkeypatch.setenv("VOICE_TUNNEL_SPEECH_SPEED", "fast please")
+    monkeypatch.setenv("VOICE_TUNNEL_SENTENCE_PAUSE", "")
 
     assert config.speech_speed() == pytest.approx(config.SPEECH_SPEED)
     assert config.sentence_pause() == pytest.approx(config.SENTENCE_SILENCE_S)
 
 
 def test_an_out_of_range_persisted_value_is_clamped_on_read(env_file, monkeypatch):
-    monkeypatch.setenv("VM_SPEECH_SPEED", "9000")
-    monkeypatch.setenv("VM_SENTENCE_PAUSE", "60")
+    monkeypatch.setenv("VOICE_TUNNEL_SPEECH_SPEED", "9000")
+    monkeypatch.setenv("VOICE_TUNNEL_SENTENCE_PAUSE", "60")
 
     assert config.speech_speed() == config.SPEED_MAX
     assert config.sentence_pause() == config.PAUSE_MAX
 
 
-# ------------------------------------------------------------------ `vm rate`
+# ------------------------------------------------------------------ `voice-tunnel rate`
 
 
 def test_rate_persists_by_default_so_it_survives_a_restart(env_file, capsys, tmp_sessions):
@@ -108,11 +108,11 @@ def test_rate_persists_by_default_so_it_survives_a_restart(env_file, capsys, tmp
                            capsys)
 
     assert code == cli.EXIT_OK
-    assert payload["persisted"] == {"VM_SPEECH_SPEED": "1.35", "VM_SENTENCE_PAUSE": "0.4"}
+    assert payload["persisted"] == {"VOICE_TUNNEL_SPEECH_SPEED": "1.35", "VOICE_TUNNEL_SENTENCE_PAUSE": "0.4"}
 
     written = config.read_env_file(str(env_file))
-    assert written["VM_SPEECH_SPEED"] == "1.35"
-    assert written["VM_SENTENCE_PAUSE"] == "0.4"
+    assert written["VOICE_TUNNEL_SPEECH_SPEED"] == "1.35"
+    assert written["VOICE_TUNNEL_SENTENCE_PAUSE"] == "0.4"
 
 
 def test_rate_saves_even_when_no_server_is_running(env_file, capsys, tmp_sessions):
@@ -122,8 +122,8 @@ def test_rate_saves_even_when_no_server_is_running(env_file, capsys, tmp_session
 
     assert code == cli.EXIT_OK
     assert payload["applied_live"] is False
-    assert "vm serve" in payload["note"]
-    assert config.read_env_file(str(env_file))["VM_SPEECH_SPEED"] == "1.5"
+    assert "voice-tunnel serve" in payload["note"]
+    assert config.read_env_file(str(env_file))["VOICE_TUNNEL_SPEECH_SPEED"] == "1.5"
 
 
 def test_no_save_leaves_the_file_untouched(env_file, capsys, tmp_sessions):
@@ -131,7 +131,7 @@ def test_no_save_leaves_the_file_untouched(env_file, capsys, tmp_sessions):
 
     assert code == cli.EXIT_OK
     assert payload["persisted"] is None
-    assert "VM_SPEECH_SPEED" not in config.read_env_file(str(env_file))
+    assert "VOICE_TUNNEL_SPEECH_SPEED" not in config.read_env_file(str(env_file))
 
 
 def test_rate_with_no_arguments_reports_rather_than_writing(env_file, capsys, tmp_sessions):
@@ -162,4 +162,4 @@ def test_only_the_named_setting_is_written(env_file, capsys, tmp_sessions):
     run(["rate", "--session", "nobody", "--speed", "1.25"], capsys)
 
     written = config.read_env_file(str(env_file))
-    assert written == {"VM_SENTENCE_PAUSE": "0.7", "VM_SPEECH_SPEED": "1.25"}
+    assert written == {"VOICE_TUNNEL_SENTENCE_PAUSE": "0.7", "VOICE_TUNNEL_SPEECH_SPEED": "1.25"}

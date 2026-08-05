@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark light" />
 <meta name="theme-color" content="#080b11" media="(prefers-color-scheme: dark)" />
 <meta name="theme-color" content="#e7e9e7" media="(prefers-color-scheme: light)" />
-<title>voice-mode</title>
+<title>voice-tunnel</title>
 <link rel="icon" href="data:," /><!-- suppress the favicon 404; there is no icon to serve -->
 <style>
   /* ===========================================================================
@@ -450,7 +450,7 @@
 </style>
 </head>
 <body>
-  <h1>voice&#8209;mode</h1>
+  <h1>voice&#8209;tunnel</h1>
 
   <main id="stage">
     <!-- #orb is first so the decoration can be selected off its state class with a sibling
@@ -510,7 +510,7 @@
   // dropped my audio" look identical from outside, and that ambiguity costs hours.
   // `states` and `partials` are recorded, not just rendered, so an automated harness can assert
   // that the UI actually SHOWED a stage rather than merely that the server sent it.
-  const diag = window.__vm = {
+  const diag = window.__voiceTunnel = {
     connected:false, framesSent:0, peakRms:0, liveLevel:0,
     turns:[], played:[], cues:[], states:[], partials:[], errors:[]
   };
@@ -588,8 +588,8 @@
 
   function setMuted(next) {
     muted = next;
-    localStorage.setItem("vm.muted", muted ? "1" : "0");
-    // The server is told so `vm status` can say "he has himself muted" — otherwise a silent
+    localStorage.setItem("voice-tunnel.muted", muted ? "1" : "0");
+    // The server is told so `voice-tunnel status` can say "he has himself muted" — otherwise a silent
     // tunnel and a muted one look identical from the agent's side, and the agent goes hunting
     // for a broken microphone that is working perfectly.
     tellServer("muted", muted);
@@ -602,7 +602,7 @@
   }
 
   // Paint only. Used when the SERVER tells us the value — either on the ready frame or after
-  // someone (a laptop, or the agent itself via `vm verbose on`) changed it elsewhere. Echoing it
+  // someone (a laptop, or the agent itself via `voice-tunnel verbose on`) changed it elsewhere. Echoing it
   // back would be a loop, so this deliberately does not call tellServer.
   function paintVerbose(next) {
     verbose = Boolean(next);
@@ -624,7 +624,7 @@
   // Mute restores from THIS device; verbose does not restore at all — it arrives from the server
   // on connect. Reading it from localStorage here is what used to let a stale phone value
   // overwrite what he had just set on the laptop.
-  setMuted(localStorage.getItem("vm.muted") === "1");
+  setMuted(localStorage.getItem("voice-tunnel.muted") === "1");
 
   // Live level -> CSS variable, smoothed and painted once per frame rather than per audio
   // callback. Writing a style on every 4096-sample block (~12/s) is wasteful and jittery;
@@ -709,7 +709,7 @@
       // changing the machine's default recording device, and useful on its own when the
       // default is the wrong mic. Labels are only populated once permission is granted, so
       // this takes two getUserMedia calls on the first run.
-      const remembered = localStorage.getItem("vm.micId");
+      const remembered = localStorage.getItem("voice-tunnel.micId");
       if (remembered && !q.get("device")) {
         constraints.deviceId = { exact: remembered };
       }
@@ -739,7 +739,7 @@
         if (constraints.deviceId) {
           diag.errors.push("preferred mic unavailable, using default");
           delete constraints.deviceId;
-          localStorage.removeItem("vm.micId");
+          localStorage.removeItem("voice-tunnel.micId");
           micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
         } else { throw err; }
       }
@@ -1009,7 +1009,7 @@
         setState(running ? (muted ? "muted — tap the orb to talk" : wakePrompt())
                          : "tap the orb to talk");
       } else if (msg.type === "verbose") {
-        // Someone flipped it elsewhere — another device, or the agent via `vm verbose on`.
+        // Someone flipped it elsewhere — another device, or the agent via `voice-tunnel verbose on`.
         paintVerbose(msg.value);
       } else if (msg.type === "agent_state") {
         // Silence is ambiguous. Naming the state is what separates "it did not hear me" from
@@ -1170,7 +1170,7 @@
   }
 
   $mic.addEventListener("change", async () => {
-    localStorage.setItem("vm.micId", $mic.value);
+    localStorage.setItem("voice-tunnel.micId", $mic.value);
     // Full stop/start rather than surgery on a live audio graph: swapping the source node
     // mid-stream is where subtle capture bugs breed, and the turn log lives on the server so
     // a reconnect costs nothing.

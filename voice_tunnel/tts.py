@@ -1,4 +1,4 @@
-"""vm.tts — text to speech, pluggable backend.
+"""voice_tunnel.tts — text to speech, pluggable backend.
 
 Backends:
   * ``sapi``  — Windows System.Speech via PowerShell. Zero install, fully offline, present on
@@ -11,7 +11,7 @@ Every backend's output goes through :func:`pad`, which is not cosmetic: Bluetoot
 down between clips and swallow the first ~100 ms. This project is phone-first, so nearly every
 session is Bluetooth, and unpadded audio presents as "the TTS is broken".
 
-Output is always mono 16-bit PCM at :data:`vm.config.TTS_SR`.
+Output is always mono 16-bit PCM at :data:`voice_tunnel.config.TTS_SR`.
 """
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def _synth_sapi(text: str) -> Tuple[bytes, int]:
     this keeps the whole backend to one subprocess call with no pywin32 dependency.
     """
     if os.name != "nt":
-        raise TTSError("the sapi backend requires Windows; set VM_TTS=piper or none")
+        raise TTSError("the sapi backend requires Windows; set VOICE_TUNNEL_TTS=piper or none")
     fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
@@ -126,7 +126,7 @@ def list_voices() -> list:
 
     Delegates to config so "what is installed" has one definition (AGENTS.md convention 5). The
     listing there also requires each `.onnx` to have its sidecar `.onnx.json`, which keeps the
-    voiceprint gallery's speaker model out of `vm voices` — it was being offered as a selectable
+    voiceprint gallery's speaker model out of `voice-tunnel voices` — it was being offered as a selectable
     voice that then failed at synthesis time.
     """
     return config.piper_voices()
@@ -255,7 +255,7 @@ def _piper_paths(voice_path: Optional[str]) -> Tuple[str, str]:
     """Resolve (binary, voice), raising a TTSError that names the remedy if either is missing.
 
     Resolution lives in config: the binary is findable in the repo venv and the voice in the
-    models dir, so `VM_TTS=piper` is the ONLY setting a piper session needs. Requiring all three
+    models dir, so `VOICE_TUNNEL_TTS=piper` is the ONLY setting a piper session needs. Requiring all three
     on every call is what produced the wall of env-var prefixes this design exists to delete.
     """
     binary = config.piper_bin()
@@ -268,9 +268,9 @@ def _piper_paths(voice_path: Optional[str]) -> Tuple[str, str]:
                             ("an .onnx voice", voice)) if not v]
         )
         raise TTSError(
-            f"the piper backend cannot start: no {missing}. Run `vm doctor` for the exact "
-            f"remedy, or set it explicitly: `vm config set VM_PIPER_BIN <path>` / "
-            f"`vm config set VM_PIPER_VOICE <path>` (see `vm voices`)."
+            f"the piper backend cannot start: no {missing}. Run `voice-tunnel doctor` for the exact "
+            f"remedy, or set it explicitly: `voice-tunnel config set VOICE_TUNNEL_PIPER_BIN <path>` / "
+            f"`voice-tunnel config set VOICE_TUNNEL_PIPER_VOICE <path>` (see `voice-tunnel voices`)."
         )
     return binary, voice
 
@@ -297,7 +297,7 @@ def _synth_piper(text: str, voice_path: Optional[str] = None,
     if not binary:
         raise TTSError(
             f"piper cannot run in-process ({_RESIDENT.unavailable_reason}) and no piper binary "
-            f"was found to fall back to. Run `vm doctor`."
+            f"was found to fall back to. Run `voice-tunnel doctor`."
         )
     fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
