@@ -30,6 +30,21 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0. Node 24 satisfies the
+      # runtime, but the npm bundled with a given Node image drifts, and the failure mode of
+      # being one patch short is an authentication error that reads like a misconfigured
+      # publisher rather than an old client. Pin it forward and assert it.
+      - name: Ensure an npm new enough for OIDC
+        run: |
+          npm install -g npm@latest
+          npm --version
+          node -e "
+            const [maj,min,pat] = require('child_process')
+              .execSync('npm --version').toString().trim().split('.').map(Number);
+            const ok = maj > 11 || (maj === 11 && (min > 5 || (min === 5 && pat >= 1)));
+            if (!ok) { console.error('npm >= 11.5.1 required for trusted publishing'); process.exit(1); }
+          "
+
       # THE ORDERING CONSTRAINT. npm postinstall runs `pip install voice-tunnel==<version>`, so
       # publishing to npm before PyPI has the version produces a package that installs cleanly
       # and then fails for every user. npm has no meaningful unpublish after 72 hours; PyPI has
@@ -57,8 +72,15 @@ jobs:
           node --check bin/voice-tunnel.js
           node --check scripts/postinstall.js
 
+      # NO NODE_AUTH_TOKEN. Publishing authenticates by OIDC against the trusted publisher
+      # configured on the package — `id-token: write` above is what makes that possible. The
+      # account has 2FA set to auth-and-writes, which a token-based CI publish cannot satisfy;
+      # automation tokens used to bypass it and that bypass is what npm is deprecating. No secret
+      # exists here to leak, rotate, or forget to delete.
+      #
+      # This requires the package to ALREADY EXIST — a trusted publisher is configured on a
+      # package settings page and npm has no pending-publisher equivalent to PyPI's. The first
+      # 0.1.0 publish is therefore a manual, interactive `npm publish` with an OTP. See spec 003.
       - name: Publish
         working-directory: npm
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

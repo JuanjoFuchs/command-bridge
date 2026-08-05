@@ -146,11 +146,25 @@ what to hand back.
 - [ ] Generate a GitHub Personal Access Token with `public_repo` scope and add it as repository
       secret `WINGET_TOKEN`. This is what opens the PR against `microsoft/winget-pkgs`.
 
-### 5. npm (needed by spec 003, listed here so it is done in one sitting)
+### 5. npm — trusted publishing, and one manual first publish
 
-- [ ] Confirm the npm account that owns `@juanjofuchs/agent-mail`.
-- [ ] Create an **automation** access token and add it as repository secret `NPM_TOKEN`.
-      Automation tokens bypass 2FA, which a workflow cannot satisfy.
+**No `NPM_TOKEN`, deliberately.** The account has 2FA set to `auth-and-writes`, which a
+token-based CI publish cannot satisfy; automation tokens used to bypass that and npm is
+deprecating the bypass. The workflow authenticates by OIDC instead, so there is no secret.
+
+- [x] npm CLI logged in as `juanjofuchs`.
+- [ ] **After** PyPI `0.1.0` is live, publish npm `0.1.0` once by hand — a trusted publisher is
+      configured on a package settings page and npm has no pending-publisher equivalent, so the
+      name must exist before it can be authorized:
+
+      cd npm && npm version 0.1.0 --no-git-tag-version && npm publish --access public
+
+      It will ask for an OTP. Order matters: the postinstall pins `voice-tunnel==0.1.0`, so
+      publishing npm before PyPI ships a package that installs cleanly and then fails for
+      everyone.
+- [ ] On https://www.npmjs.com/package/@juanjofuchs/voice-tunnel — Settings -> Trusted Publisher,
+      add: owner `JuanjoFuchs`, repository `voice-tunnel`, workflow `npm-publish.yml`.
+- [ ] Every release after 0.1.0 is then fully automated.
 
 ### 6. The go signal
 

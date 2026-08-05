@@ -98,6 +98,26 @@ version asked for and the version received can differ — and a bad PyPI release
 into every npm version already published. Pinned, the two registries carry the same number or the
 install fails loudly.
 
+### Trusted publishing, and why the FIRST publish cannot use it
+
+npm now supports OIDC trusted publishing from GitHub Actions, and it is the right mechanism here
+for a reason specific to this account: **2FA is set to `auth-and-writes`**, which a token-based
+CI publish cannot satisfy. Automation tokens used to bypass that check, and npm is deprecating
+exactly that bypass — the web UI now steers you to trusted publishing when you try to create a
+granular token. OIDC leaves no secret to leak, rotate, or forget to delete.
+
+Requirements, confirmed from npm's documentation: **npm >= 11.5.1, Node >= 22.14.0,
+`id-token: write`, and `registry-url` set on `setup-node`.** No `NODE_AUTH_TOKEN`.
+
+**The constraint that shapes the release sequence: a trusted publisher is configured on a
+PACKAGE's settings page, and npm has no equivalent of PyPI's pending publisher.** There is no way
+to pre-authorize a name that has never been published. So `@juanjofuchs/voice-tunnel@0.1.0` must
+be published once, interactively, with an OTP; every version after that is automated.
+
+This is the same shape as the PyPI problem agent-mail-cli recorded — first release by hand,
+steady state by OIDC — arrived at from the opposite direction. Worth stating plainly rather than
+discovering during a launch.
+
 ### A postinstall failure is not fatal
 
 npm renders a postinstall failure as a red block, and every likely cause here — no Python, an old
