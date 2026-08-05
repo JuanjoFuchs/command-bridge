@@ -207,3 +207,25 @@ def test_no_command_reads_from_stdin(capsys, tmp_sessions, monkeypatch):
     for argv in (["describe"], ["doctor"], ["config", "show"], ["voices"]):
         cli.main(argv)
         capsys.readouterr()
+
+
+def test_describe_reports_the_installed_version_not_a_literal():
+    """`__version__` was a hardcoded string and drifted the first time it could: PyPI had 0.1.1
+    while `describe` still said 0.1.0.
+
+    `describe` is a contract an agent parses, so a wrong version there is worse than a missing
+    one — it is a confident answer pointing at the wrong changelog. pyproject.toml is the single
+    source (NFR3) and the release workflow already refuses a tag that disagrees with it.
+    """
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as pkg_version
+
+    import voice_tunnel
+
+    try:
+        installed = pkg_version("voice-tunnel")
+    except PackageNotFoundError:
+        pytest.skip("not installed; nothing to compare against")
+
+    assert voice_tunnel.__version__ == installed
+    assert cli.DESCRIBE["version"] == installed
