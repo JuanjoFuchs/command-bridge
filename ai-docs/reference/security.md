@@ -58,5 +58,35 @@ get right and embarrassing to get wrong.
 ## What is deliberately NOT here
 
 - No user accounts, no OAuth, no roles. One operator, one machine.
-- No public exposure path. There is no Funnel/ngrok mode and adding one is a design change.
 - No transcript egress. Turns are written to a local file and nowhere else.
+- **No built-in tunnel.** The server binds a local port and stops there. Reaching it from a phone
+  is the operator's choice of transport, and the tool deliberately holds no credentials for any
+  of them — see below.
+
+## Exposure is the operator's choice, and they are not equivalent
+
+An earlier version of this document claimed "no public exposure path. There is no Funnel/ngrok
+mode and adding one is a design change." **That was true of the code and false about how the tool
+is used**, which is the worse kind of wrong in a security document: it described an absent
+feature as a guarantee. The tool has been run over ngrok. Nothing in it stopped that, and nothing
+was supposed to — binding a local port is where its responsibility ends.
+
+What actually differs is who can decrypt your speech in transit:
+
+| Transport | TLS terminates at | Reachable from |
+|---|---|---|
+| `localhost` | nowhere, no TLS needed | the machine itself |
+| **Tailscale Serve** | **your device** — WireGuard end to end | your tailnet only |
+| ngrok / Cloudflare Tunnel | **the vendor's edge** | the public internet, gated by whatever auth you configure |
+| LAN IP | — | nothing: not a secure context, so the browser grants **no microphone at all** |
+
+**Tailscale Serve is the recommended path and the only one with no third party in the audio.**
+A tunnel vendor terminates TLS, which means the plaintext of every word you say and every reply
+exists, however briefly, on a machine you do not control. That may be an acceptable trade — it
+was, here, on a network where Tailscale could not run — but it is a trade, and a tool that
+carried the vendor's credentials would be making it on your behalf.
+
+If you do expose it publicly, the shared token is the ONLY thing between the internet and a live
+microphone. Put real authentication in front (ngrok's `--oauth` with an email allowlist, or
+Cloudflare Access), because the CIDR allowlist cannot help you: a tunnel forwards from localhost,
+so every request arrives from an allowed peer by construction.

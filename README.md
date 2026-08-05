@@ -1,22 +1,48 @@
 # voice-tunnel
 
-A **voice tunnel**. One command opens a page your phone can load in a browser — no app, no
-install — and carries audio both ways to the agent that started it.
+**Talk to your coding agent from your phone.** One command opens a page any phone browser can
+load — no app, no App Store — and carries audio both ways to the agent that started it.
 
-The tool holds no LLM. It turns speech into lines in a log, and text into speech. Every ounce of
-intelligence lives in the agent driving it.
+It works with **any** agent. The tool holds no LLM: it turns speech into lines in a log and text
+into speech, and every ounce of intelligence lives in whatever is driving it. Claude Code, Codex
+and Grok have each driven this one unchanged; the only thing that knows which is the name you
+give it (`serve --wake codex`).
 
 ```
 Phone browser (no install)
    |  HTTPS
    v
-voice-tunnel serve  ── the dumb half ───────────────────────────────────┐
-   mic  -> wake gate -> ASR -> append turn to a JSONL log      │
-   spkr <- TTS <- text handed to `voice-tunnel say`                      │
-                                                               v
-                                          The agent that started it (the smart half)
-                                          voice-tunnel watch --since <cursor> -> reason -> voice-tunnel say
+voice-tunnel serve  ── the dumb half ──────────────────────────────┐
+   mic  -> wake gate -> ASR -> append turn to a JSONL log          │
+   spkr <- TTS  <- text handed to `voice-tunnel say`               │
+                                                                   v
+                                       The agent that started it (the smart half)
+                                       watch --since <cursor> -> reason -> say
 ```
+
+## What it does, stated exactly
+
+Because the interesting claims here are easy to overstate, and one of them is not true:
+
+- **It runs on your machine.** ASR, speech synthesis, the voiceprint, and every turn of the
+  transcript. Nothing is sent to a speech API and there is no account. The one caveat is
+  transport: reaching your phone needs *some* tunnel, and `tailscale serve` is the only common
+  option with no third party able to decrypt the audio — an ngrok-style tunnel terminates TLS on
+  someone else's edge. See `ai-docs/reference/security.md`.
+- **It learns your voice, and that is what makes the wake phrase optional.** Every turn confirmed
+  by the wake phrase enrols another sample, so the speaker model sharpens with use. Measured
+  here: 0.711 / 0.782 / 0.801 for the owner against a highest impostor of 0.132 — a 5.4× margin
+  around the threshold — and it generalised to a phone microphone having learned only from
+  desktop recordings. Once it knows you, you are addressed without saying anything.
+- **It does NOT learn to transcribe you better, and it does not learn your vocabulary.** The
+  recognizer is a frozen model and nothing adapts it. Contextual biasing was tried and is a dead
+  end on this checkpoint — it ships no SentencePiece vocab, so hotwords corrupt into literal digit
+  tokens. A learned-correction layer is on the roadmap and is not built. What *does* survive a
+  mangled name is a fuzzy match after the greeting, which is static, not learning.
+- **Your files are yours.** Turn logs, audio, and the voiceprint are plain files in a directory
+  `voice-tunnel config path` will tell you. The voiceprint is a 192-dimension centroid; speech
+  cannot be reconstructed from it.
+- **Models are downloaded, not bundled**, and `voice-tunnel download` fetches them. See below.
 
 ## Quick start
 
@@ -119,6 +145,15 @@ export VOICE_TUNNEL_ALLOW_CIDRS=100.64.0.0/10
 
 That gives a real Let's Encrypt certificate on `<host>.<tailnet>.ts.net` with nothing exposed to
 the public internet. Open that URL on the phone.
+
+**Tailscale is the recommended transport, and the reason is not convenience.** It is the only
+common option where TLS terminates on your own device, so nobody else can decrypt what you say.
+An ngrok or Cloudflare tunnel works and is sometimes the only thing that works — on a network
+where Tailscale conflicts with a corporate VPN, for instance — but it terminates TLS at the
+vendor's edge, which puts the plaintext of every word on a machine you do not control. If you go
+that way, put real authentication in front of it (`ngrok --oauth google --oauth-allow-email …`):
+the CIDR allowlist cannot help, because a tunnel forwards from localhost and every request
+therefore arrives from an allowed peer. Full comparison in `ai-docs/reference/security.md`.
 
 **Android Chrome, session-based.** The mic only records while the tab is foreground — that is a
 platform rule, not a bug, and true background capture would need a native app. The page holds a

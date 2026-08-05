@@ -41,18 +41,18 @@ from . import config
 AUTO_THRESHOLD = 0.50
 """At or above this, treat the speaker as the owner without a wake phrase.
 
-Set from measurement, not taste. Against a 180-sample centroid bootstrapped from meeting-copilot
-recordings, scored on audio captured through a *different* device and pipeline (the headset ->
-browser -> tunnel path):
+Set from measurement, not taste. Against a 180-sample centroid bootstrapped from recordings the
+owner already had, scored on audio captured through a *different* device and pipeline (the
+headset -> browser -> tunnel path):
 
-    JJ, three voice-tunnel sessions          0.711, 0.782, 0.801   <- accepted
+    The owner, three tunnel sessions       0.711, 0.782, 0.801   <- accepted
     Three different TTS voices             0.000, 0.066, 0.132   <- rejected
-    Real colleagues, three meetings        0.035, 0.055, 0.096   <- rejected
+    Three other human speakers             0.035, 0.055, 0.096   <- rejected
 
 Lowest genuine 0.711 against highest impostor 0.132 — a 5.4x margin, with 0.50 sitting near the
 midpoint. That the print *generalises across recording setups* is the important part: it was
-learned from meeting audio and still recognises him through a completely different microphone
-chain, which is what makes silent enrolment viable.
+learned from one microphone chain and still recognises the owner through a completely different
+one, which is what makes silent enrolment viable.
 
 Worth noting: the agent's own synthesized replies score 0.00-0.16, so the tunnel cannot mistake
 itself for him even when echo cancellation lets its own voice back in."""
