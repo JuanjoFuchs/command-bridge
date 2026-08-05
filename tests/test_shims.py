@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -134,3 +135,27 @@ def test_no_shim_invokes_python_dash_c():
     for name in ("voice-tunnel", "voice-tunnel.cmd"):
         source = open(os.path.join(BIN, name), encoding="utf-8").read()
         assert "-c " not in source, f"{name} still invokes python with an inline program"
+
+
+def test_the_module_entry_runs_as_a_bare_script():
+    """Reproduces the condition PyInstaller creates, which `python -m` does not.
+
+    PyInstaller takes `voice_tunnel/__main__.py` as its entry SCRIPT and executes it as
+    `__main__` with NO parent package. A relative `from .cli import main` is legal there at build
+    time and dies at first run with `ImportError: attempted relative import with no known parent
+    package`. The v0.1.0 release build succeeded and the binary failed its own smoke test.
+
+    `python -m voice_tunnel` cannot catch this — it imports the package first, so the relative
+    form works. Running the file BY PATH is the cheap way to reproduce the frozen condition
+    without a five-minute PyInstaller build in CI.
+    """
+    entry = os.path.join(os.path.dirname(BIN), "voice_tunnel", "__main__.py")
+    assert os.path.exists(entry), entry
+
+    r = subprocess.run(
+        [sys.executable, entry, "describe"],
+        capture_output=True, text=True, cwd=tempfile.gettempdir(),
+        env=dict(os.environ, PYTHONPATH=os.path.dirname(BIN)),
+    )
+    assert r.returncode == 0, f"entry point failed as a bare script: {r.stderr[-400:]}"
+    assert json.loads(r.stdout)["tool"] == "voice-tunnel"
