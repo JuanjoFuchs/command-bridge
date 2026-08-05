@@ -39,6 +39,7 @@ judgment in the agent is what makes the assistant *yours* rather than a generic 
 | Browser/mic/audio behavior, Android limits | @ai-docs/reference/browser.md | Secure context, foreground-only mic, wake lock |
 | Adding or changing a spec | @specs/ | One numbered spec per unit of work; WHAT + acceptance, not HOW |
 | Running the end-to-end check | `python -m pytest tests/ -v` then `python scripts/e2e.py` | e2e drives a real Chrome with a WAV as the fake mic |
+| Changing anything in `web/index.html` that affects SIZE or POSITION | `python scripts/layout.py` | Asserts the page never outgrows the viewport and the newest row is on screen, at five viewports. The unit tests and e2e both pass while the bottom of the transcript is cropped off a phone — geometry is invisible to them |
 
 ## Conventions
 
@@ -75,7 +76,7 @@ voice_tunnel/          the package — store, asr, wake, tts, security, server, 
 web/         the phone client (single self-contained page, no build step)
 specs/       numbered metaspecs (WHAT + acceptance criteria)
 tests/       pytest — pure logic, no mic and no model
-scripts/     e2e.py (real-browser acceptance), and dev helpers
+scripts/     e2e.py (pipeline), layout.py (page geometry), uitest.py (real mic), dev helpers
 ai-docs/     durable reference the table above routes to
 bin/         PATH shims — `voice-tunnel` (bash), `voice-tunnel.cmd` (PowerShell/cmd), both exec `voice-tunnel-run.py`
 .env         gitignored settings, loaded by every command (`.env.example` documents it)

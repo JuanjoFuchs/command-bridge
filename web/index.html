@@ -84,7 +84,16 @@
   *,*::before,*::after { box-sizing:border-box; }
   html { height:100%; }
   body {
-    margin:0; min-height:100vh; min-height:100dvh;
+    /* HEIGHT, not min-height. `min-height` lets the body grow PAST the viewport when the rows
+       demand it, and `overflow:hidden` below then clips whatever overflowed with no scroll
+       container anywhere to reach it. That is exactly the reported failure: "the bottom of the
+       screen is usually not visible and I cannot scroll down to see it" — on the phone, where
+       the bottom is the transcript, i.e. the only part that carries content.
+
+       A fixed height forces the grid to fit, which makes it the LOG's job to scroll (it already
+       has overflow-y:auto) instead of the page's. `100dvh` tracks Android Chrome's URL bar as it
+       hides and shows; `100vh` first so a browser without dvh still gets something sane. */
+    margin:0; height:100vh; height:100dvh;
     color:var(--fg);
     font:400 16px/1.55 var(--sans);
     -webkit-font-smoothing:antialiased;
@@ -104,7 +113,11 @@
     background-attachment:fixed;
 
     display:grid;
-    grid-template-rows:auto minmax(0,1fr) auto;
+    /* The TRANSCRIPT gets the free space, not the orb. On a phone the log is the content — it is
+       where his speech and the replies land — while the orb is a fixed-size control that only
+       has to be tappable. It was the other way round, so the orb claimed every spare pixel and
+       the log was squeezed into whatever was left at the bottom of the screen. */
+    grid-template-rows:auto auto minmax(0,1fr);
     justify-items:center;
     row-gap:clamp(.7rem,2.4vh,1.35rem);
     padding:
@@ -120,6 +133,11 @@
   h1    { grid-row:1; }
   #stage{ grid-row:2; }
   #log  { grid-row:3; }
+
+  /* Nothing said yet: give the free space back to the orb so it sits centred rather than
+     stranded at the top above an empty gap. `#log:empty` is display:none, and a `1fr` row with
+     no item in it still consumes the space — so the row sizing has to change, not just the item. */
+  body:has(#log:empty) { grid-template-rows:auto minmax(0,1fr) auto; }
 
   /* --- wordmark ---------------------------------------------------------- */
   h1 {
@@ -284,9 +302,18 @@
      target) and pushed to the edges of the orb's own width, so neither can be hit by accident
      while reaching for the orb itself. */
   #controls {
-    display:flex; gap:.5rem; align-items:center; justify-content:center;
+    display:flex; gap:.6rem; align-items:center; justify-content:center;
     margin-top:-.2rem;
+    /* Bounded to the orb's own width so the pair reads as belonging to it, and so a long device
+       name cannot stretch the row wider than the thing it sits under. `min-width:0` lets the
+       select actually honour its own text-overflow instead of refusing to shrink. */
+    width:min(62vw,40dvh,300px); max-width:100%;
   }
+  #controls > * { min-width:0; }
+  #verbose { flex:0 0 auto; }
+  #mic     { flex:1 1 auto; }
+  /* Alone in the row (one microphone, so the picker is hidden), the switch centres itself. */
+  #controls:has(#mic[hidden]) { justify-content:center; }
   /* A real switch, not a button that reports its own state in a word. The distinction matters
      here because the label is a NOUN ("Verbose"): a button saying "Verbose" is ambiguous about
      whether it describes the current mode or the one tapping would produce, and a track-and-knob
@@ -336,7 +363,10 @@
 
   #mic {
     appearance:none; -webkit-appearance:none;
-    max-width:min(100%,26rem);
+    max-width:100%;
+    /* 44px to match the switch beside it — the platform minimum for a touch target, and two
+       controls of different heights on one row read as a mistake rather than a hierarchy. */
+    min-height:44px;
     padding:.46rem 2.1rem .46rem .9rem; border-radius:999px;
     background-color:color-mix(in srgb, var(--card) 70%, transparent);
     background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),
@@ -354,7 +384,12 @@
   /* --- transcript -------------------------------------------------------- */
   #log {
     position:relative; z-index:5;
-    width:min(100%,40rem); max-height:min(40dvh,21rem);
+    /* Fills its grid row rather than capping itself. The cap (min(40dvh,21rem)) existed to stop
+       the log crowding the orb back when the orb held the flexible row — now that the log holds
+       it, a cap just recreates the empty gap it was meant to prevent. `min-height:0` is what
+       lets a grid item shrink below its content so this scrolls internally instead of pushing
+       the page taller than the viewport. */
+    width:min(100%,40rem); height:100%; min-height:0;
     overflow-y:auto; overscroll-behavior:contain;
     padding:.3rem 0; border-radius:20px;
     background:color-mix(in srgb, var(--card) 72%, transparent);
@@ -424,16 +459,20 @@
   .divider ~ .row:not(.claude) { opacity:.5; }
   .divider ~ .row.partial      { opacity:.65; }
 
-  /* Phone in landscape. The orb is sized in dvh so it shrinks with the viewport, but at
-     40dvh the stage plus the transcript still overran a 390px-tall window and body's
-     overflow:hidden silently cropped the bottom of the log. Everything tightens together. */
+  /* A short viewport — landscape, or a portrait phone with the URL bar showing. This used to be
+     the ONLY defence against a cropped log, by shrinking everything until it happened to fit at
+     one breakpoint; the real bug was `min-height` on the body letting it outgrow the viewport
+     with `overflow:hidden` and no scroll container to recover. That is fixed above, so this
+     query now does only what it says: buy the transcript more room by tightening the chrome
+     around it. `#log` needs no rule at all any more — it takes whatever the other rows leave. */
   @media (max-height:560px) {
     h1 { display:none; }
     #orbwrap { width:min(30dvh,44vw,168px); }
+    #controls { width:min(30dvh,44vw,168px); }   /* stays pinned to the orb's width */
     #stage { gap:.55rem; }
     #state { min-height:1.6em; }
     body { row-gap:.5rem; }
-    #log { max-height:34dvh; border-radius:14px; }
+    #log { border-radius:14px; }
     .row { padding:.4rem .8rem; font-size:.86rem; }
   }
 
@@ -466,14 +505,18 @@
          would do — a button labelled with its own action reads as a lie half the time. -->
     <!-- One control, not two. The orb owns the microphone (tap to start, tap again to mute), so
          the only thing left worth a switch is how much the agent narrates. -->
+    <!-- ONE row for both settings, flanking the orb's width: narration on the left, microphone
+         on the right. They were two stacked lines, which spent a second row of vertical space on
+         a phone to say something neither control needed — and vertical space is what the
+         transcript wants. Neither is touched mid-conversation, so they belong side by side. -->
     <div id="controls">
       <div id="verbose" role="switch" tabindex="0" aria-checked="false" aria-label="Verbose mode">
         <span class="sw-track"><span class="sw-knob"></span></span>
         <span class="sw-label">Verbose</span>
       </div>
+      <select id="mic" hidden aria-label="Microphone"></select>
     </div>
     <div id="state">idle</div>
-    <select id="mic" hidden aria-label="Microphone"></select>
   </main>
 
   <div id="log" role="log" aria-live="polite"></div>

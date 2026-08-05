@@ -120,7 +120,8 @@ Screen Wake Lock so the screen stays on without installing anything.
 
 ```bash
 venv/Scripts/python -m pytest tests/ -q     # unit tests, no mic and no model
-venv/Scripts/python scripts/e2e.py          # 29 checks through a real browser
+venv/Scripts/python scripts/e2e.py          # the pipeline, through a real browser
+venv/Scripts/python scripts/layout.py       # the page geometry, at five viewports
 ```
 
 The end-to-end run drives a real Chrome, feeds it a synthesized WAV as its microphone, and
@@ -131,6 +132,12 @@ It substitutes the **device layer only** — Chrome's own fake-capture flags del
 this machine (see `ai-docs/reference/browser.md`), so `getUserMedia` is replaced with a real
 `MediaStream` built from the WAV. Everything above the OS driver is genuine. A real phone with a
 real microphone is the one thing still needing a human.
+
+`scripts/layout.py` checks something neither of the others looks at: **geometry**. It asserts the
+page never outgrows the viewport and that the newest transcript row is actually on screen, across
+five viewports — including a Pixel 7 both with and without the URL bar showing, a 183px
+difference that is larger than most desktop breakpoints and is where a real cropping bug lived
+while every other test stayed green. `--shots DIR` writes a PNG per viewport.
 
 ## Layout
 
