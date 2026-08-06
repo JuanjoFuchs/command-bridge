@@ -131,6 +131,20 @@ voice-tunnel wake --name codex     # change it, live, no restart
 
 Once the voiceprint knows you, you are addressed **without saying anything**.
 
+### Interrupting it
+
+Start talking while it is speaking and it stops — but **only for your voice**. The voiceprint has
+to agree before a reply is cut off, so the television, someone else in the room, and the agent's
+own voice coming back through your speakers all leave it talking.
+
+That last one is not a corner case. Without echo cancellation a reply leaks into the microphone on
+almost any device, and "the agent interrupts itself" is the default failure. Measured here: his
+voice scores 0.23 against a 0.15 threshold, the agent's own voice scores **0.000**.
+
+Needs `voice-tunnel download voiceprint` and a voice it has learned. Without one it stays quiet
+rather than guessing, because a tunnel that stops whenever the room makes a noise is worse than
+one you cannot interrupt.
+
 ### Knowing when you have finished
 
 By default a turn ends after a fixed silence — 1.5 seconds. That number is a compromise: shorter

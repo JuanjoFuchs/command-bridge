@@ -149,6 +149,14 @@ class TunnelState:
         running", which is a fact about hardware and permissions. This answers "is he in the
         conversation", which is a decision he made. They coincided while the orb did both jobs,
         and that is exactly why the orb could not express "listen to me but do not talk yet"."""
+        self.barge_buf: np.ndarray | None = None
+        """Audio accumulated WHILE THE AGENT IS SPEAKING, for the barge-in identity check.
+
+        Separate from the utterance buffer on purpose: that one is segmenting a turn, this one is
+        answering a different question — "is the person talking over me actually him". Discarded
+        the moment the agent stops speaking, so it never grows without bound."""
+        self.barges: int = 0
+        self.last_barge_score: float = 0.0
         self.user_speaking: bool = False
         """The CLIENT's own report that he is talking right now.
 
@@ -209,6 +217,8 @@ class TunnelState:
             "muted": self.muted,
             "capturing": self.capturing,
             "channel_open": self.channel_open,
+            "barges": self.barges,
+            "last_barge_score": self.last_barge_score,
             "turn_detection": (self.turn.describe() if self.turn else {"enabled": False}),
             "last_end_reason": self.buffer.last_end_reason,
             "user_speaking": self.user_speaking,
@@ -804,6 +814,61 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         state.last_error = f"client: {str(msg.get('message'))[:300]}"
 
 
+async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
+    """Stop the reply if HE is talking over it — and only if it is him.
+
+    JJ, 2026-08-06: "barge in but only for my voice." The constraint is the feature: a tunnel that
+    stops talking whenever the room makes a noise is worse than one you cannot interrupt at all.
+
+    **The gate is deliberately "not the agent" rather than "definitely him", because those need
+    very different amounts of audio.** Confirming him needs about two seconds (see
+    config.BARGE_IN_THRESHOLD for the scores), and two seconds of talking over a reply before it
+    stops is an apology, not an interruption. But the one thing that must NEVER trigger this — the
+    agent's own voice leaking back through the speakers — scores 0.000 at every window length, so
+    a low threshold separates it cleanly at one second.
+
+    Both signals must agree: the client says someone is speaking (it has its own 120 ms minimum
+    run against coughs) AND the voiceprint says that someone is not the agent.
+    """
+    if not config.barge_in_enabled() or state.agent_state != "speaking":
+        state.barge_buf = None
+        return
+    if not state.user_speaking or not state.embedder.available:
+        return
+
+    state.barge_buf = (samples if state.barge_buf is None
+                       else np.concatenate([state.barge_buf, samples]))
+    need = int(config.TARGET_SR * config.BARGE_IN_MIN_MS / 1000)
+    if state.barge_buf.size < need:
+        return
+
+    try:
+        emb = await asyncio.get_running_loop().run_in_executor(
+            None, state.embedder.embed, state.barge_buf[-need:]
+        )
+    except Exception as exc:                       # identity is a bonus; never break ingest
+        state.last_error = f"barge-in: {exc}"
+        state.barge_buf = None
+        return
+    if emb is None:
+        return
+
+    _, score = voiceprint.match(emb)
+    state.last_barge_score = round(float(score), 3)
+    state.barge_buf = None                          # ask again on the next second, not per chunk
+    if score < config.barge_in_threshold():
+        return
+
+    state.barges += 1
+    timing.stamp(state.session, "barge_in", score=state.last_barge_score)
+    await _broadcast_json(state, {"type": "stop_playback", "reason": "barge_in",
+                                  "score": state.last_barge_score})
+    # Drop anything still queued as well. Stopping the clip he interrupted and then playing the
+    # next one at him would be the same interruption wearing a different hat.
+    state.undelivered.clear()
+    await _set_agent_state(state, "idle")
+
+
 async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventLoop) -> None:
     samples = asr_mod.pcm16_to_float32(raw)
     if state.client_sr != config.TARGET_SR:
@@ -815,6 +880,8 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
         state.capture(samples)
     except Exception as exc:  # never let diagnostics break the session
         state.last_error = f"capture: {exc}"
+
+    await _maybe_barge(state, samples)
 
     completed = state.buffer.feed(samples)
     if completed is None:

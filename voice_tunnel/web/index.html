@@ -576,6 +576,7 @@
   // The channel starts CLOSED and the first orb tap opens it, so a page left open in a
   // background tab is never quietly live.
   let channelOpen = false, speakingSignal = false, speakingSince = 0, speakingRunStart = 0;
+  let playingSource = null;
   // The assistant's name comes from the SERVER, so the page can never tell him to say a name
   // the wake gate no longer accepts. Falls back to a neutral instruction rather than guessing.
   let wakeName = "";
@@ -1197,6 +1198,14 @@
       } else if (msg.type === "verbose") {
         // Someone flipped it elsewhere — another device, or the agent via `voice-tunnel verbose on`.
         paintVerbose(msg.value);
+      } else if (msg.type === "stop_playback") {
+        // He started talking over the reply and the voiceprint confirmed it was him. Stop now.
+        // `src.stop()` fires onended, so the queue drains and the orb returns to its real state
+        // through the existing path rather than needing its own unwind.
+        try { if (playingSource) playingSource.stop(); } catch {}
+        playingSource = null;
+        clipQueue.length = 0;          // anything still waiting was part of the same interruption
+        diag.barges = (diag.barges || 0) + 1;
       } else if (msg.type === "channel") {
         // Another device (or a reconnect echo) changed it. Adopt without echoing back, same rule
         // as verbose: a client that replies to a broadcast makes a loop.
@@ -1309,6 +1318,9 @@
       audio.getChannelData(0).set(f32);
       const src = ctx.createBufferSource();
       src.buffer = audio; src.connect(ctx.destination);
+      // Held at module scope so a barge-in can stop it. A BufferSource is fire-and-forget once
+      // started, so without a handle there is no way to interrupt a reply that is already playing.
+      playingSource = src;
       // A cue is punctuation, not an utterance: no transcript row, no "Speaking" state, and
       // tracked separately so it never masquerades as a spoken reply.
       const isCue = Boolean(header.cue);
@@ -1319,6 +1331,7 @@
         addRow("claude", header.text || "", "claude");
       }
       await new Promise((res) => { src.onended = res; src.start(); });
+      if (playingSource === src) playingSource = null;
       if (!isCue) {
         $orb.classList.remove("speaking");
         // Restore to the state we were ACTUALLY in, which may be muted. Hard-coding "Listening"

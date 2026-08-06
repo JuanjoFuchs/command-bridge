@@ -201,6 +201,20 @@ This is the guard on the half of the feature that carries the risk. Ending early
 allowed to act on them."""
 
 
+def barge_in_enabled() -> bool:
+    raw = _env("VOICE_TUNNEL_BARGE_IN")
+    if raw:
+        return raw not in ("0", "false", "no", "off")
+    return BARGE_IN
+
+
+def barge_in_threshold() -> float:
+    try:
+        return float(_env("VOICE_TUNNEL_BARGE_IN_THRESHOLD") or BARGE_IN_THRESHOLD)
+    except ValueError:
+        return BARGE_IN_THRESHOLD
+
+
 def turn_detect_enabled() -> bool:
     raw = _env("VOICE_TUNNEL_TURN_DETECT")
     if raw:
@@ -230,6 +244,52 @@ def turn_threads() -> int:
         return max(1, int(_env("VOICE_TUNNEL_TURN_THREADS", "4")))
     except ValueError:
         return 4
+
+
+# ----------------------------------------------------------------- barge-in
+#
+# JJ, 2026-08-06: "barge in but only for my voice." The constraint is the feature — a tunnel that
+# stops talking whenever the room makes a noise is worse than one that cannot be interrupted.
+#
+# THE MEASUREMENT THAT SHAPED THIS. Confirming identity and rejecting an impostor are not the same
+# problem, and the voiceprint is far better at the second. Scored against his real recorded speech:
+#
+#     window   his voice (cosine)                agent's own TTS
+#     1.0 s    0.20 0.31 0.46 0.50 0.51 0.30     0.000
+#     1.5 s    0.41 0.48 0.52 0.57 0.62 0.64     0.000
+#     2.0 s    0.48 0.61 0.62 0.63 0.63 0.69     0.000
+#
+# At 1 s he often scores BELOW the 0.50 attention threshold, so "is this definitely him" needs
+# about two seconds — and two seconds of talking over the agent before it stops is not barge-in,
+# it is an apology. But the thing that must never trigger a barge-in scores **0.000 at every
+# window**, and that is the agent's own voice leaking back through the speakers.
+#
+# So this asks the question it can actually answer fast: NOT "is this him" but "is this plausibly
+# a person and definitely not the agent". Recorded impostors — real other speakers — scored
+# 0.035-0.096 over full utterances, well under his 1 s floor of 0.20.
+
+BARGE_IN = True
+"""Let his voice stop a reply mid-sentence. VOICE_TUNNEL_BARGE_IN=0 to disable."""
+
+BARGE_IN_THRESHOLD = 0.15
+"""Cosine floor for "this is a person, and not the agent".
+
+**Deliberately far below AUTO_THRESHOLD (0.50), and it is a different question.** 0.50 decides
+whether to give someone the agent's attention, where a false positive costs a wasted reply. This
+decides whether to STOP TALKING, where the costs are reversed: failing to stop means talking over
+him, and stopping wrongly costs one interrupted sentence he can ask for again.
+
+0.15 sits above every impostor measured (agent echo 0.000, other humans 0.035-0.096) and below his
+worst 1 s score (0.20). The gap is not enormous, which is why the client's speech signal has to
+agree as well — see BARGE_IN_MIN_MS."""
+
+BARGE_IN_MIN_MS = 1000
+"""Audio needed before the voiceprint is asked. Below this the embedder refuses outright
+(ENROLL_MIN_SECONDS), and the scores above show why: shorter windows do not carry enough voice.
+
+This is the barge-in latency, and it is honest rather than ideal — a second of him talking before
+the agent stops. Sub-second identity is not available from this model, and the alternative is
+stopping on any noise, which is the thing he explicitly ruled out."""
 
 
 MIN_UTTERANCE_MS = 500
