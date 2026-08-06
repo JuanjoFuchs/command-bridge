@@ -575,7 +575,7 @@
   let muted = false, verbose = false;
   // The channel starts CLOSED and the first orb tap opens it, so a page left open in a
   // background tab is never quietly live.
-  let channelOpen = false, speakingSignal = false, speakingSince = 0;
+  let channelOpen = false, speakingSignal = false, speakingSince = 0, speakingRunStart = 0;
   // The assistant's name comes from the SERVER, so the page can never tell him to say a name
   // the wake gate no longer accepts. Falls back to a neutral instruction rather than guessing.
   let wakeName = "";
@@ -687,13 +687,29 @@
   // whether to hold a clip, not whether he has finished a thought.
   const SPEAKING_RMS = 0.045;        // above the room, below a whisper
   const SPEAKING_HANGOVER_MS = 700;
+  const SPEAKING_MIN_RUN_MS = 120;
+  // A MINIMUM RUN before the signal asserts, borrowed from huggingface/speech-to-speech, whose
+  // VAD refuses to hold fragments under 100 ms "so sub-threshold bursts cannot sum past
+  // min_speech_ms and fire a false barge-in".
+  //
+  // Without it a cough, a keyboard knock or a door closing crosses the level for a single buffer
+  // and holds the agent's reply for the whole 700 ms hangover. That is the same failure as being
+  // interrupted, inverted: instead of the agent talking over him, the room silences the agent.
+  // 120 ms is shorter than any syllable, so real speech never waits on it.
   function reportSpeaking(rms) {
     const now = performance.now();
     if (rms >= SPEAKING_RMS) {
+      if (!speakingRunStart) speakingRunStart = now;
       speakingSince = now;
-      if (!speakingSignal) { speakingSignal = true; tellServer("speaking", true); }
+      if (!speakingSignal && now - speakingRunStart >= SPEAKING_MIN_RUN_MS) {
+        speakingSignal = true;
+        tellServer("speaking", true);
+      }
       return;
     }
+    // Below the level: a run that never reached the minimum was noise, so forget it rather
+    // than let the next burst continue it and sum past the threshold.
+    speakingRunStart = 0;
     if (speakingSignal && now - speakingSince > SPEAKING_HANGOVER_MS) {
       speakingSignal = false;
       tellServer("speaking", false);

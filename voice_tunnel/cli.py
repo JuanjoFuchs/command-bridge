@@ -206,7 +206,7 @@ DESCRIBE: dict[str, Any] = {
         "voices": {"args": [], "returns": "installed piper voices for `say --voice`",
                    "notes": "Lists what is ON DISK. To GET one, `voice-tunnel download voice`."},
         "download": {
-            "args": {"what": "voice | asr | voiceprint (omit to list)",
+            "args": {"what": "voice | asr | voiceprint | turn (omit to list)",
                      "name": "voice name (default en_GB-alan-medium) or ASR model "
                              "(default parakeet)",
                      "--list": "show what is available and what is installed, fetch nothing",
@@ -780,9 +780,11 @@ def cmd_download(args) -> dict[str, Any]:
             result = dl.download_asr(args.name or "parakeet", args.force, progress)
         elif args.what == "voiceprint":
             result = dl.download_voiceprint(args.force, progress)
+        elif args.what == "turn":
+            result = dl.download_turn(args.force, progress)
         else:
             raise ValueError(
-                f"unknown target {args.what!r} — expected voice, asr or voiceprint; "
+                f"unknown target {args.what!r} — expected voice, asr, voiceprint or turn; "
                 f"`voice-tunnel download --list` shows what is available"
             )
     except RuntimeError as exc:
@@ -815,6 +817,9 @@ def cmd_download(args) -> dict[str, Any]:
                                  "piper-tts is not installed, so it cannot be used yet")
     elif args.what == "voice":
         result["use_it_with"] = "voice-tunnel config set VOICE_TUNNEL_TTS piper"
+    elif args.what == "turn" and not config.have_module("transformers"):
+        result["also_needed"] = ("`pip install voice-tunnel[parakeet]` — the model is here but "
+                                 "onnxruntime and transformers are not, so it cannot load")
     elif args.what in ("asr", "voiceprint") and not config.have_module("sherpa_onnx"):
         result["also_needed"] = ("`pip install voice-tunnel[parakeet]` — the model is downloaded "
                                  "but sherpa-onnx is not installed, so it cannot be loaded")
@@ -1022,6 +1027,21 @@ def cmd_doctor(_args) -> dict[str, Any]:
             "`voice-tunnel download voiceprint`",
         ))
 
+    # Also an advisory, and for the same reason as the voiceprint: without it the tunnel uses the
+    # fixed end-of-utterance timer it has always used. Absent is a worse experience, never a
+    # broken one, and a doctor that cries wolf about optional things trains people to ignore it.
+    from . import turndetect as _td
+    if not config.turn_detect_enabled():
+        detail = "disabled by VOICE_TUNNEL_TURN_DETECT=0 — using the fixed silence timer"
+    elif not _td.installed():
+        detail = (f"not installed — turns end on a fixed {config.END_OF_UTTERANCE_MS} ms silence. "
+                  f"`voice-tunnel download turn` lets it end when you actually finish")
+    elif not config.have_module("transformers"):
+        detail = "model present but transformers is not — `pip install voice-tunnel[parakeet]`"
+    else:
+        detail = f"smart-turn ready (threshold {config.turn_threshold()})"
+    checks.append(_check("turn_detection", True, detail))
+
     # Where `voice-tunnel` SHOULD be found differs by install: a checkout has shims in bin/ that
     # nothing puts on PATH for you, while pip already installed a console script beside the
     # interpreter. Pointing an installed user at `<site-packages>/bin` — which does not exist —
@@ -1163,7 +1183,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="apply to the running server only; do not persist")
 
     dw = sub.add_parser("download", help="fetch a voice, an ASR model, or the voiceprint model")
-    dw.add_argument("what", nargs="?", choices=["voice", "asr", "voiceprint"],
+    dw.add_argument("what", nargs="?", choices=["voice", "asr", "voiceprint", "turn"],
                     help="omit (or --list) to see what is available and what is installed")
     dw.add_argument("name", nargs="?", default=None,
                     help="voice name (default en_GB-alan-medium) or ASR model (default parakeet)")

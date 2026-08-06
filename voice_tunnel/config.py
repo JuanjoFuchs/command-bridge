@@ -158,6 +158,80 @@ instead of one, and an agent that answers the first fragment answers the wrong q
 The latency that actually mattered was never this — Parakeet cut transcription from 2.64 s to
 0.23 s. This pause buys the speaker room to think, which is what the whole exchange depends on."""
 
+# ------------------------------------------------------- learned turn detection
+#
+# The constant above is a PERMANENT COMPROMISE and this is the escape from it. 1500 ms is short
+# enough to still cut off someone composing out loud and long enough to make every short question
+# wait — and no single number fixes both, because the right wait depends on whether the sentence
+# SOUNDED finished. Smart Turn v3.2 answers that from prosody, at the boundary the segmenter
+# already has. See specs/004-turn-detection.md and voice_tunnel/turndetect.py.
+#
+# Defaults are HuggingFace's production values, adopted rather than re-derived: they ship this
+# model on by default in speech-to-speech, which runs on thousands of Reachy Mini robots. Taking
+# somebody's tuned numbers is cheaper than rediscovering them and easier to compare against.
+
+TURN_DETECT = True
+"""Use the model when it is installed. Set VOICE_TUNNEL_TURN_DETECT=0 to force the plain timer —
+worth having as an A/B, since a silent fall back to the timer and a deliberate one look identical
+from the outside."""
+
+TURN_THRESHOLD = 0.5
+"""Probability at or above which the utterance counts as finished. HuggingFace's default."""
+
+TURN_MAX_WAIT_MS = 1500
+"""How much longer than the normal timeout the model may hold a turn open.
+
+Bounded because the failure mode of an unbounded extension is the worst one available: a turn
+that never closes is a tunnel that never answers. HF use 2000 ms measured from the boundary; this
+is 1500 ms measured from END_OF_UTTERANCE_MS, so the total ceiling is 3.0 s — comfortably past
+where a real thought resumes and well short of feeling broken."""
+
+TURN_INCOMPLETE_DELAY_MS = 600
+"""Extra silence required before asking again, after the model says 'not finished'. HF's default.
+
+Re-asking every audio chunk would run the model dozens of times per pause for an answer that
+cannot change that fast."""
+
+TURN_MIN_SILENCE_MS = 400
+"""The floor below which NO amount of confidence closes a turn early.
+
+This is the guard on the half of the feature that carries the risk. Ending early on a confident
+'complete' is where most of the latency win is — and it is also exactly the failure that raising
+1000 -> 1500 was meant to fix. Gaps under 400 ms are inside normal speech, so no prediction is
+allowed to act on them."""
+
+
+def turn_detect_enabled() -> bool:
+    raw = _env("VOICE_TUNNEL_TURN_DETECT")
+    if raw:
+        return raw not in ("0", "false", "no", "off")
+    return TURN_DETECT
+
+
+def turn_threshold() -> float:
+    try:
+        return min(1.0, max(0.0, float(_env("VOICE_TUNNEL_TURN_THRESHOLD") or TURN_THRESHOLD)))
+    except ValueError:
+        return TURN_THRESHOLD
+
+
+def turn_threads() -> int:
+    """Measured, not guessed, on this machine over a 4 s utterance:
+
+        intra_op=1   212 ms      <- the value this shipped with before measuring
+        intra_op=2   196 ms
+        intra_op=4   133 ms      <- default
+        intra_op=8   156 ms      <- worse; contention beats parallelism past here
+
+    Four rather than "all of them" because this runs at a boundary while transcription may be
+    starting on the same machine, and 8 was slower anyway. The intuition that fewer threads would
+    be politer cost 79 ms per turn until it was actually measured."""
+    try:
+        return max(1, int(_env("VOICE_TUNNEL_TURN_THREADS", "4")))
+    except ValueError:
+        return 4
+
+
 MIN_UTTERANCE_MS = 500
 """Discard anything shorter. Rejects coughs, clicks, and door slams that clear the energy gate
 but carry no speech."""

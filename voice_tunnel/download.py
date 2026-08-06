@@ -62,6 +62,14 @@ ASR_MODELS: dict[str, dict[str, str]] = {
     },
 }
 
+TURN_MODEL = {
+    "file": "smart-turn-v3.2-cpu.onnx",
+    "url": "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx",
+    "note": "Smart Turn v3.2 (BSD-2-Clause, 8.3 MB int8). Decides whether an utterance actually "
+            "SOUNDED finished instead of waiting out a fixed timer, so he is not cut off "
+            "mid-thought and a short question does not wait 1.5 s for nothing.",
+}
+
 VOICEPRINT_MODEL = {
     "file": "nemo_en_titanet_large.onnx",
     # "recongition" is upstream's typo in the release tag, not one here. Correcting it 404s.
@@ -235,6 +243,18 @@ def download_voiceprint(force: bool = False, on_progress=None) -> dict:
             "already_present": False, "bytes": written}
 
 
+def download_turn(force: bool = False, on_progress=None) -> dict:
+    """Fetch the turn-detection model — the escape from a fixed end-of-utterance timeout."""
+    dest = os.path.join(config.models_dir(), TURN_MODEL["file"])
+    if _looks_like_a_model(dest) and not force:
+        return {"turn": TURN_MODEL["file"], "path": dest, "already_present": True, "bytes": 0}
+    written = _fetch(TURN_MODEL["url"], dest, on_progress)
+    if not _looks_like_a_model(dest):
+        os.unlink(dest)
+        raise RuntimeError("turn model downloaded but is too small — removed")
+    return {"turn": TURN_MODEL["file"], "path": dest, "already_present": False, "bytes": written}
+
+
 def catalog() -> dict[str, Any]:
     """What can be fetched and what is already here — answerable with no network."""
     return {
@@ -248,6 +268,11 @@ def catalog() -> dict[str, Any]:
              "installed": os.path.isdir(os.path.join(config.models_dir(), v["dir"]))}
             for k, v in ASR_MODELS.items()
         ],
+        "turn": [{
+            "name": "smart-turn", "note": TURN_MODEL["note"],
+            "installed": _looks_like_a_model(
+                os.path.join(config.models_dir(), TURN_MODEL["file"])),
+        }],
         "voiceprint": [{
             "name": "titanet", "note": VOICEPRINT_MODEL["note"],
             "installed": _looks_like_a_model(

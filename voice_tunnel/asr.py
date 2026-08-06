@@ -89,7 +89,33 @@ class UtteranceBuffer:
         min_ms: int = config.MIN_UTTERANCE_MS,
         max_ms: int = config.MAX_UTTERANCE_MS,
         grace_ms: int = config.INITIAL_GRACE_MS,
+        turn_detector=None,
     ) -> None:
+        self.turn_detector = turn_detector
+        """Optional `(samples) -> True | False | None` — does this sound finished?
+
+        **INJECTED, never imported**, and the docstring above is why: this class is pure so its
+        turn-boundary logic stays unit-testable with synthetic arrays and no model. It holds the
+        most delicately tuned code in the project — the noise floor is measured rather than fixed
+        because a fixed one failed against a real air conditioner, found live and not by testing —
+        and every one of those tests would start depending on an 8 MB download.
+
+        `None` means "no opinion": unavailable, or it failed. The timer decides, exactly as it did
+        before this existed. See voice_tunnel/turndetect.py and specs/004-turn-detection.md.
+        """
+        self._last_asked_silence = -10**9
+        """Trailing-silence count at the last early check, so `feed` cannot run the model on
+        every audio chunk. Starts far negative so the first check is always allowed."""
+        self._extended_samples = 0
+        """How much extra silence the detector has already bought for THIS utterance. Bounded by
+        TURN_MAX_WAIT_MS so a model stuck on 'incomplete' can never hold a turn open forever."""
+        self.last_end_reason: str | None = None
+        """Which mechanism closed the last turn: `timer`, `model-complete`, `model-early`,
+        `model-exhausted`, or `too-long`. Recorded so the change is measurable rather than
+        assumed — without it, 'is the model helping' is a matter of opinion."""
+        self._max_extend_samples = int(sr * config.TURN_MAX_WAIT_MS / 1000)
+        self._incomplete_delay_samples = int(sr * config.TURN_INCOMPLETE_DELAY_MS / 1000)
+        self._min_silence_samples = int(sr * config.TURN_MIN_SILENCE_MS / 1000)
         self.sr = sr
         self.silence_floor = silence_floor
         self.end_silence_samples = int(sr * end_silence_ms / 1000)
@@ -177,8 +203,62 @@ class UtteranceBuffer:
 
         ended = self._seen_speech and self._trailing_silence >= self.end_silence_samples
         too_long = self._buf.size >= self.max_samples
+        if ended:
+            self.last_end_reason = "timer"
+        elif too_long:
+            self.last_end_reason = "too-long"
+
+        # ASK THE MODEL, at the boundary the timer just found. This is the whole feature: the
+        # timer says "1.5 s of silence has passed", which is not the same question as "has he
+        # finished". Only here, never per chunk — that is what makes an 8 MB model free.
+        if ended and self.turn_detector is not None:
+            if self._extended_samples >= self._max_extend_samples:
+                # Bounded. A model stuck on "incomplete" must not hold a turn open forever: a
+                # turn that never closes is a tunnel that never answers.
+                self.last_end_reason = "model-exhausted"
+            else:
+                verdict = self.turn_detector(self._buf)
+                if verdict is False:
+                    # Still going. Buy him more room and re-ask after another stretch of quiet,
+                    # rather than on the next chunk — the answer cannot change that fast.
+                    self._trailing_silence = max(
+                        0, self.end_silence_samples - self._incomplete_delay_samples
+                    )
+                    self._extended_samples += self._incomplete_delay_samples
+                    ended = False
+                    self.last_end_reason = None
+                elif verdict is True:
+                    self.last_end_reason = "model-complete"
+                # verdict is None -> no opinion, the timer already decided. Reason stays "timer".
+
+        # EARLY EXIT: a confident "finished" closes the turn before the full timeout, which is
+        # where most of the latency win lives. Gated by its own floor because this is the risky
+        # half — closing early on a wrong prediction is exactly the failure that raising
+        # 1000 -> 1500 was meant to fix, and gaps under TURN_MIN_SILENCE_MS are inside normal
+        # speech.
+        #
+        # RATE-LIMITED, and that is not an optimisation. `feed` runs per audio chunk — several
+        # times a second — so an ungated check here would run the model continuously through
+        # every pause, which is precisely the "never per chunk" property that makes it free.
+        # Asked at most once per TURN_INCOMPLETE_DELAY_MS of additional silence.
+        if (
+            not ended
+            and not too_long
+            and self.turn_detector is not None
+            and self._seen_speech
+            and self._min_silence_samples <= self._trailing_silence < self.end_silence_samples
+            and self._buf.size >= self.min_samples
+            and self._trailing_silence - self._last_asked_silence >= self._incomplete_delay_samples
+        ):
+            self._last_asked_silence = self._trailing_silence
+            if self.turn_detector(self._buf) is True:
+                ended = True
+                self.last_end_reason = "model-early"
 
         if not (ended or too_long):
+            # Deliberately NOT cleared here. It is the reason the LAST turn ended, and `feed` runs
+            # several times a second afterwards — clearing it on every non-ending chunk meant the
+            # value was almost always None by the time anything read it.
             return None
 
         out = self._buf
@@ -214,6 +294,10 @@ class UtteranceBuffer:
         self._buf = np.zeros(0, dtype=np.float32)
         self._trailing_silence = 0
         self._seen_speech = False
+        # Per-UTTERANCE, not per-session: the extension budget and the ask-rate limiter both
+        # have to start fresh, or one long thought would spend the budget for every turn after it.
+        self._extended_samples = 0
+        self._last_asked_silence = -10**9
         self._buf_start_total = self._total_fed
 
     def flush(self) -> tuple[np.ndarray, float, float] | None:

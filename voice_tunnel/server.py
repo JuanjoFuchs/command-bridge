@@ -24,7 +24,7 @@ import numpy as np
 from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
-from . import config, cues, security, store, timing, tts, voiceprint
+from . import config, cues, security, store, timing, tts, turndetect, voiceprint
 from .wake import WakeGate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -46,7 +46,12 @@ class TunnelState:
         self.clients: set[web.WebSocketResponse] = set()
         self.wake = WakeGate(enabled=gate_enabled)
         self.recognizer = asr_mod.Recognizer()
-        self.buffer = asr_mod.UtteranceBuffer()
+        # The one place the model meets the pure segmenter. Injected rather than imported
+        # so UtteranceBuffer stays testable without an 8 MB download — see its docstring.
+        self.turn = turndetect.TurnDetector() if config.turn_detect_enabled() else None
+        self.buffer = asr_mod.UtteranceBuffer(
+            turn_detector=(self.turn.complete if self.turn else None)
+        )
         self.turns_logged = 0
         self.frames_received = 0
         self.samples_received = 0
@@ -204,6 +209,8 @@ class TunnelState:
             "muted": self.muted,
             "capturing": self.capturing,
             "channel_open": self.channel_open,
+            "turn_detection": (self.turn.describe() if self.turn else {"enabled": False}),
+            "last_end_reason": self.buffer.last_end_reason,
             "user_speaking": self.user_speaking,
             "seconds_since_audio": (
                 None if not self.last_audio_at
@@ -907,7 +914,13 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     )
     state.turns_logged += 1
     timing.stamp(state.session, "turn_logged", turn=turn.get("id"),
-                 text=(agent_text or "")[:80], addressed=addressed)
+                 text=(agent_text or "")[:80], addressed=addressed,
+                 # WHICH mechanism closed this turn, and what the model cost. Without it,
+                 # "is turn detection helping" is a matter of opinion — and it goes in the
+                 # timing log rather than the turn schema, because that schema is a
+                 # published contract agents parse and this is an internal diagnostic.
+                 end_reason=state.buffer.last_end_reason,
+                 turn_model_ms=(round(state.turn.last_ms, 1) if state.turn else None))
     state.partial_text = ""  # the final turn supersedes any live preview
     await _broadcast_json(state, {"type": "turn", **turn})
     # Republish the read-lag so the gap between "said" and "read by the agent" stays visible
@@ -968,6 +981,11 @@ def run(
     # spoken and is waiting to learn whether any of this works. Backgrounded rather than awaited
     # so the URL is printable and the socket is accepting connections while it loads.
     threading.Thread(target=tts.warm, name="tts-warm", daemon=True).start()
+    # Same reason, same shape: 4.7 s cold against 133 ms warm, and unwarmed that cost lands on the
+    # very first turn. Reached through the app because the state lives there, not in this scope.
+    _turn = app["state"].turn
+    if _turn is not None:
+        threading.Thread(target=_turn.warm, name="turn-warm", daemon=True).start()
 
     # flush=True: without it the banner sits in the pipe buffer when serve is launched
     # detached (which is the normal way an agent runs it), so the operator never sees the URL.
@@ -985,6 +1003,18 @@ def run(
         )
     else:
         print("  wake gate          OFF — every turn is treated as addressed", flush=True)
+    # Which mechanism ends a turn, on the banner, because a silent fall back to the fixed
+    # timer and a deliberate one look identical from the outside — the same reason the TTS
+    # line says whether the resident path is live.
+    _t = app["state"].turn
+    if _t is None:
+        print("  turns end on       a fixed silence timer (turn detection off)", flush=True)
+    elif not turndetect.installed():
+        print(f"  turns end on       a fixed {config.END_OF_UTTERANCE_MS} ms silence "
+              f"(`voice-tunnel download turn` to use prosody instead)", flush=True)
+    else:
+        print("  turns end on       smart-turn — when you sound finished, not on a timer",
+              flush=True)
     print(f"  tts                {tts.available()}", flush=True)
     print(
         f"  voice              speed {config.speech_speed()}x, "
