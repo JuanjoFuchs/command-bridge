@@ -196,6 +196,7 @@ venv/Scripts/python -m pip install -e ".[dev,all]"
 venv/Scripts/python -m pytest tests/ -q     # unit tests, no mic and no model
 venv/Scripts/python scripts/e2e.py          # the pipeline, through a real browser
 venv/Scripts/python scripts/layout.py       # page geometry, at five viewports
+venv/Scripts/python scripts/channel.py      # the orb, mute and the speaking signal
 ```
 
 | Path | What |

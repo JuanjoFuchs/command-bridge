@@ -304,21 +304,23 @@
   #controls {
     display:flex; gap:.6rem; align-items:center; justify-content:center;
     margin-top:-.2rem;
-    /* Bounded to the orb's own width so the pair reads as belonging to it, and so a long device
-       name cannot stretch the row wider than the thing it sits under. `min-width:0` lets the
-       select actually honour its own text-overflow instead of refusing to shrink. */
-    width:min(62vw,40dvh,300px); max-width:100%;
+    /* Wider than the orb now that there are THREE controls — two switches and the picker. Bounded
+       to the orb's width they were legible at two and cramped at three, and a cramped touch
+       target is the one thing a phone interface cannot afford. `min-width:0` lets the select
+       honour its own text-overflow instead of refusing to shrink. */
+    width:min(100%,32rem);
+    flex-wrap:wrap; row-gap:.5rem;
   }
   #controls > * { min-width:0; }
-  #verbose { flex:0 0 auto; }
-  #mic     { flex:1 1 auto; }
+  #mute, #verbose { flex:0 0 auto; }
+  #mic            { flex:1 1 8rem; }
   /* Alone in the row (one microphone, so the picker is hidden), the switch centres itself. */
   #controls:has(#mic[hidden]) { justify-content:center; }
   /* A real switch, not a button that reports its own state in a word. The distinction matters
      here because the label is a NOUN ("Verbose"): a button saying "Verbose" is ambiguous about
      whether it describes the current mode or the one tapping would produce, and a track-and-knob
      removes the question by showing position. */
-  #verbose {
+  #verbose, #mute {
     display:inline-flex; align-items:center; gap:.6rem;
     min-height:44px; padding:.4rem .9rem .4rem .55rem; border-radius:999px;
     border:1px solid var(--edge);
@@ -326,8 +328,8 @@
     cursor:pointer; user-select:none; -webkit-user-select:none;
     transition:border-color .18s ease, background-color .18s ease;
   }
-  #verbose:hover { border-color:var(--edge-2); }
-  #verbose:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
+  #verbose:hover, #mute:hover { border-color:var(--edge-2); }
+  #verbose:focus-visible, #mute:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
   .sw-track {
     position:relative; flex:0 0 auto; width:2.3rem; height:1.3rem; border-radius:999px;
     background:color-mix(in srgb, var(--edge-2) 55%, transparent);
@@ -342,10 +344,19 @@
     font-family:var(--mono); font-size:.68rem; letter-spacing:.04em; color:var(--dim);
     transition:color .18s ease;
   }
-  #verbose[aria-checked="true"] .sw-track { background:color-mix(in srgb, var(--warm) 62%, transparent); }
-  #verbose[aria-checked="true"] .sw-knob  { transform:translateX(.98rem); background:var(--bg); }
-  #verbose[aria-checked="true"] .sw-label { color:var(--warm); }
-  #verbose[aria-checked="true"] { border-color:color-mix(in srgb, var(--warm) 50%, transparent); }
+  #verbose[aria-checked="true"] .sw-track, #mute[aria-checked="true"] .sw-track { background:color-mix(in srgb, var(--warm) 62%, transparent); }
+  #verbose[aria-checked="true"] .sw-knob, #mute[aria-checked="true"] .sw-knob { transform:translateX(.98rem); background:var(--bg); }
+  #verbose[aria-checked="true"] .sw-label, #mute[aria-checked="true"] .sw-label { color:var(--warm); }
+  #verbose[aria-checked="true"], #mute[aria-checked="true"] { border-color:color-mix(in srgb, var(--warm) 50%, transparent); }
+
+  /* Mute ON is a WARNING; verbose ON is a preference. They must not share a colour. Being deaf
+     without noticing is the easiest state in this interface to forget you are in, and it already
+     cost a live session where the agent sat announcing it was waiting for someone whose
+     microphone was switched off. Amber says "a setting is enabled"; red says "you cannot be
+     heard". */
+  #mute[aria-checked="true"] .sw-track { background:color-mix(in srgb, var(--err) 62%, transparent); }
+  #mute[aria-checked="true"] .sw-label { color:var(--err); }
+  #mute[aria-checked="true"] { border-color:color-mix(in srgb, var(--err) 50%, transparent); }
 
   /* Muted is a WARNING state on the orb, not a neutral one: the tunnel is deaf and that is the
      easiest thing in this whole interface to forget you did.
@@ -360,6 +371,19 @@
   #orb.muted, #orb.muted ~ * {
     --signal:var(--err); --glow:transparent; --lamp:#00000000; --ab:.05; --ag:.10;
   }
+
+  /* CLOSED is not muted and must not look like it. Muted is a warning — the tunnel is running
+     and deaf, which is easy to forget you did. Closed is a resting state he chose, so it reads as
+     off rather than as alarm: no colour, no glow, dimmed. The distinction has to survive a glance,
+     because these are now two different switches he can be in four combinations of. */
+  #orb.closed {
+    color:var(--faint);
+    border-color:var(--edge);
+  }
+  #orb.closed, #orb.closed ~ * {
+    --signal:var(--faint); --glow:transparent; --lamp:#00000000; --ab:.02; --ag:.04;
+  }
+  #orb.closed { animation:none; }
 
   #mic {
     appearance:none; -webkit-appearance:none;
@@ -468,7 +492,9 @@
   @media (max-height:560px) {
     h1 { display:none; }
     #orbwrap { width:min(30dvh,44vw,168px); }
-    #controls { width:min(30dvh,44vw,168px); }   /* stays pinned to the orb's width */
+    /* NOT pinned to the orb any more — that was sized for two controls and there are now
+       three, so 168px stacked them. The switches stay together; the picker wraps. */
+    #controls { width:min(100%,28rem); }
     #stage { gap:.55rem; }
     #state { min-height:1.6em; }
     body { row-gap:.5rem; }
@@ -503,13 +529,18 @@
     <!-- Flanking the orb, one each side: the two things you reach for WITHOUT looking. Both are
          toggles with a persistent on/off state, so they say what they ARE, not what tapping them
          would do — a button labelled with its own action reads as a lie half the time. -->
-    <!-- One control, not two. The orb owns the microphone (tap to start, tap again to mute), so
-         the only thing left worth a switch is how much the agent narrates. -->
-    <!-- ONE row for both settings, flanking the orb's width: narration on the left, microphone
-         on the right. They were two stacked lines, which spent a second row of vertical space on
-         a phone to say something neither control needed — and vertical space is what the
-         transcript wants. Neither is touched mid-conversation, so they belong side by side. -->
+    <!-- TWO switches and the orb, and each says one thing:
+           orb      is the conversation live at all — both directions, replies queue while off
+           Mute     can he be heard — he still hears the replies
+           Verbose  how much the agent narrates
+         Mute used to live on the orb, which conflated "stop hearing me" with "stop talking to
+         me" and left no way to ask for only one. One row, flanking the orb's width, because a
+         second stacked row costs vertical space the transcript wants on a phone. -->
     <div id="controls">
+      <div id="mute" role="switch" tabindex="0" aria-checked="false" aria-label="Mute my microphone">
+        <span class="sw-track"><span class="sw-knob"></span></span>
+        <span class="sw-label">Mute</span>
+      </div>
       <div id="verbose" role="switch" tabindex="0" aria-checked="false" aria-label="Verbose mode">
         <span class="sw-track"><span class="sw-knob"></span></span>
         <span class="sw-label">Verbose</span>
@@ -529,6 +560,7 @@
   const $log = document.getElementById("log");
   const $mic = document.getElementById("mic");
   const $verbose = document.getElementById("verbose");
+  const $mute = document.getElementById("mute");
 
   const token = new URLSearchParams(location.search).get("token") || "";
   let ws = null, ctx = null, micStream = null, node = null, source = null;
@@ -541,6 +573,9 @@
   const clipQueue = [];
   let draining = false;
   let muted = false, verbose = false;
+  // The channel starts CLOSED and the first orb tap opens it, so a page left open in a
+  // background tab is never quietly live.
+  let channelOpen = false, speakingSignal = false, speakingSince = 0;
   // The assistant's name comes from the SERVER, so the page can never tell him to say a name
   // the wake gate no longer accepts. Falls back to a neutral instruction rather than guessing.
   let wakeName = "";
@@ -555,7 +590,13 @@
   // that the UI actually SHOWED a stage rather than merely that the server sent it.
   const diag = window.__voiceTunnel = {
     connected:false, framesSent:0, peakRms:0, liveLevel:0,
-    turns:[], played:[], cues:[], states:[], partials:[], errors:[]
+    turns:[], played:[], cues:[], states:[], partials:[], errors:[],
+    // Lets a harness drive the channel, mute and speaking signals WITHOUT a microphone. All
+    // three normally require `running`, which requires a real `getUserMedia` grant that a
+    // headless run cannot produce — so without this the states that matter most are the ones no
+    // automated check can reach. Assigned below to the same `tellServer` the UI itself calls, so
+    // a harness exercises the real path instead of a parallel one that can drift from it.
+    signal: null,
   };
 
   const setState = (t, cls) => { $state.textContent = t; $state.className = cls || ""; };
@@ -628,20 +669,61 @@
   function tellServer(type, value) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, value }));
   }
+  diag.signal = tellServer;
+
+  // Tell the server he is TALKING, from the microphone level, before any of that audio has
+  // crossed the network. JJ, live 2026-08-06, immediately after being interrupted: "the client
+  // needs to send a signal back to the server whenever it's detecting me speaking so that you
+  // don't interrupt me... the responses get queued up until I shut up."
+  //
+  // The server already infers this from its own segmenter, and that inference is what allowed the
+  // interruption: it is derived from audio that has already been buffered, sent and segmented, so
+  // it trails the actual sound. This leads it.
+  //
+  // A HANGOVER rather than an instant drop, because speech is full of gaps — the pause between
+  // words is silent, and a signal that tracks the waveform exactly would clear a dozen times per
+  // sentence and invite a reply into each one. It only clears after a stretch of quiet long
+  // enough to be a real ending. Deliberately shorter than END_OF_UTTERANCE_MS: this decides
+  // whether to hold a clip, not whether he has finished a thought.
+  const SPEAKING_RMS = 0.045;        // above the room, below a whisper
+  const SPEAKING_HANGOVER_MS = 700;
+  function reportSpeaking(rms) {
+    const now = performance.now();
+    if (rms >= SPEAKING_RMS) {
+      speakingSince = now;
+      if (!speakingSignal) { speakingSignal = true; tellServer("speaking", true); }
+      return;
+    }
+    if (speakingSignal && now - speakingSince > SPEAKING_HANGOVER_MS) {
+      speakingSignal = false;
+      tellServer("speaking", false);
+    }
+  }
 
   function setMuted(next) {
-    muted = next;
+    muted = Boolean(next);
     localStorage.setItem("voice-tunnel.muted", muted ? "1" : "0");
     // The server is told so `voice-tunnel status` can say "he has himself muted" — otherwise a silent
     // tunnel and a muted one look identical from the agent's side, and the agent goes hunting
     // for a broken microphone that is working perfectly.
     tellServer("muted", muted);
+    $mute.setAttribute("aria-checked", String(muted));
+    if (muted) { levelTarget = 0; tellServer("speaking", false); }
+    paintOrb();
+  }
+
+  // ONE painter for the orb, because it now reports two independent facts and they used to be
+  // written from three different places. Closed outranks muted: if the channel is shut, saying
+  // "muted" would answer a question he did not ask.
+  function paintOrb() {
     if (!running) return;
-    // The orb IS the mute indicator now, so its own face has to carry the state — there is no
-    // second control left to read it off.
-    $orb.classList.toggle("muted", muted);
-    $orb.textContent = muted ? "Muted" : "Listening";
-    setState(muted ? "muted — tap the orb to talk" : wakePrompt());
+    const closed = !channelOpen;
+    $orb.classList.toggle("closed", closed);
+    $orb.classList.toggle("muted", !closed && muted);
+    $orb.textContent = closed ? "Off" : muted ? "Muted" : "Listening";
+    setState(closed ? "tap the orb to go live"
+           : muted ? "muted — you can still hear replies"
+           : wakePrompt());
   }
 
   // Paint only. Used when the SERVER tells us the value — either on the ready frame or after
@@ -656,6 +738,11 @@
     paintVerbose(next);
     tellServer("verbose", verbose);
   }
+
+  $mute.addEventListener("click", () => setMuted(!muted));
+  $mute.addEventListener("keydown", (e) => {
+    if (e.key === " " || e.key === "Enter") { e.preventDefault(); setMuted(!muted); }
+  });
 
   $verbose.addEventListener("click", () => setVerbose(!verbose));
   $verbose.addEventListener("keydown", (e) => {
@@ -721,9 +808,31 @@
   // He is right, and the socket now opens on load to match. The ONE thing that cannot follow his
   // model is the first tap: `getUserMedia` requires a user gesture on mobile, so a page cannot
   // hold a microphone it was never handed. That tap is a browser rule, not a design choice.
+  // THE ORB IS THE CHANNEL, not the microphone. Tapping it opens or closes the conversation in
+  // BOTH directions: closed means nothing is heard and nothing plays, and replies queue on the
+  // server until it reopens. JJ, live 2026-08-06: "the orb should control whether or not this
+  // interaction is live... if I turn off the orb, that means that you cannot talk to me either.
+  // And your responses get queued up server side until I turn the orb back on."
+  //
+  // It used to double as the mute, which conflated two different intentions — "stop hearing me"
+  // and "stop talking to me" — and left no way to express only one of them. Mute is now its own
+  // switch beside verbose.
+  //
+  // The first tap still has to start capture, because `getUserMedia` requires a user gesture on
+  // mobile: a page cannot hold a microphone it was never handed. After that the stream stays and
+  // the orb is purely the channel.
   async function orbTapped() {
-    if (running) { setMuted(!muted); return; }
+    if (running) { setChannel(!channelOpen); return; }
     await start();
+  }
+
+  function setChannel(next) {
+    channelOpen = Boolean(next);
+    tellServer("channel", channelOpen);
+    // Closing implies silence from this side too — otherwise "the channel is shut" would still
+    // be sending him audio, which is not what the switch says it does.
+    if (!channelOpen) levelTarget = 0;
+    paintOrb();
   }
 
   async function start() {
@@ -860,6 +969,9 @@
       // anyone should have to trust, and tearing down the graph would cost a re-permission
       // prompt to come back. The level ring goes still too, which is the visible proof.
       if (muted) { levelTarget = 0; return; }
+      // A closed channel sends nothing. The graph keeps running so reopening costs no permission
+      // prompt, but no audio leaves the page.
+      if (!channelOpen) { levelTarget = 0; return; }
       let sum = 0;
       for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
       const r = Math.sqrt(sum / ch.length);
@@ -867,6 +979,7 @@
       // Normalise against a typical speaking level (~0.15 RMS) so the ring uses its full
       // range on ordinary speech instead of only reacting to shouting.
       levelTarget = Math.min(1, r / 0.15);
+      reportSpeaking(r);
       ws.send(floatToPCM16(ch).buffer);
       diag.framesSent++;
     };
@@ -901,6 +1014,10 @@
     // Tell the server the microphone is actually live. A connected socket is not a listening
     // one, and the agent cannot tell those apart without being told.
     tellServer("capturing", true);
+    // The first tap is BOTH "grant the microphone" and "go live" — one gesture, because that is
+    // what a tap means to him. Every tap after this one is only the channel.
+    channelOpen = true;
+    tellServer("channel", true);
     // Anything said while the page sat un-tapped has been waiting for an AudioContext. It exists
     // now, so let it out.
     drainClips();
@@ -922,15 +1039,17 @@
     });
 
     $orb.classList.add("live");
-    // Re-apply through setMuted rather than hard-coding "Listening": a mute persisted from the
-    // last session is restored before `running` is true, so the visual it wanted to paint was
-    // skipped. Without this the orb would read "Listening" on a microphone that is off.
-    setMuted(muted);
+    // Paint through the one painter rather than hard-coding "Listening": a mute persisted from
+    // the last session is restored before `running` is true, so the visual it wanted was skipped,
+    // and the orb would read "Listening" over a muted microphone.
+    paintOrb();
   }
 
   async function stop() {
     running = false;
+    channelOpen = false;
     tellServer("capturing", false);
+    tellServer("channel", false);
     try { if (node) node.disconnect(); } catch {}
     try { if (source) source.disconnect(); } catch {}
     try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch {}
@@ -959,6 +1078,14 @@
         // preference about the agent must not be reverted by whichever page connected last.
         tellServer("muted", muted);
         tellServer("capturing", running);
+        // The channel is a fact about this device too, and re-asserting it is what releases
+        // anything queued while the socket was down. Without it a reconnect leaves the server
+        // believing the channel is shut and the queue never drains.
+        tellServer("channel", channelOpen);
+        // Never resume a stale "he is talking". A socket that dropped mid-sentence would
+        // otherwise leave the server holding every reply until the 15 s bound expired.
+        speakingSignal = false;
+        tellServer("speaking", false);
         resolve();
       };
       ws.onclose = () => {
@@ -1054,6 +1181,11 @@
       } else if (msg.type === "verbose") {
         // Someone flipped it elsewhere — another device, or the agent via `voice-tunnel verbose on`.
         paintVerbose(msg.value);
+      } else if (msg.type === "channel") {
+        // Another device (or a reconnect echo) changed it. Adopt without echoing back, same rule
+        // as verbose: a client that replies to a broadcast makes a loop.
+        channelOpen = Boolean(msg.value);
+        paintOrb();
       } else if (msg.type === "wake") {
         // The agent renamed itself mid-session (`voice-tunnel wake --name codex`). Repaint
         // immediately: this line is the instruction for what to SAY, so a stale name here is the

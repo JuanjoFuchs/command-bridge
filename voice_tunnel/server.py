@@ -125,7 +125,38 @@ class TunnelState:
         self.muted: bool = False
         """Whether the client is holding its own microphone shut. Published for `status` only —
         the mute is enforced ON THE CLIENT by not sending frames, because a mute that still
-        streams audio to a server that promises to ignore it is not a mute anyone should trust."""
+        streams audio to a server that promises to ignore it is not a mute anyone should trust.
+
+        **Mute is one direction only.** He cannot be heard; he can still hear. That is the whole
+        difference from `channel_open` below, and separating them is what lets him silence his
+        own microphone in a meeting without also losing the reply he is waiting for."""
+        self.channel_open: bool = False
+        """Is the conversation live AT ALL — the orb.
+
+        Off means neither direction carries: no audio up, and **nothing plays down**. Replies
+        synthesized while it is closed go to `undelivered` and arrive when he reopens it.
+
+        JJ, live 2026-08-06: *"the orb should control whether or not this interaction is live...
+        if I turn off the orb, that means that you cannot talk to me either. And your responses
+        get queued up server side until I turn the orb back on."*
+
+        **Why this is not the same flag as `capturing`.** `capturing` answers "is the microphone
+        running", which is a fact about hardware and permissions. This answers "is he in the
+        conversation", which is a decision he made. They coincided while the orb did both jobs,
+        and that is exactly why the orb could not express "listen to me but do not talk yet"."""
+        self.user_speaking: bool = False
+        """The CLIENT's own report that he is talking right now.
+
+        The server already infers this from `buffer.speech_active`, and that inference is what let
+        the agent cut across him: it is derived from audio that has already crossed the network
+        and been segmented, so it lags the actual sound by a buffer plus a hop. The client knows
+        from the microphone level, immediately.
+
+        Used ADDITIVELY with the server-side signal — hold if either says he is talking. A false
+        positive costs a moment of delay; a false negative costs interrupting him, which is the
+        failure this exists to prevent. JJ, live 2026-08-06, having just been interrupted: *"the
+        client needs to send a signal back to the server whenever it's detecting me speaking so
+        that you don't interrupt me."*"""
         self.embedder = voiceprint.Embedder()
         self.voice_samples: int = 0
         self.partial_busy: bool = False
@@ -172,6 +203,8 @@ class TunnelState:
             "verbose": self.verbose,
             "muted": self.muted,
             "capturing": self.capturing,
+            "channel_open": self.channel_open,
+            "user_speaking": self.user_speaking,
             "seconds_since_audio": (
                 None if not self.last_audio_at
                 else round(time.monotonic() - self.last_audio_at, 1)
@@ -337,8 +370,16 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
     # finish speaking who has physically switched their microphone off. JJ, live 2026-08-01:
     # "whenever I mute, you say that you're listening and you're waiting for me to finish, but
     # I'm muted."
+    # EITHER signal holds the clip. The client's is faster — it reads the microphone level
+    # directly, while the server's is derived from audio that has already crossed the network and
+    # been segmented, so it lags by a buffer plus a hop. That lag is what let a reply land on top
+    # of him. Additive on purpose: a false positive costs a moment of delay, a false negative
+    # costs interrupting him.
+    def talking() -> bool:
+        return state.user_speaking or state.buffer.speech_active
+
     while waited < 15.0 and not state.muted:
-        if state.buffer.speech_active:
+        if talking():
             if not announced:
                 await _set_agent_state(state, "waiting")
                 announced = True
@@ -352,9 +393,9 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
             await asyncio.sleep(0.1)
             grace += 0.1
             waited += 0.1
-            if state.buffer.speech_active:
+            if talking():
                 break
-        if not state.buffer.speech_active:
+        if not talking():
             break
     await _set_agent_state(state, "speaking")
     await _push_cue(state, "speaking")
@@ -370,21 +411,29 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
         "text": text,
         "held_for": round(waited, 1),
     }
-    if state.clients:
+    # TWO ways to have nobody to talk to, and they queue identically. A dropped socket is an
+    # accident; a closed orb is a decision. Either way the reply is held rather than played to an
+    # empty room, and arrives when he is back — which is what the undelivered queue was built for
+    # when a locked phone was silently eating answers.
+    deliverable = bool(state.clients) and state.channel_open
+    if deliverable:
         await _send_clip(state, header, pcm)
     else:
-        # Nobody listening. Hold it rather than dropping it — see TunnelState.undelivered.
         state.undelivered.append({"header": header, "pcm": pcm, "at": time.time()})
         _prune_undelivered(state)
-        timing.stamp(state.session, "undelivered_queued",
-                     clip=clip_id, depth=len(state.undelivered))
+        timing.stamp(state.session, "undelivered_queued", clip=clip_id,
+                     depth=len(state.undelivered),
+                     why="channel_closed" if state.clients else "no_client")
     timing.stamp(state.session, "spoken", clip=clip_id, held_for=round(waited, 1))
     return {
         "queued": True,
         "id": clip_id,
         "seconds": round(len(pcm) / 2 / rate, 2),
         "held_for": round(waited, 1),
-        "delivered": bool(state.clients),
+        "delivered": deliverable,
+        # Say WHICH kind of not-delivered, so the agent can tell "his phone dropped" from "he
+        # closed the channel deliberately" without a second call.
+        "reason": None if deliverable else ("channel_closed" if state.clients else "no_client"),
     }
 
 
@@ -726,6 +775,24 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
                 state.last_error = f"flush on mute failed: {exc}"
         await _broadcast_json(state, {"type": "muted", "value": state.muted})
         await _set_agent_state(state, "idle" if state.muted else state.agent_state)
+    elif kind == "channel":
+        was_open = state.channel_open
+        state.channel_open = bool(msg.get("value"))
+        timing.stamp(state.session, "channel", open=state.channel_open)
+        if state.channel_open and not was_open:
+            # Reopening is what releases anything said while he was away. Same path a reconnect
+            # takes, because from the queue's point of view they are the same event: somebody is
+            # listening again.
+            delivered = await _flush_undelivered(state)
+            if delivered:
+                state.last_error = None
+        await _broadcast_json(state, {"type": "channel", "value": state.channel_open})
+        await _set_agent_state(state, "idle" if not state.channel_open else state.agent_state)
+    elif kind == "speaking":
+        # Deliberately NOT broadcast and NOT stamped per transition. It flips several times a
+        # sentence, so publishing it would be a firehose for a flag whose only consumer is the
+        # hold loop in `_speak`.
+        state.user_speaking = bool(msg.get("value"))
     elif kind == "client_error":
         state.last_error = f"client: {str(msg.get('message'))[:300]}"
 

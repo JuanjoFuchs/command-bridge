@@ -425,6 +425,12 @@ def _next_action(turns, live: dict[str, Any] | None) -> str:
         return "say you stopped listening, then run `voice-tunnel serve`"
     if not live.get("clients"):
         return "say in text that nobody is connected, then stop watching"
+    # A CLOSED channel is a decision, not a fault, so it outranks the mic and mute branches: both
+    # of those would be true as well, and telling him his microphone is off when he deliberately
+    # ended the conversation is answering a question he did not ask. Anything said now is queued
+    # and reaches him when he reopens it, so there is no need to hold work.
+    if "channel_open" in live and not live.get("channel_open"):
+        return "stop watching — he closed the channel; anything you say is queued for his return"
     if "capturing" in live and not live.get("capturing"):
         return "tell him the mic is off — page open, orb never tapped"
     if live.get("muted"):

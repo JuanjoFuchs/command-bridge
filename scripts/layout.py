@@ -54,6 +54,7 @@ POPULATE = """() => {
   const log = document.getElementById('log');
   const mic = document.getElementById('mic');
   mic.hidden = false;
+  document.getElementById('mute').setAttribute('aria-checked', 'false');
   mic.innerHTML = '<option>Headset Microphone (Realtek(R) Audio)</option>';
   const said = [
     ['me', 'what is the status of the deploy right now'],
@@ -80,6 +81,7 @@ MEASURE = """() => {
   const lb = log.getBoundingClientRect();
   const vb = document.getElementById('verbose').getBoundingClientRect();
   const mb = document.getElementById('mic').getBoundingClientRect();
+  const ub = document.getElementById('mute').getBoundingClientRect();
   return {
     innerHeight: window.innerHeight,
     bodyScrollHeight: document.body.scrollHeight,
@@ -87,9 +89,14 @@ MEASURE = """() => {
     logHeight: Math.round(lb.height),
     lastRowBottom: Math.round(last.bottom),
     logScrollsToEnd: Math.abs(log.scrollHeight - log.scrollTop - log.clientHeight) < 2,
-    controlsSameRow: Math.abs(vb.top - mb.top) < 6,
-    verboseLeftOfMic: vb.right <= mb.left + 1,
+    // MUTE AND VERBOSE must share a row — that is the actual requirement ("move the mute to a
+    // different toggle similar to the verbose mode on that same line"). The microphone picker
+    // is allowed to wrap below on a narrow screen: three controls do not fit across 360px, and
+    // forcing them would shrink a touch target rather than solve anything.
+    switchesSameRow: Math.abs(ub.top - vb.top) < 6,
+    muteLeftOfVerbose: ub.right <= vb.left + 1,
     micTouchHeight: Math.round(mb.height),
+    muteTouchHeight: Math.round(ub.height),
   };
 }"""
 
@@ -106,12 +113,13 @@ def problems(m: dict) -> list:
         out.append(f"the newest row ends at {m['lastRowBottom']}, off screen")
     if not m["logScrollsToEnd"]:
         out.append("the transcript cannot scroll to its own end")
-    if not m["controlsSameRow"]:
-        out.append("verbose and the microphone picker are not on one line")
-    if not m["verboseLeftOfMic"]:
-        out.append("verbose is not to the left of the microphone picker")
-    if m["micTouchHeight"] < 44:
-        out.append(f"microphone picker is {m['micTouchHeight']}px tall, under the 44px touch minimum")
+    if not m["switchesSameRow"]:
+        out.append("mute and verbose are not on the same line")
+    if not m["muteLeftOfVerbose"]:
+        out.append("mute is not to the left of verbose")
+    for name, key in (("microphone picker", "micTouchHeight"), ("mute switch", "muteTouchHeight")):
+        if m[key] < 44:
+            out.append(f"{name} is {m[key]}px tall, under the 44px touch minimum")
     return out
 
 

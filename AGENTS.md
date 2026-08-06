@@ -40,6 +40,7 @@ judgment in the agent is what makes the assistant *yours* rather than a generic 
 | Adding or changing a spec | @specs/ | One numbered spec per unit of work; WHAT + acceptance, not HOW |
 | Running the end-to-end check | `python -m pytest tests/ -v` then `python scripts/e2e.py` | e2e drives a real Chrome with a WAV as the fake mic |
 | Changing anything in `voice_tunnel/web/index.html` that affects SIZE or POSITION | `python scripts/layout.py` | Asserts the page never outgrows the viewport and the newest row is on screen, at five viewports. The unit tests and e2e both pass while the bottom of the transcript is cropped off a phone — geometry is invisible to them |
+| Changing the ORB, MUTE, the channel, or the speaking signal in `voice_tunnel/web/index.html` | `python scripts/channel.py` | Drives those controls through a real socket. Every one of them needs `running`, which needs a `getUserMedia` grant a headless run cannot produce — so without this the controls a person actually touches are the least tested part of the page |
 
 ## Conventions
 
@@ -76,7 +77,7 @@ voice_tunnel/          the package — store, asr, wake, tts, security, server, 
 web/         the phone client (single self-contained page, no build step)
 specs/       numbered metaspecs (WHAT + acceptance criteria)
 tests/       pytest — pure logic, no mic and no model
-scripts/     e2e.py (pipeline), layout.py (page geometry), uitest.py (real mic), dev helpers
+scripts/     e2e.py (pipeline), layout.py (geometry), channel.py (controls), uitest.py (real mic)
 ai-docs/     durable reference the table above routes to
 bin/         PATH shims — `voice-tunnel` (bash), `voice-tunnel.cmd` (PowerShell/cmd), both exec `voice-tunnel-run.py`
 .env         gitignored settings, loaded by every command (`.env.example` documents it)
