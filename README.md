@@ -83,6 +83,7 @@ pip install voice-tunnel[all]      # or [piper] / [parakeet] individually
 voice-tunnel download asr          # Parakeet — 8x faster than whisper, more accurate
 voice-tunnel download voice        # a neural voice instead of the robotic one
 voice-tunnel download voiceprint   # learns your voice, so the wake phrase becomes optional
+voice-tunnel download turn         # ends your turn when you SOUND finished, not on a timer
 voice-tunnel download --list       # what is available, what you already have
 ```
 
@@ -129,6 +130,18 @@ voice-tunnel wake --name codex     # change it, live, no restart
 ```
 
 Once the voiceprint knows you, you are addressed **without saying anything**.
+
+### Knowing when you have finished
+
+By default a turn ends after a fixed silence — 1.5 seconds. That number is a compromise: shorter
+cuts you off while you are still thinking, longer makes every quick question wait for nothing.
+
+`voice-tunnel download turn` replaces it with [Smart Turn v3.2][st] (8 MB, CPU, BSD-2-Clause),
+which listens to *how* the sentence ended. A finished question closes early; a trailing "I was
+thinking that maybe we could…" gets more room. It runs once at each pause, not continuously, and
+if it is not installed the timer works exactly as it always has.
+
+[st]: https://github.com/pipecat-ai/smart-turn
 
 ## Requirements
 
