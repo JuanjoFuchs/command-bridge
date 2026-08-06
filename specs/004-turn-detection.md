@@ -128,7 +128,22 @@ and that was found live, not by testing. Smart Turn sits *after* the VAD boundar
 change to it, so it can be taken on its own. Replacing the VAD is a separate spec with its own
 regression risk.
 
-**Speculative turns are not in this spec, and the reason is architectural.**
+**Speculative turns are DECIDED AGAINST, not merely deferred — JJ, live 2026-08-06.**
+
+He asked how an agent would even learn that a turn had grown, given `watch` blocks and the drain
+loop already exists, and then answered it himself: *"I don't understand how these speculative
+turns would be different."*
+
+He is right. **Draining already handles "more is arriving."** The only thing speculation buys is
+starting work a second or two before the speaker finishes — and this system has measured that
+gap twice: the tool spends ~2 s and the AGENT spends 15-30 s. Saving one second at the front of a
+thirty-second wait is noise. **It is a latency fix for a bottleneck this design does not have**,
+bought with a contract change that turns a turn from a fact into a draft.
+
+Revisit only if agent latency drops by an order of magnitude, which would change the arithmetic
+rather than the argument.
+
+The original architectural objection, kept because it is still true:
 `SpeculativeTurnTracker` ends a turn provisionally, starts work, and reopens it with a revision
 bump if the speaker continues. HuggingFace can do that because the turn lives inside their
 pipeline until committed. **Here a turn is appended to a JSONL log and handed to an external
