@@ -214,7 +214,13 @@ class _ResidentVoice:
                 return None
             syn = SynthesisConfig(length_scale=length_scale)
             sample_rate = voice.config.sample_rate
-            silence = bytes(int(sample_rate * pause * 2))
+            # SAMPLES first, then x2 for 16-bit — never `int(rate * pause * 2)`.
+            # That form rounds to a BYTE count, which lands odd for some pauses (0.7 and
+            # 0.85 at 22050 Hz), and an odd byte count shifts every subsequent sample by
+            # one byte: the rest of the clip decodes as loud broadband noise. The default
+            # 0.5 happens to be even, which is why this survived until someone asked for a
+            # longer pause and heard static. Found by ear, live, 2026-08-06.
+            silence = bytes(int(sample_rate * pause) * 2)
             parts = []
             for i, chunk in enumerate(voice.synthesize(text, syn)):
                 if i:

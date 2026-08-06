@@ -224,3 +224,45 @@ def test_the_real_voice_loads_and_speaks_faster_the_second_time():
     assert warm < cold, "the model was reloaded on the second call"
     # The subprocess path could not beat ~3.5 s no matter how short the text.
     assert warm < 2.0, f"a warm in-process synthesis took {warm:.2f}s"
+
+
+def test_every_allowed_pause_yields_a_whole_number_of_samples(resident):
+    """The silence must never land on an ODD byte count, for ANY pause the CLI accepts.
+
+    Audio here is 16-bit, so a byte count that is not a multiple of two shifts every sample
+    after the pause by one byte and the rest of the clip decodes as loud broadband noise. The
+    old form was `int(rate * pause * 2)` — a BYTE count, odd for 0.7 and 0.85 at 22050 Hz.
+
+    The default 0.5 happens to be even, which is exactly why this survived: every automated
+    check and every live session used a value that worked. JJ found it by asking for a longer
+    pause and hearing static — twice, because the first time I diagnosed it while still speaking
+    through it.
+
+    **The agent must not need to know which values are safe.** Sweeping the whole permitted range
+    is the point: a spot-check at the default would still pass today.
+    """
+    holder, _voice = resident
+
+    bad = []
+    step = 0.01
+    pause = 0.0
+    while pause <= config.PAUSE_MAX + 1e-9:
+        pcm, _ = holder.synthesize("Alpha. Beta.", "stub.onnx", 0.85, round(pause, 2))
+        if len(pcm) % 2:
+            bad.append(round(pause, 2))
+        pause += step
+
+    assert not bad, f"odd byte count (misaligns 16-bit audio) at pauses: {bad[:12]}"
+
+
+def test_the_silence_is_actually_silent(resident):
+    """A gap of zero bytes is silence; a gap of anything else is a sound. Asserted directly so
+    'the pause is the punctuation' stays true rather than becoming 'the pause is a click'."""
+    holder, voice = resident
+    sr = voice.config.sample_rate
+    pause = 0.7                                   # one of the values that used to break
+
+    pcm, _ = holder.synthesize("Alpha. Beta.", "stub.onnx", 0.85, pause)
+    gap = bytes(int(sr * pause) * 2)
+    assert gap in pcm, "the inserted gap is not a run of zero samples"
+    assert len(pcm) % 2 == 0
