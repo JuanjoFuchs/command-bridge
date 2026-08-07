@@ -654,6 +654,63 @@ async def handle_wake(request: web.Request) -> web.Response:
     )
 
 
+async def handle_watching(request: web.Request) -> web.Response:
+    """The agent has gone back into `watch`. Therefore it is listening — derive, do not ask.
+
+    **The agent no longer declares what it is doing; the tool observes it.** JJ, 2026-08-07:
+    *"I have noticed that you are controlling the status changes using commands. But I would like
+    to remove that control... when a watch resolves and you don't run another one, that means
+    you're thinking. If it detects that you are running another watch, that means you're
+    listening."*
+
+    He is right, and this file already contains the argument: the comment on the read boundary
+    says **state that can drift from reality should not be maintained by hand.** That was written
+    about the cursor, and it applies unchanged here — an agent announcing "I am thinking" is a
+    claim, and a claim is wrong exactly when it matters, which is when the agent has stopped
+    doing what it said.
+
+    The four states are now each derived from an event the server can see for itself:
+
+        transcribing   audio arrived and Parakeet is running
+        thinking       `watch` HANDED TURNS OVER and no new watch has started
+        synthesizing   `/say` is in flight
+        speaking       the client reported playback beginning
+        idle           a `watch` is open  <- this endpoint
+
+    Nothing is left for the agent to remember, which means nothing is left for it to forget.
+    """
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    watching = bool((body or {}).get("open", True))
+
+    # BOTH EDGES, and the second one is the half that was missing. A watch OPENING means the
+    # agent is listening; a watch RETURNING means it is not — it is holding turns and deciding
+    # what to do, which is precisely "thinking".
+    #
+    # Reporting only the opening made the state useless in the case that matters: the loop
+    # drains by re-watching, so the flip to thinking survived for milliseconds and the real
+    # 20-second think that followed the last drain was painted "Listening" the whole way. JJ,
+    # 2026-08-07: "I haven't seen the thinking that often. Whenever the watch resolves and there's
+    # no watch going on, I don't see thinking."
+    #
+    # Either direction only ever moves between idle and thinking. Neither may interrupt work
+    # already in flight: a watch is routinely re-armed while a reply is still playing (that is the
+    # normal loop), and stamping over `speaking` or `synthesizing` would blank the orb
+    # mid-sentence.
+    if watching:
+        if state.agent_state == "thinking":
+            await _set_agent_state(state, "idle")
+    elif state.agent_state == "idle":
+        await _set_agent_state(state, "thinking")
+    return web.json_response({"agent_state": state.agent_state, "verbose": state.verbose})
+
+
 async def handle_consumed(request: web.Request) -> web.Response:
     """The agent reports how far it has read — mirrors `mc consumed`.
 
@@ -791,7 +848,15 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
             except Exception as exc:
                 state.last_error = f"flush on mute failed: {exc}"
         await _broadcast_json(state, {"type": "muted", "value": state.muted})
-        await _set_agent_state(state, "idle" if state.muted else state.agent_state)
+        # DELIBERATELY does not touch agent_state. It used to force "idle" while muted, which
+        # made muting mid-thought overwrite what the agent was actually doing — the orb dropped
+        # from Thinking to Listening and the elapsed-seconds counter vanished with it, while the
+        # agent kept working. JJ found it live on 2026-08-07: "the thinking status had the timer,
+        # and then the counter disappeared while it was in thinking status."
+        #
+        # The rule: agent_state says what the AGENT is doing; `muted` says whether he can be
+        # heard. They are different facts about different parties, and expressing one through
+        # the other's channel means the receiver cannot recover either.
     elif kind == "channel":
         was_open = state.channel_open
         state.channel_open = bool(msg.get("value"))
@@ -804,7 +869,8 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
             if delivered:
                 state.last_error = None
         await _broadcast_json(state, {"type": "channel", "value": state.channel_open})
-        await _set_agent_state(state, "idle" if not state.channel_open else state.agent_state)
+        # Same reason as mute above: closing the channel is HIS state, not the agent's, and
+        # publishing it as agent_state destroys the agent's.
     elif kind == "speaking":
         # Deliberately NOT broadcast and NOT stamped per transition. It flips several times a
         # sentence, so publishing it would be a firehose for a flag whose only consumer is the
@@ -1028,6 +1094,7 @@ def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web
             web.get("/status", handle_status),
             web.post("/say", handle_say),
             web.post("/consumed", handle_consumed),
+            web.post("/watching", handle_watching),
             web.post("/cue", handle_cue),
             web.post("/rate", handle_rate),
             web.post("/verbose", handle_verbose),

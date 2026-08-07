@@ -41,6 +41,7 @@ judgment in the agent is what makes the assistant *yours* rather than a generic 
 | Running the end-to-end check | `python -m pytest tests/ -v` then `python scripts/e2e.py` | e2e drives a real Chrome with a WAV as the fake mic |
 | Changing anything in `voice_tunnel/web/index.html` that affects SIZE or POSITION | `python scripts/layout.py` | Asserts the page never outgrows the viewport and the newest row is on screen, at five viewports. The unit tests and e2e both pass while the bottom of the transcript is cropped off a phone — geometry is invisible to them |
 | Changing BARGE-IN or the voiceprint gate | `python scripts/bargein.py` | Drives the real socket with his recorded speech AND the agent's own TTS. Both directions matter: a tunnel you cannot interrupt is annoying, one that stops on any noise is unusable. **Needs the real voiceprint gallery** — it lives in the session dir, so isolating VOICE_TUNNEL_DIR isolates his identity and every score comes back 0.0 |
+| Changing what the ORB SAYS, or when its elapsed-seconds clock runs — `orbView`, `applyOrb`, the agent-state handler, or anything on the server that publishes `agent_state` | `python scripts/orbstate.py` (`--update` to re-bless the snapshot) | Sweeps all 384 combinations of running x phase x channel x mute x playing x agent-state through the PURE reducer, diffs them against `tests/golden/orb-states.json`, then drives the real transitions. **The orb is a pure function of a model — do not write a label or a class outside `applyOrb`.** It read "Thinking" with no clock because four handlers painted it independently, and nothing in the suite could see that |
 | Changing the ORB, MUTE, the channel, or the speaking signal in `voice_tunnel/web/index.html` | `python scripts/channel.py` | Drives those controls through a real socket. Every one of them needs `running`, which needs a `getUserMedia` grant a headless run cannot produce — so without this the controls a person actually touches are the least tested part of the page |
 
 ## Conventions
@@ -78,7 +79,9 @@ voice_tunnel/          the package — store, asr, wake, tts, security, server, 
 web/         the phone client (single self-contained page, no build step)
 specs/       numbered metaspecs (WHAT + acceptance criteria)
 tests/       pytest — pure logic, no mic and no model
-scripts/     e2e.py (pipeline), layout.py (geometry), channel.py (controls), bargein.py (interruption), uitest.py (real mic)
+scripts/     e2e.py (pipeline), layout.py (geometry), channel.py (controls),
+             orbstate.py (orb state machine + golden snapshot), bargein.py (interruption),
+             uitest.py (real mic)
 ai-docs/     durable reference the table above routes to
 bin/         PATH shims — `voice-tunnel` (bash), `voice-tunnel.cmd` (PowerShell/cmd), both exec `voice-tunnel-run.py`
 .env         gitignored settings, loaded by every command (`.env.example` documents it)

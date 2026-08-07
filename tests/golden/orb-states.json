@@ -1,0 +1,1922 @@
+{
+ "False|denied|False|False|False|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|False|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|False|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|False|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|False|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|False|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|True|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|True|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|True|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|True|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|True|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|False|True|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|False|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|False|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|False|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|False|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|False|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|False|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|True|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|True|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|True|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|True|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|True|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|False|True|True|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|False|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|False|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|False|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|False|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|False|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|False|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|True|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|True|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|True|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|True|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|True|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|False|True|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|False|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|False|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|False|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|False|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|False|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|False|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|True|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|True|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|True|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|True|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|True|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|denied|True|True|True|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "False|idle|False|False|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|False|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|False|True|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|False|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|idle|True|True|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|False|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|False|True|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|False|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|live|True|True|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|starting|False|False|False|idle": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|False|speaking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|False|synthesizing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|False|thinking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|False|transcribing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|False|waiting": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|True|idle": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|True|speaking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|True|synthesizing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|True|thinking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|True|transcribing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|False|True|waiting": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|False|idle": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|False|speaking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|False|synthesizing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|False|thinking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|False|transcribing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|False|waiting": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|True|idle": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|True|speaking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|True|synthesizing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|True|thinking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|True|transcribing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|False|True|True|waiting": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|False|idle": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|False|speaking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|False|synthesizing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|False|thinking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|False|transcribing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|False|waiting": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|True|idle": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|True|speaking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|True|synthesizing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|True|thinking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|True|transcribing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|False|True|waiting": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|False|idle": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|False|speaking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|False|synthesizing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|False|thinking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|False|transcribing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|False|waiting": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|True|idle": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|True|speaking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|True|synthesizing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|True|thinking": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|True|transcribing": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|starting|True|True|True|waiting": {
+  "label": "Starting",
+  "timer": null
+ },
+ "False|warming|False|False|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|False|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|False|True|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|False|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|False|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|False|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|False|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|False|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|False|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|False|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|True|idle": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|True|speaking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|True|synthesizing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|True|thinking": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|True|transcribing": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "False|warming|True|True|True|waiting": {
+  "label": "Tap to start",
+  "timer": null
+ },
+ "True|denied|False|False|False|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|False|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|False|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|False|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|False|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|False|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|True|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|True|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|True|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|True|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|True|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|False|True|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|False|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|False|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|False|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|False|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|False|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|False|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|True|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|True|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|True|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|True|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|True|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|False|True|True|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|False|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|False|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|False|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|False|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|False|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|False|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|True|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|True|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|True|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|True|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|True|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|False|True|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|False|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|False|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|False|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|False|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|False|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|False|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|True|idle": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|True|speaking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|True|synthesizing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|True|thinking": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|True|transcribing": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|denied|True|True|True|waiting": {
+  "label": "No mic",
+  "timer": null
+ },
+ "True|idle|False|False|False|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|False|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|False|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|False|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|False|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|False|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|True|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|True|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|True|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|True|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|True|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|False|True|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|False|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|False|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|False|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|False|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|False|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|False|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|True|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|True|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|True|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|True|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|True|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|False|True|True|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|idle|True|False|False|idle": {
+  "label": "Listening",
+  "timer": null
+ },
+ "True|idle|True|False|False|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|False|False|synthesizing": {
+  "label": "Synthesizing",
+  "timer": "synthesizing"
+ },
+ "True|idle|True|False|False|thinking": {
+  "label": "Thinking",
+  "timer": "thinking"
+ },
+ "True|idle|True|False|False|transcribing": {
+  "label": "Transcribing",
+  "timer": "transcribing"
+ },
+ "True|idle|True|False|False|waiting": {
+  "label": "Waiting",
+  "timer": "waiting"
+ },
+ "True|idle|True|False|True|idle": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|False|True|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|False|True|synthesizing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|False|True|thinking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|False|True|transcribing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|False|True|waiting": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|True|False|idle": {
+  "label": "Muted",
+  "timer": null
+ },
+ "True|idle|True|True|False|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|True|False|synthesizing": {
+  "label": "Synthesizing",
+  "timer": "synthesizing"
+ },
+ "True|idle|True|True|False|thinking": {
+  "label": "Thinking",
+  "timer": "thinking"
+ },
+ "True|idle|True|True|False|transcribing": {
+  "label": "Transcribing",
+  "timer": "transcribing"
+ },
+ "True|idle|True|True|False|waiting": {
+  "label": "Waiting",
+  "timer": "waiting"
+ },
+ "True|idle|True|True|True|idle": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|True|True|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|True|True|synthesizing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|True|True|thinking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|True|True|transcribing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|idle|True|True|True|waiting": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|False|False|False|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|False|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|False|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|False|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|False|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|False|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|True|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|True|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|True|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|True|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|True|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|False|True|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|False|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|False|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|False|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|False|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|False|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|False|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|True|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|True|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|True|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|True|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|True|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|False|True|True|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|live|True|False|False|idle": {
+  "label": "Listening",
+  "timer": null
+ },
+ "True|live|True|False|False|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|False|False|synthesizing": {
+  "label": "Synthesizing",
+  "timer": "synthesizing"
+ },
+ "True|live|True|False|False|thinking": {
+  "label": "Thinking",
+  "timer": "thinking"
+ },
+ "True|live|True|False|False|transcribing": {
+  "label": "Transcribing",
+  "timer": "transcribing"
+ },
+ "True|live|True|False|False|waiting": {
+  "label": "Waiting",
+  "timer": "waiting"
+ },
+ "True|live|True|False|True|idle": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|False|True|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|False|True|synthesizing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|False|True|thinking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|False|True|transcribing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|False|True|waiting": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|True|False|idle": {
+  "label": "Muted",
+  "timer": null
+ },
+ "True|live|True|True|False|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|True|False|synthesizing": {
+  "label": "Synthesizing",
+  "timer": "synthesizing"
+ },
+ "True|live|True|True|False|thinking": {
+  "label": "Thinking",
+  "timer": "thinking"
+ },
+ "True|live|True|True|False|transcribing": {
+  "label": "Transcribing",
+  "timer": "transcribing"
+ },
+ "True|live|True|True|False|waiting": {
+  "label": "Waiting",
+  "timer": "waiting"
+ },
+ "True|live|True|True|True|idle": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|True|True|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|True|True|synthesizing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|True|True|thinking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|True|True|transcribing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|live|True|True|True|waiting": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|False|False|False|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|False|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|False|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|False|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|False|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|False|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|True|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|True|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|True|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|True|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|True|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|False|True|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|False|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|False|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|False|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|False|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|False|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|False|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|True|idle": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|True|speaking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|True|synthesizing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|True|thinking": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|True|transcribing": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|False|True|True|waiting": {
+  "label": "Off",
+  "timer": null
+ },
+ "True|starting|True|False|False|idle": {
+  "label": "Listening",
+  "timer": null
+ },
+ "True|starting|True|False|False|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|False|False|synthesizing": {
+  "label": "Synthesizing",
+  "timer": "synthesizing"
+ },
+ "True|starting|True|False|False|thinking": {
+  "label": "Thinking",
+  "timer": "thinking"
+ },
+ "True|starting|True|False|False|transcribing": {
+  "label": "Transcribing",
+  "timer": "transcribing"
+ },
+ "True|starting|True|False|False|waiting": {
+  "label": "Waiting",
+  "timer": "waiting"
+ },
+ "True|starting|True|False|True|idle": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|False|True|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|False|True|synthesizing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|False|True|thinking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|False|True|transcribing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|False|True|waiting": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|True|False|idle": {
+  "label": "Muted",
+  "timer": null
+ },
+ "True|starting|True|True|False|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|True|False|synthesizing": {
+  "label": "Synthesizing",
+  "timer": "synthesizing"
+ },
+ "True|starting|True|True|False|thinking": {
+  "label": "Thinking",
+  "timer": "thinking"
+ },
+ "True|starting|True|True|False|transcribing": {
+  "label": "Transcribing",
+  "timer": "transcribing"
+ },
+ "True|starting|True|True|False|waiting": {
+  "label": "Waiting",
+  "timer": "waiting"
+ },
+ "True|starting|True|True|True|idle": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|True|True|speaking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|True|True|synthesizing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|True|True|thinking": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|True|True|transcribing": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|starting|True|True|True|waiting": {
+  "label": "Speaking",
+  "timer": null
+ },
+ "True|warming|False|False|False|idle": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|False|speaking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|False|synthesizing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|False|thinking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|False|transcribing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|False|waiting": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|True|idle": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|True|speaking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|True|synthesizing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|True|thinking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|True|transcribing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|False|True|waiting": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|False|idle": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|False|speaking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|False|synthesizing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|False|thinking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|False|transcribing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|False|waiting": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|True|idle": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|True|speaking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|True|synthesizing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|True|thinking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|True|transcribing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|False|True|True|waiting": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|False|idle": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|False|speaking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|False|synthesizing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|False|thinking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|False|transcribing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|False|waiting": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|True|idle": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|True|speaking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|True|synthesizing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|True|thinking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|True|transcribing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|False|True|waiting": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|False|idle": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|False|speaking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|False|synthesizing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|False|thinking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|False|transcribing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|False|waiting": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|True|idle": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|True|speaking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|True|synthesizing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|True|thinking": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|True|transcribing": {
+  "label": "Warming up",
+  "timer": null
+ },
+ "True|warming|True|True|True|waiting": {
+  "label": "Warming up",
+  "timer": null
+ }
+}

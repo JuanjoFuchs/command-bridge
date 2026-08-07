@@ -117,7 +117,7 @@
        where his speech and the replies land — while the orb is a fixed-size control that only
        has to be tappable. It was the other way round, so the orb claimed every spare pixel and
        the log was squeezed into whatever was left at the bottom of the screen. */
-    grid-template-rows:auto auto minmax(0,1fr);
+    grid-template-rows:auto auto auto minmax(0,1fr);
     justify-items:center;
     row-gap:clamp(.7rem,2.4vh,1.35rem);
     padding:
@@ -130,14 +130,22 @@
   /* Rows are assigned explicitly rather than by source order, so hiding the wordmark in
      landscape (or an element appearing later) cannot shuffle the stage and the transcript
      up a row — which is exactly what dropped the log into the middle of the page. */
-  h1    { grid-row:1; }
-  #stage{ grid-row:2; }
-  #log  { grid-row:3; }
+  h1       { grid-row:1; }
+  #stage   { grid-row:2; }
+  #collapse{ grid-row:3; }
+  #log     { grid-row:4; }
 
   /* Nothing said yet: give the free space back to the orb so it sits centred rather than
      stranded at the top above an empty gap. `#log:empty` is display:none, and a `1fr` row with
      no item in it still consumes the space — so the row sizing has to change, not just the item. */
-  body:has(#log:empty) { grid-template-rows:auto minmax(0,1fr) auto; }
+  body:has(#log:empty), body:has(#log[hidden]) {
+    grid-template-rows:auto minmax(0,1fr) auto auto;
+  }
+  /* Nothing to collapse yet: the header would be a control for an empty box. But it must NEVER
+     hide while COLLAPSED — an empty transcript folded away would leave no way to unfold it, and
+     the state persists across reloads, so that is a one-way door. Caught by scripts/orbstate.py
+     the minute the rule existed. */
+  body:has(#log:empty):not(:has(#log[hidden])) #collapse { display:none; }
 
   /* --- wordmark ---------------------------------------------------------- */
   h1 {
@@ -229,6 +237,8 @@
      only the light does, which is why the same object works in both themes. */
   #orb {
     position:relative; z-index:3;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:.30em;
     width:74%; aspect-ratio:1; border-radius:50%; border:0; padding:0 11%;
     appearance:none; cursor:pointer; touch-action:manipulation;
     /* The orb is a dark lens in BOTH themes, so its label must be light in both.
@@ -267,6 +277,21 @@
     -webkit-mask:radial-gradient(circle closest-side, transparent 0 56%, #000 78%);
             mask:radial-gradient(circle closest-side, transparent 0 56%, #000 78%);
   }
+  /* The elapsed-seconds counter, shown only while the orb is working. JJ, 2026-08-07:
+     "whenever the orb is spinning and something's happening... we should start a timer inside
+     the orb that just starts counting from zero... 120 seconds, as much as it needs to. And
+     the color of the seconds starts getting redder as it increases."
+
+     WHY A NUMBER AND NOT A SPINNER: the sweep already says "working". What it cannot say is
+     "working for longer than this has any right to take" — and that is the judgement he makes
+     from the phone, eyes on the road, deciding whether to wait or to ask again. Measured live,
+     the agent stage runs 15-30 s and has hit 60; a spinner looks identical at 2 s and at 60. */
+  #orbtimer {
+    font-size:.72em; font-weight:600; letter-spacing:.08em;
+    font-variant-numeric:tabular-nums;   /* so the orb does not twitch as digits change */
+    color:var(--orb-timer, hsl(210 45% 72%));
+    line-height:1;
+  }
   #orb:active { transform:scale(.965); }
   #orb:focus-visible { outline:2px solid var(--warm); outline-offset:7px; }
 
@@ -289,89 +314,110 @@
   @keyframes sweep   { to { transform:rotate(360deg) } }
   @keyframes blink   { 50% { opacity:0 } }
 
-  /* --- readout ----------------------------------------------------------- */
-  #state {
-    font-family:var(--mono); font-size:clamp(.71rem,2.9vw,.78rem);
-    letter-spacing:.05em; line-height:1.5; color:var(--dim);
-    text-align:center; text-wrap:balance;
-    max-width:min(100%,36ch); min-height:3em;   /* reserve two lines: no jump on change */
-  }
-  #state.err { color:var(--err); }
-
-  /* The two flanking toggles. Sized for a thumb (44px is the platform minimum for a touch
-     target) and pushed to the edges of the orb's own width, so neither can be hit by accident
-     while reaching for the orb itself. */
-  #controls {
-    display:flex; gap:.6rem; align-items:center; justify-content:center;
-    margin-top:-.2rem;
-    /* Wider than the orb now that there are THREE controls — two switches and the picker. Bounded
-       to the orb's width they were legible at two and cramped at three, and a cramped touch
-       target is the one thing a phone interface cannot afford. `min-width:0` lets the select
-       honour its own text-overflow instead of refusing to shrink. */
-    width:min(100%,32rem);
-    flex-wrap:wrap; row-gap:.5rem;
-  }
-  #controls > * { min-width:0; }
-  #mute, #verbose { flex:0 0 auto; }
-  #mic            { flex:1 1 8rem; }
-  /* Alone in the row (one microphone, so the picker is hidden), the switch centres itself. */
-  #controls:has(#mic[hidden]) { justify-content:center; }
-  /* A real switch, not a button that reports its own state in a word. The distinction matters
-     here because the label is a NOUN ("Verbose"): a button saying "Verbose" is ambiguous about
-     whether it describes the current mode or the one tapping would produce, and a track-and-knob
-     removes the question by showing position. */
-  #verbose, #mute {
-    display:inline-flex; align-items:center; gap:.6rem;
-    min-height:44px; padding:.4rem .9rem .4rem .55rem; border-radius:999px;
-    border:1px solid var(--edge);
-    background-color:color-mix(in srgb, var(--card) 70%, transparent);
-    cursor:pointer; user-select:none; -webkit-user-select:none;
-    transition:border-color .18s ease, background-color .18s ease;
-  }
-  #verbose:hover, #mute:hover { border-color:var(--edge-2); }
-  #verbose:focus-visible, #mute:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
-  .sw-track {
-    position:relative; flex:0 0 auto; width:2.3rem; height:1.3rem; border-radius:999px;
-    background:color-mix(in srgb, var(--edge-2) 55%, transparent);
-    transition:background-color .2s ease;
-  }
-  .sw-knob {
-    position:absolute; top:.17rem; left:.19rem; width:.96rem; height:.96rem; border-radius:50%;
-    background:var(--dim);
-    transition:transform .2s cubic-bezier(.3,.8,.3,1), background-color .2s ease;
-  }
-  .sw-label {
-    font-family:var(--mono); font-size:.68rem; letter-spacing:.04em; color:var(--dim);
+  /* --- transcript header ------------------------------------------------- */
+  #collapse {
+    display:inline-flex; align-items:center; justify-content:center; gap:.4rem;
+    min-height:34px; padding:.25rem .85rem; border:0; border-radius:999px;
+    background:transparent; cursor:pointer; touch-action:manipulation;
+    font-family:var(--mono); font-size:.63rem; font-weight:600;
+    letter-spacing:.28em; text-indent:.28em; text-transform:uppercase;
+    color:var(--faint);
     transition:color .18s ease;
   }
-  #verbose[aria-checked="true"] .sw-track, #mute[aria-checked="true"] .sw-track { background:color-mix(in srgb, var(--warm) 62%, transparent); }
-  #verbose[aria-checked="true"] .sw-knob, #mute[aria-checked="true"] .sw-knob { transform:translateX(.98rem); background:var(--bg); }
-  #verbose[aria-checked="true"] .sw-label, #mute[aria-checked="true"] .sw-label { color:var(--warm); }
-  #verbose[aria-checked="true"], #mute[aria-checked="true"] { border-color:color-mix(in srgb, var(--warm) 50%, transparent); }
+  #collapse:hover { color:var(--dim); }
+  #collapse:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
+  #collapse svg {
+    width:14px; height:14px; fill:none; stroke:currentColor;
+    stroke-width:2.1; stroke-linecap:round; stroke-linejoin:round;
+    transition:transform .22s cubic-bezier(.3,.8,.3,1);
+  }
+  /* The arrow IS the affordance: down means "it is open, tap to fold it away", up means the
+     reverse. Rotating one glyph beats swapping two, because the motion says which way it went. */
+  #collapse[aria-expanded="false"] svg { transform:rotate(180deg); }
 
+  /* --- readout ----------------------------------------------------------- */
+  /* Hidden until something is actually wrong, so it occupies no height in the normal case. */
+  #err {
+    font-family:var(--mono); font-size:clamp(.71rem,2.9vw,.78rem);
+    letter-spacing:.05em; line-height:1.5; color:var(--err);
+    text-align:center; text-wrap:balance; max-width:min(100%,36ch);
+  }
+
+  /* One row under the orb: mute, the device picker, verbose, collapse. */
+  #controls {
+    display:flex; align-items:center; justify-content:center;
+    gap:.45rem; flex-wrap:wrap; row-gap:.45rem;
+    /* Narrow, so the three sit as a GROUP under the orb rather than spanning the screen. The
+       picker used to take every spare pixel and pushed the toggles to the far edges, which read
+       as three unrelated controls instead of one cluster. */
+    width:min(100%,20rem);
+    margin-top:-.35rem;
+  }
+  #controls > * { min-width:0; }
+  /* Shrink-to-fit with a ceiling, not grow-to-fill. */
+  #mic          { flex:0 1 9.5rem; max-width:9.5rem; }
+
+  /* The round toggles. 44px is the platform minimum for a touch target. */
+  .orbbtn {
+    flex:0 0 auto;
+    width:44px; height:44px; padding:0; border-radius:50%;
+    display:grid; place-items:center;
+    appearance:none; cursor:pointer; touch-action:manipulation;
+    border:1px solid var(--edge);
+    background-color:color-mix(in srgb, var(--card) 82%, transparent);
+    color:var(--dim);
+    -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+    transition:border-color .18s ease, background-color .18s ease, color .18s ease;
+  }
+  .orbbtn svg {
+    width:21px; height:21px; fill:none; stroke:currentColor;
+    stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;
+  }
+  /* One icon, both states: the stroke that only exists in the "on" position is drawn on
+     demand rather than swapping the whole glyph, so nothing shifts as it toggles. */
+  .orbbtn .slash, .orbbtn .unfold { opacity:0; transition:opacity .16s ease; }
+  #mute[aria-checked="true"] .slash { opacity:1; }
+  #collapse[aria-checked="true"] .unfold { opacity:1; }
+  #collapse[aria-checked="true"] .fold   { opacity:0; }
+  .orbbtn .fold { transition:opacity .16s ease; }
+  .orbbtn:hover { border-color:var(--edge-2); color:var(--fg); }
+  .orbbtn:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
+  .orbbtn:active { transform:scale(.94); }
   /* Mute ON is a WARNING; verbose ON is a preference. They must not share a colour. Being deaf
      without noticing is the easiest state in this interface to forget you are in, and it already
      cost a live session where the agent sat announcing it was waiting for someone whose
      microphone was switched off. Amber says "a setting is enabled"; red says "you cannot be
-     heard". */
-  #mute[aria-checked="true"] .sw-track { background:color-mix(in srgb, var(--err) 62%, transparent); }
-  #mute[aria-checked="true"] .sw-label { color:var(--err); }
-  #mute[aria-checked="true"] { border-color:color-mix(in srgb, var(--err) 50%, transparent); }
+     heard" — the same red the orb itself takes when muted. */
+  #mute[aria-checked="true"] {
+    color:var(--err);
+    border-color:color-mix(in srgb, var(--err) 55%, transparent);
+    background-color:color-mix(in srgb, var(--err) 13%, var(--card));
+  }
+  #verbose[aria-checked="true"] {
+    color:var(--warm);
+    border-color:color-mix(in srgb, var(--warm) 55%, transparent);
+    background-color:color-mix(in srgb, var(--warm) 13%, var(--card));
+  }
+  #verbose[aria-checked="true"], #mute[aria-checked="true"] { border-color:color-mix(in srgb, var(--warm) 50%, transparent); }
 
-  /* Muted is a WARNING state on the orb, not a neutral one: the tunnel is deaf and that is the
+  /* NOTE: the orb no longer carries mute at all. JJ, 2026-08-07: "I want to remove the mute
+     from the orb, the mute status, because the mute toggle is what represents the mute status...
+     whenever mute is on, the only thing that happens with the orb is that instead of listening,
+     we say muted, and every other status is the same."
+
+     Why that is the right split and not just a preference: two independent facts were sharing
+     one surface, so the orb could not show both. It also leaked into the SERVER, which forced
+     agent_state to "idle" on every mute toggle — and that is what made the elapsed-seconds
+     counter vanish mid-Thinking. One fact, one surface.
+
+     The historical note below is kept for the reasoning about warning colours, which still
+     applies to the mute BUTTON. */
+  /* Muted is a WARNING state, not a neutral one: the tunnel is deaf and that is the
      easiest thing in this whole interface to forget you did.
 
      The whole dial goes cold, not just the label. A warm ring around the word "Muted" says
      "running" and "off" at the same time, and on a device you glance at rather than read, the
      glow wins that argument — so the glow has to agree with the text. */
-  #orb.muted {
-    color:var(--err);
-    border-color:color-mix(in srgb, var(--err) 55%, transparent);
-  }
-  #orb.muted, #orb.muted ~ * {
-    --signal:var(--err); --glow:transparent; --lamp:#00000000; --ab:.05; --ag:.10;
-  }
-
   /* CLOSED is not muted and must not look like it. Muted is a warning — the tunnel is running
      and deaf, which is easy to forget you did. Closed is a resting state he chose, so it reads as
      off rather than as alarm: no colour, no glow, dimmed. The distinction has to survive a glance,
@@ -496,7 +542,6 @@
        three, so 168px stacked them. The switches stay together; the picker wraps. */
     #controls { width:min(100%,28rem); }
     #stage { gap:.55rem; }
-    #state { min-height:1.6em; }
     body { row-gap:.5rem; }
     #log { border-radius:14px; }
     .row { padding:.4rem .8rem; font-size:.86rem; }
@@ -521,34 +566,69 @@
     <!-- #orb is first so the decoration can be selected off its state class with a sibling
          combinator; z-index paints it back on top. -->
     <div id="orbwrap">
-      <button id="orb">Tap to start</button>
+      <button id="orb"><span id="orblabel">Tap to start</span><span id="orbtimer" hidden aria-hidden="true"></span></button>
       <div id="ring"></div>
       <div class="bezel" aria-hidden="true"></div>
       <div class="aura" aria-hidden="true"></div>
     </div>
-    <!-- Flanking the orb, one each side: the two things you reach for WITHOUT looking. Both are
-         toggles with a persistent on/off state, so they say what they ARE, not what tapping them
-         would do — a button labelled with its own action reads as a lie half the time. -->
-    <!-- TWO switches and the orb, and each says one thing:
-           orb      is the conversation live at all — both directions, replies queue while off
-           Mute     can he be heard — he still hears the replies
-           Verbose  how much the agent narrates
-         Mute used to live on the orb, which conflated "stop hearing me" with "stop talking to
-         me" and left no way to ask for only one. One row, flanking the orb's width, because a
-         second stacked row costs vertical space the transcript wants on a phone. -->
+    <!-- ONE row under the orb, as close to it as the layout allows, so everything below is
+         transcript. JJ, 2026-08-07: "lower the mute and verbose buttons in the same row where
+         the microphone selector is and move all of those up closer to the orb so that the
+         transcription panel has more space."
+
+         TWO toggles and a collapse, and each says one thing:
+             orb       is the conversation live at all — both directions, replies queue while off
+           Mute      can he be heard — he still hears the replies
+           Verbose   how much the agent narrates
+           Collapse  is the transcript on screen at all
+
+         WHY AN ICON CAN REPLACE THE TRACK-AND-KNOB THEY USED TO BE: the old switches were
+         labelled with NOUNS, and a button reading "Verbose" is ambiguous about whether it names
+         the current mode or the one tapping would produce — which is why they were switches. A
+         struck-out microphone is not ambiguous in either direction, so the affordance survives
+         the shrink. `role="switch"` keeps the state in the accessibility tree, where the word
+         went. -->
     <div id="controls">
-      <div id="mute" role="switch" tabindex="0" aria-checked="false" aria-label="Mute my microphone">
-        <span class="sw-track"><span class="sw-knob"></span></span>
-        <span class="sw-label">Mute</span>
-      </div>
-      <div id="verbose" role="switch" tabindex="0" aria-checked="false" aria-label="Verbose mode">
-        <span class="sw-track"><span class="sw-knob"></span></span>
-        <span class="sw-label">Verbose</span>
-      </div>
+      <button id="mute" class="orbbtn" role="switch" aria-checked="false" aria-label="Mute my microphone">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="10.5" rx="3"/>
+          <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/>
+          <path d="M12 18v2.6"/>
+          <path class="slash" d="M4.8 19.2 19.2 4.8"/>
+        </svg>
+      </button>
       <select id="mic" hidden aria-label="Microphone"></select>
+      <button id="verbose" class="orbbtn" role="switch" aria-checked="false" aria-label="Verbose narration">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h16"/><path d="M4 12h11"/><path d="M4 17h7"/>
+        </svg>
+      </button>
     </div>
-    <div id="state">idle</div>
+    <!-- ERRORS ONLY. There used to be a permanent status line here relaying "say hey claude",
+         "muted — tap the orb to talk" and friends, reserving three lines of a phone screen to
+         repeat what the orb already says. JJ, 2026-08-07: "that secondary status section... I
+         think we should remove that to make use of the vertical real estate."
+
+         It is not deleted outright, because two of its messages are the only way to learn why a
+         dead page is dead — a missing token and a refused microphone. Those stay; they are
+         hidden until they happen, so they cost nothing until they are the most important thing
+         on screen. -->
+    <div id="err" role="status" hidden></div>
   </main>
+
+  <!-- The transcript's OWN header, not a fourth control in the orb's row. JJ, 2026-08-07: "the
+       button to toggle the transcripts should be below, and it shouldn't be a button, it should
+       be like a header above the transcripts that says transcript, and that's what we click,
+       with an arrow, to collapse it or expand it, and it should be centered."
+
+       Why that reads better than the button did: a control that lives ON the thing it controls
+       needs no label explaining WHICH thing, and the arrow direction is the whole affordance.
+       In the row it was a fourth round icon competing with two toggles that govern audio, which
+       is a different subject entirely. -->
+  <button id="collapse" aria-expanded="true" aria-controls="log">
+    <span>Transcript</span>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10.5 12 15l5-4.5"/></svg>
+  </button>
 
   <div id="log" role="log" aria-live="polite"></div>
 
@@ -556,7 +636,10 @@
 (() => {
   "use strict";
   const $orb = document.getElementById("orb");
-  const $state = document.getElementById("state");
+  const $orblabel = document.getElementById("orblabel");
+  const $orbtimer = document.getElementById("orbtimer");
+  const $err = document.getElementById("err");
+  const $collapse = document.getElementById("collapse");
   const $log = document.getElementById("log");
   const $mic = document.getElementById("mic");
   const $verbose = document.getElementById("verbose");
@@ -573,16 +656,22 @@
   const clipQueue = [];
   let draining = false;
   let muted = false, verbose = false;
+  // THE ORB MODEL. Every one of these is a separate fact, and the orb is a pure function of all
+  // of them (see orbView). They used to be written straight to the DOM from four different
+  // handlers, which is how the page ended up saying "Thinking" with no clock, and "Listening"
+  // over a muted microphone: whichever writer ran last won, and none of them knew about the
+  // others.
+  let agentState = "idle";     // what the AGENT is doing, straight from the server
+  let playing = false;         // a reply is AUDIBLE right now — only the client can know this
+  let phase = "idle";          // page lifecycle: idle | starting | warming | live
   // The channel starts CLOSED and the first orb tap opens it, so a page left open in a
   // background tab is never quietly live.
   let channelOpen = false, speakingSignal = false, speakingSince = 0, speakingRunStart = 0;
   let playingSource = null;
-  // The assistant's name comes from the SERVER, so the page can never tell him to say a name
-  // the wake gate no longer accepts. Falls back to a neutral instruction rather than guessing.
+  // The assistant's name comes from the SERVER, so the page can never show a name the wake gate
+  // no longer accepts. Nothing renders it since the status line went, but it is still recorded:
+  // it is how a harness proves a mid-session rename reached this client.
   let wakeName = "";
-  function wakePrompt(prefix) {
-    return (prefix || "") + (wakeName ? `say "hey ${wakeName}…"` : "say the wake phrase");
-  }
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
@@ -598,9 +687,22 @@
     // automated check can reach. Assigned below to the same `tellServer` the UI itself calls, so
     // a harness exercises the real path instead of a parallel one that can drift from it.
     signal: null,
+    // The pure orb reducer. A harness calls this directly to sweep the whole state matrix —
+    // every combination of running/phase/channel/mute/playing/agentState — in milliseconds,
+    // without a microphone and without waiting on real transitions. The transition tests then
+    // only have to prove the model is WIRED correctly, not that the rules are right.
+    orbView: null,
+    orb: null,
+    collapsed: false,
   };
 
-  const setState = (t, cls) => { $state.textContent = t; $state.className = cls || ""; };
+  // Errors only. Anything that is merely "what is happening" belongs on the orb, which says it
+  // in one word without reserving three lines of a phone screen to do so.
+  const setError = (t) => {
+    $err.textContent = t || "";
+    $err.hidden = !t;
+    if (t) diag.errors.push(t);
+  };
 
   function addRow(tag, text, cls, id) {
     const d = document.createElement("div");
@@ -625,21 +727,29 @@
     revealRow(d);
   }
 
-  // Scroll so THIS row's last line is against the bottom edge. Two bugs live here, both of which
-  // JJ saw as "the last one is cut off":
+  // ALWAYS SCROLL TO THE TRUE END OF THE LOG, whatever was just inserted and wherever it went.
   //
-  //   * `scrollTop = scrollHeight` ran before the browser had wrapped the text, so it scrolled to
-  //     the height the log had BEFORE the new row grew it. A long reply lost its final lines.
-  //   * once replies started inserting above the read-boundary divider, "scroll to the bottom" was
-  //     scrolling past the very row that had just arrived.
+  // This used to target the specific row that had arrived, which was right for rows and wrong for
+  // everything else — most visibly the read-boundary divider, which `placeDivider` inserts AFTER
+  // the row that was already scrolled to, i.e. permanently one line below the fold. JJ,
+  // 2026-08-07: "the text that says claude has read to here is not always displayed... it's below
+  // the scroll and I need to scroll to see it. I would like the scroll to happen automatically
+  // and always take me to the bottom of the transcript."
   //
-  // rAF waits for layout, and targeting the row instead of the container fixes both.
-  function revealRow(el) {
-    requestAnimationFrame(() => {
-      const target = el.offsetTop + el.offsetHeight - $log.clientHeight;
-      $log.scrollTop = Math.max(0, target);
-    });
+  // The original bug this replaces is still handled: `scrollTop = scrollHeight` used to run
+  // BEFORE the browser had wrapped the new text, so it scrolled to the height the log had a
+  // moment ago and a long reply lost its final lines. TWO frames, not one — the first lets layout
+  // settle after the insert, the second measures the settled height. One frame is enough on a
+  // desktop and demonstrably is not on a phone mid-animation.
+  function scrollToEnd() {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      $log.scrollTop = $log.scrollHeight;
+    }));
   }
+
+  // Kept as a name because three call sites read better with it, but there is only one policy
+  // now: whatever changed, show the end.
+  const revealRow = () => scrollToEnd();
 
   // The read boundary lives INSIDE the log, sitting after the last turn claude has consumed —
   // so anything below the line is visibly still unread. Same idea as mc view's
@@ -660,6 +770,9 @@
     const anchor = $log.querySelector(`.row[data-id="${cursor}"]`);
     if (anchor) anchor.after($divider);
     else $log.appendChild($divider);
+    // The insert lands below whatever was last scrolled to, so it MUST re-scroll. This is the
+    // line whose absence put the read boundary permanently off screen.
+    scrollToEnd();
   }
 
   // --- the two toggles -------------------------------------------------------
@@ -726,21 +839,113 @@
     tellServer("muted", muted);
     $mute.setAttribute("aria-checked", String(muted));
     if (muted) { levelTarget = 0; tellServer("speaking", false); }
-    paintOrb();
+    applyOrb();
   }
 
-  // ONE painter for the orb, because it now reports two independent facts and they used to be
-  // written from three different places. Closed outranks muted: if the channel is shut, saying
-  // "muted" would answer a question he did not ask.
-  function paintOrb() {
-    if (!running) return;
-    const closed = !channelOpen;
-    $orb.classList.toggle("closed", closed);
-    $orb.classList.toggle("muted", !closed && muted);
-    $orb.textContent = closed ? "Off" : muted ? "Muted" : "Listening";
-    setState(closed ? "tap the orb to go live"
-           : muted ? "muted — you can still hear replies"
-           : wakePrompt());
+  // The orb, as a PURE FUNCTION of the model. No DOM, no globals, no side effects — which is
+  // the whole point: this is the part that kept breaking, and a function with inputs and a
+  // return value is the part that can be unit-tested exhaustively. Exposed on `diag` so the
+  // harness can drive the entire state matrix in milliseconds without a microphone.
+  //
+  // Precedence, outermost first, and each layer is answering a different question:
+  //   not running  -> there is no session yet; nothing else is meaningful
+  //   warming      -> the mic is open but no audio has arrived; claiming "Listening" here invites
+  //                   him to talk into a gap, which is very likely why a first utterance garbles
+  //   channel off  -> he shut the conversation; the agent's state is not his concern right now
+  //   playing      -> the CLIENT knows when audio starts and stops; the server only knows when it
+  //                   finished sending, and letting both write the label made them race
+  //   otherwise    -> whatever the agent is doing, with MUTED replacing only the idle label
+  //
+  // Mute changes exactly one thing and never anything else. It is not a colour, not a glow, and
+  // not a state of its own — the mute button carries that. JJ, 2026-08-07.
+  const ORB_LABELS = {
+    idle: "Listening", transcribing: "Transcribing", thinking: "Thinking",
+    synthesizing: "Synthesizing", waiting: "Waiting", speaking: "Speaking",
+  };
+  const TIMED_STATES = ["transcribing", "thinking", "synthesizing", "waiting"];
+
+  function orbView(m) {
+    // A REFUSED MICROPHONE SAYS SO ON THE ORB, not only on the error line. A tap that silently
+    // returns the orb to "Tap to start" is indistinguishable from a tap that never registered,
+    // and that ambiguity cost a live session on 2026-08-07 ("tap to start does not work"). The
+    // orb is where he is already looking; the failure belongs there.
+    if (m.phase === "denied") return { label: "No mic", timer: null };
+    if (!m.running) return { label: m.phase === "starting" ? "Starting" : "Tap to start", timer: null };
+    if (m.phase === "warming") return { label: "Warming up", timer: null };
+    if (!m.channelOpen) return { label: "Off", timer: null };
+    if (m.playing) return { label: "Speaking", timer: null };
+    const state = m.agentState || "idle";
+    const label = state === "idle" ? (m.muted ? "Muted" : "Listening")
+                                   : (ORB_LABELS[state] || "Listening");
+    return { label, timer: TIMED_STATES.includes(state) ? state : null };
+  }
+
+  // ONE painter, and it is the ONLY thing allowed to touch the orb. Every handler updates the
+  // model and calls this; none of them writes a label or a class directly.
+  function applyOrb() {
+    const view = orbView({ running, phase, channelOpen, muted, playing, agentState });
+    $orblabel.textContent = view.label;
+    $orb.classList.toggle("closed", running && !channelOpen);
+    $orb.classList.toggle("thinking", Boolean(view.timer));
+    $orb.classList.toggle("speaking", view.label === "Speaking");
+    setBusyTimer(view.timer);
+    diag.orb = view;
+  }
+
+  // How long the orb has been in ITS CURRENT STATE, reddening as it climbs.
+  //
+  // ONE CLOCK PER STAGE, restarting at every transition. This shipped as a single clock across
+  // the whole chain and JJ corrected it the moment he saw it: "I meant counts per stage. Each
+  // state gets its own count." He is right and the reason is what the number is FOR — a total
+  // says the wait was long, which he already knows from waiting; a per-stage count says WHICH
+  // stage was long, which is the only version that tells him anything he can act on.
+  //
+  // Speaking is deliberately excluded ("maybe we shouldn't put the count on speaking"): the
+  // audio itself already tells him how long it is taking, and a clock on it would measure his
+  // own patience rather than the machine's.
+  const TIMER_FULL_RED_S = 60;     // measured: the agent stage runs 15-30 s and has reached 60
+  let busySince = 0;
+  let busyState = "";
+  let busyFrame = 0;
+
+  function paintBusyTimer() {
+    const s = (performance.now() - busySince) / 1000;
+    // THREE DECIMALS, and they are not decoration. JJ, 2026-08-07: "we should add decimal points
+    // to that second counter because it looks a bit dull." A whole-second counter is motionless
+    // for a full second at a time, which reads as FROZEN — the exact thing he is watching the
+    // orb to rule out. Moving milliseconds say "still running" without him having to wonder.
+    $orbtimer.textContent = s.toFixed(3) + " sec";
+    // Interpolate cool -> red. Saturation and lightness climb with hue so late seconds read as
+    // urgent on a phone in daylight, where hue alone is the first thing the screen loses.
+    const k = Math.min(1, s / TIMER_FULL_RED_S);
+    $orbtimer.style.setProperty(
+      "--orb-timer",
+      `hsl(${Math.round(210 - 210 * k)} ${Math.round(45 + 55 * k)}% ${Math.round(72 - 10 * k)}%)`,
+    );
+    busyFrame = requestAnimationFrame(paintBusyTimer);
+  }
+
+  // Driven by requestAnimationFrame rather than an interval: milliseconds have to be repainted
+  // every frame to move smoothly, and rAF is the one timer the browser aligns to the display and
+  // suspends when the tab is hidden — where the page cannot record anyway.
+  // Pass the state name to time it; pass null to stop. Passing the SAME name again is a no-op,
+  // so a repeated frame for one stage does not restart its clock.
+  function setBusyTimer(state) {
+    if (state && running) {
+      if (busyState === state) return;
+      if (busyFrame) cancelAnimationFrame(busyFrame);
+      busyState = state;
+      busySince = performance.now();
+      $orbtimer.hidden = false;
+      paintBusyTimer();
+      return;
+    }
+    if (busyFrame) cancelAnimationFrame(busyFrame);
+    busyFrame = 0;
+    busySince = 0;
+    busyState = "";
+    $orbtimer.hidden = true;
+    $orbtimer.textContent = "";
   }
 
   // Paint only. Used when the SERVER tells us the value — either on the ready frame or after
@@ -756,17 +961,43 @@
     tellServer("verbose", verbose);
   }
 
-  $mute.addEventListener("click", () => setMuted(!muted));
-  $mute.addEventListener("keydown", (e) => {
-    if (e.key === " " || e.key === "Enter") { e.preventDefault(); setMuted(!muted); }
-  });
+  // They are real <button>s now, so Space and Enter already fire click. The hand-wired keydown
+  // handlers that a div with role=switch needed would double-toggle here — press, and the
+  // control would flip and flip back.
+  diag.orbView = orbView;
 
+  // Collapse the transcript. JJ, 2026-08-07: "I want to make that collapsible so that I can just
+  // collapse it and hide it and just have the orb and the buttons and not see the transcript
+  // text."
+  //
+  // `hidden` rather than a height animation, and the reason is the grid: an empty-but-present
+  // 1fr row still eats its space, which is the same trap `#log:empty` already documents. The
+  // body rule keys off `#log[hidden]` so collapsing genuinely gives the room back to the orb
+  // instead of leaving a hole where the transcript was.
+  //
+  // Persisted, because it is a mode you choose for a situation — driving, or somebody else in
+  // the room — and having to re-choose it on every reconnect would make it useless for exactly
+  // those situations.
+  function setCollapsed(next) {
+    const on = Boolean(next);
+    $log.hidden = on;
+    // aria-EXPANDED, not aria-checked: this is a disclosure control for the region named by
+    // aria-controls, not a two-state setting. A screen reader announces "collapsed/expanded"
+    // instead of "not pressed", which is the difference between describing the transcript and
+    // describing a switch.
+    $collapse.setAttribute("aria-expanded", String(!on));
+    localStorage.setItem("voice-tunnel.collapsed", on ? "1" : "0");
+    diag.collapsed = on;
+    // Rows added while collapsed have no measurable geometry, so the log would reopen scrolled
+    // to wherever it was when it closed. Snap it back to the newest line on the way out.
+    if (!on) scrollToEnd();
+  }
+
+  $collapse.addEventListener("click", () => setCollapsed(!$log.hidden));
+  setCollapsed(localStorage.getItem("voice-tunnel.collapsed") === "1");
+
+  $mute.addEventListener("click", () => setMuted(!muted));
   $verbose.addEventListener("click", () => setVerbose(!verbose));
-  $verbose.addEventListener("keydown", (e) => {
-    // A div with role=switch is not a button, so Space and Enter have to be wired by hand or
-    // the control is unreachable without a pointer.
-    if (e.key === " " || e.key === "Enter") { e.preventDefault(); setVerbose(!verbose); }
-  });
 
   // Mute restores from THIS device; verbose does not restore at all — it arrives from the server
   // on connect. Reading it from localStorage here is what used to let a stale phone value
@@ -840,6 +1071,9 @@
   // the orb is purely the channel.
   async function orbTapped() {
     if (running) { setChannel(!channelOpen); return; }
+    // A retry clears the previous refusal, so a second tap after granting permission in the
+    // browser's own UI actually starts rather than sitting on the stale failure.
+    if (phase === "denied") { phase = "idle"; setError(""); applyOrb(); }
     await start();
   }
 
@@ -848,13 +1082,31 @@
     tellServer("channel", channelOpen);
     // Closing implies silence from this side too — otherwise "the channel is shut" would still
     // be sending him audio, which is not what the switch says it does.
-    if (!channelOpen) levelTarget = 0;
-    paintOrb();
+    if (!channelOpen) { levelTarget = 0; silencePlayback(); }
+    applyOrb();
+  }
+
+  // Closing the channel stops the agent MID-SENTENCE, and drops whatever else was queued.
+  //
+  // The server already refuses to send new replies while the channel is shut, which looked like
+  // enough and was not: a clip already delivered kept playing to the end and the local queue
+  // kept its backlog. JJ, 2026-08-07: "I hit the orb to turn off because I was not hearing you.
+  // I was talking to somebody else and I didn't want you to speak. However, you spoke anyway."
+  //
+  // A switch whose effect waits for the current sentence to finish is not an off switch. He
+  // reaches for it precisely when the next few seconds of speech are the problem — so the
+  // unplayed audio is discarded rather than re-queued, because he shut the channel to not hear
+  // it, and handing it back on reconnect would only replay the thing he interrupted.
+  function silencePlayback() {
+    try { if (playingSource) playingSource.stop(); } catch {}
+    playingSource = null;
+    clipQueue.length = 0;
   }
 
   async function start() {
     if (running) return;
-    setState("requesting microphone…");
+    phase = "starting";
+    applyOrb();
     try {
       // Chrome's WebRTC audio processing is tuned for TELEPHONY — making speech intelligible
       // to a human ear over a bad line — not for a speech recognizer. Noise suppression gates
@@ -920,7 +1172,9 @@
       // a bug to fix here — it is the secure-context rule. See ai-docs/reference/browser.md.
       const msg = (navigator.mediaDevices ? e.message : "insecure origin — needs HTTPS or localhost");
       diag.errors.push("getUserMedia: " + msg);
-      setState("microphone unavailable: " + msg, "err");
+      phase = "denied";
+      applyOrb();
+      setError("microphone unavailable: " + msg);
       return;
     }
 
@@ -1044,8 +1298,8 @@
     // first frames there is socket setup plus the mic's own warm-up, and a page that says
     // "Listening" during that window invites you to start talking into a gap — which is very
     // likely why JJ's first utterance after a reload came back garbled.
-    $orb.textContent = "Warming up";
-    setState("opening the microphone…");
+    phase = "warming";
+    applyOrb();
     const framesAtStart = diag.framesSent;
     await new Promise((res) => {
       const t0 = Date.now();
@@ -1056,10 +1310,11 @@
     });
 
     $orb.classList.add("live");
-    // Paint through the one painter rather than hard-coding "Listening": a mute persisted from
-    // the last session is restored before `running` is true, so the visual it wanted was skipped,
+    phase = "live";
+    // Through the one painter rather than hard-coding "Listening": a mute persisted from the
+    // last session is restored before `running` is true, so the visual it wanted was skipped,
     // and the orb would read "Listening" over a muted microphone.
-    paintOrb();
+    applyOrb();
   }
 
   async function stop() {
@@ -1072,9 +1327,11 @@
     try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch {}
     try { if (ws) ws.close(); } catch {}
     try { if (wakeLock) { await wakeLock.release(); wakeLock = null; } } catch {}
-    $orb.textContent = "Tap to start";
+    phase = "idle";
+    agentState = "idle";
+    playing = false;
     $orb.classList.remove("live", "speaking");
-    setState("stopped");
+    applyOrb();
   }
 
   function openSocket(sampleRate) {
@@ -1140,9 +1397,9 @@
     ));
     // Say it plainly, and keep saying it. Every failed attempt repaints this, so the page can
     // never sit looking connected while it is not.
-    setState(reconnectDelay >= RECONNECT_MAX
+    setError(reconnectDelay >= RECONNECT_MAX
       ? "disconnected — still retrying"
-      : "disconnected — reconnecting…", "err");
+      : "disconnected — reconnecting…");
     $orb.classList.remove("live");
     reconnectTimer = setTimeout(reconnect, delay);
   }
@@ -1160,12 +1417,9 @@
       if (ws && ws.readyState === WebSocket.OPEN) {
         reconnectDelay = 0;
         diag.reconnects = (diag.reconnects || 0) + 1;
-        if (running) {
-          $orb.classList.add("live");
-          setState(muted ? "muted — tap the orb to talk" : wakePrompt());
-        } else {
-          setState("tap the orb to talk");
-        }
+        setError("");
+        if (running) $orb.classList.add("live");
+        applyOrb();
       } else {
         scheduleReconnect();
       }
@@ -1193,8 +1447,7 @@
         // not one per browser.
         if (msg.verbose !== undefined) paintVerbose(msg.verbose);
         if (msg.wake) wakeName = msg.wake;
-        setState(running ? (muted ? "muted — tap the orb to talk" : wakePrompt())
-                         : "tap the orb to talk");
+        applyOrb();
       } else if (msg.type === "verbose") {
         // Someone flipped it elsewhere — another device, or the agent via `voice-tunnel verbose on`.
         paintVerbose(msg.value);
@@ -1210,51 +1463,30 @@
         // Another device (or a reconnect echo) changed it. Adopt without echoing back, same rule
         // as verbose: a client that replies to a broadcast makes a loop.
         channelOpen = Boolean(msg.value);
-        paintOrb();
+        // Same reason as setChannel: a close has to silence what is already playing here, or
+        // "off" means "off after this sentence".
+        if (!channelOpen) silencePlayback();
+        applyOrb();
       } else if (msg.type === "wake") {
-        // The agent renamed itself mid-session (`voice-tunnel wake --name codex`). Repaint
-        // immediately: this line is the instruction for what to SAY, so a stale name here is the
-        // page telling you to use a phrase the gate has already stopped accepting.
+        // The agent renamed itself mid-session (`voice-tunnel wake --name codex`). Nothing on
+        // screen prints the phrase any more, so this is recorded rather than painted — the
+        // harness still asserts the page learned it.
         wakeName = msg.name || wakeName;
-        if (running && !muted) setState(wakePrompt());
+        diag.wake = wakeName;
       } else if (msg.type === "agent_state") {
         // Silence is ambiguous. Naming the state is what separates "it did not hear me" from
         // "it heard me and is working" from "it is holding back so as not to cut me off".
-        // ONE place reports state, and it is the orb. The line below used to report it too —
-        // "listening, say hey claude" under an orb already reading "Listening" — which is the
-        // same fact twice in two voices. JJ, live 2026-08-03: "we have two places where we
-        // report status... I wonder if we should merge it."
-        //
-        // The split that keeps both useful: THE ORB SAYS WHAT IS HAPPENING, THE LINE SAYS WHAT
-        // TO DO. A circle cannot hold "transcribing what you said", so the line is not deleted —
-        // it is demoted to instructions only, and stays empty whenever there is nothing to ask of
-        // him. Numbered prefixes go too; they were scaffolding for a split that no longer exists.
         // Name the operation, do not soften it. "Hearing you" was a friendlier word for
         // transcribing and it cost precision — JJ, live: "it's not clear, hearing you, we should
         // say transcribing." He is watching a machine work; the label should say which machine.
-        const ORB = {
-          idle: "Listening", transcribing: "Transcribing", thinking: "Thinking",
-          synthesizing: "Synthesizing", waiting: "Waiting", speaking: "Speaking",
-        };
-        // Only states that require something OF HIM get a line.
-        const ASK = { idle: wakePrompt(), waiting: "go on, I'll wait until you're done" };
-        const label = ASK[msg.state] !== undefined ? ASK[msg.state] : "";
+        // The names themselves live in ORB_LABELS, next to the reducer that uses them.
+        //
+        // THIS HANDLER SETS ONE VARIABLE. Everything visible follows from applyOrb, including
+        // whether the elapsed-seconds counter runs — which is what stops a future handler from
+        //half-updating the orb and leaving it saying "Thinking" with no clock.
         diag.states.push(msg.state);
-        // Now that the socket connects on page load, the server starts narrating BEFORE there is
-        // a microphone — which put "listening — say hey claude" under an orb still reading "Tap
-        // to start". Two controls disagreeing about whether the thing is on is worse than either
-        // being wrong alone, and the orb is the one telling the truth.
-        if (!running) setState("tap the orb to talk");
-        else if (muted) setState("muted — tap the orb to talk");
-        else setState(label);
-        const busy = ["transcribing", "thinking", "synthesizing", "waiting"].includes(msg.state);
-        $orb.classList.toggle("thinking", busy);
-        // The orb carries the state now. `speaking` is left to playClip, which knows when the
-        // audio actually starts and ends — the server only knows when it finished SENDING, and
-        // letting both write the label made them race.
-        if (running && !muted && msg.state !== "speaking" && ORB[msg.state]) {
-          $orb.textContent = ORB[msg.state];
-        }
+        agentState = msg.state;
+        applyOrb();
       } else if (msg.type === "partial") {
         // Live preview of the utterance still being spoken. Replaced in place, then removed
         // when the final turn lands — so it reads as one sentence firming up rather than a
@@ -1325,24 +1557,19 @@
       // tracked separately so it never masquerades as a spoken reply.
       const isCue = Boolean(header.cue);
       if (!isCue) {
-        $orb.classList.add("speaking");
-        $orb.textContent = "Speaking";
-        setState("");
+        playing = true;       // the client owns this: it knows when audio actually starts
+        applyOrb();
         addRow("claude", header.text || "", "claude");
       }
       await new Promise((res) => { src.onended = res; src.start(); });
       if (playingSource === src) playingSource = null;
       if (!isCue) {
-        $orb.classList.remove("speaking");
-        // Restore to the state we were ACTUALLY in, which may be muted. Hard-coding "Listening"
-        // here meant every reply silently un-labelled the mute: the orb said Muted until claude
-        // spoke, then went back to Listening on a microphone that was still off. JJ, live
-        // 2026-08-03: "whenever I mute, it says muted. But if you speak after that, it goes back
-        // to listening."
-        $orb.textContent = !running ? "Tap to start" : (muted ? "Muted" : "Listening");
-        if (running) {
-          setState(muted ? "muted — tap the orb to talk" : wakePrompt());
-        }
+        // Clearing the flag returns the orb to whatever the model actually says — muted, closed,
+        // still thinking. Hard-coding "Listening" here is what used to un-label the mute after
+        // every reply. JJ, live 2026-08-03: "whenever I mute, it says muted. But if you speak
+        // after that, it goes back to listening."
+        playing = false;
+        applyOrb();
       }
       (isCue ? diag.cues : diag.played).push(header.id);
       if (!isCue && ws && ws.readyState === WebSocket.OPEN) {
@@ -1384,7 +1611,7 @@
     // Full stop/start rather than surgery on a live audio graph: swapping the source node
     // mid-stream is where subtle capture bugs breed, and the turn log lives on the server so
     // a reconnect costs nothing.
-    setState("switching microphone…");
+
     await stop();
     await start();
   });
@@ -1398,7 +1625,7 @@
   (async () => {
     try { await openSocket(48000); } catch (e) { diag.errors.push("initial connect: " + e.message); }
   })();
-  if (!token) setState("no token in URL — append ?token=…", "err");
+  if (!token) setError("no token in URL — append ?token=…");
 })();
 </script>
 </body>
