@@ -620,8 +620,13 @@ def cmd_watch(args) -> dict[str, Any]:
         result["verbose"] = live.get("verbose")
         if not live.get("clients"):
             result["listening"] = False
+            # "Say so rather than waiting" is what this used to end with, and it contradicted
+            # the `next` field sitting beside it. A tool that argues with itself at the moment of
+            # decision is worse than one that says nothing — the agent picks one, and it picked
+            # the wrong one four times in a single session.
             result["hint"] = ("no page is connected — he cannot hear you and you cannot hear "
-                              "him. Say so rather than waiting.")
+                              "him. Say so in text, then KEEP WATCHING: this call returns the "
+                              "moment a page reconnects.")
         elif "capturing" not in live:
             # ABSENT IS NOT FALSE. A server started before this field existed reports nothing,
             # and reading that as "the microphone was never started" produced a confidently wrong

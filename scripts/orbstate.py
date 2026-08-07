@@ -126,14 +126,14 @@ try:
         snapshot = {
             "|".join(str(c[k]) for k in
                      ("running", "phase", "channelOpen", "muted", "playing", "agentState")): v
-            for c, v in zip(combos, views)
+            for c, v in zip(combos, views, strict=True)
         }
         check(len(snapshot) == len(combos), "every combination produced a view",
               f"{len(snapshot)} cases")
 
         # The properties that matter, asserted as rules rather than read off the snapshot — a
         # golden file only catches CHANGE, and cannot say whether the current behaviour is right.
-        live = [(c, v) for c, v in zip(combos, views)
+        live = [(c, v) for c, v in zip(combos, views, strict=True)
                 if c["running"] and c["phase"] == "live" and c["channelOpen"]
                 and not c["playing"]]
 
@@ -160,19 +160,19 @@ try:
 
         # Precedence, each layer answering a different question.
         check(all(v["label"] == "Tap to start"
-                  for c, v in zip(combos, views)
+                  for c, v in zip(combos, views, strict=True)
                   if not c["running"] and c["phase"] not in ("starting", "denied")),
               "no session means Tap to start, whatever the server says")
-        check(all(v["label"] == "No mic" for c, v in zip(combos, views) if c["phase"] == "denied"),
+        check(all(v["label"] == "No mic" for c, v in zip(combos, views, strict=True) if c["phase"] == "denied"),
               "a refused microphone says so ON THE ORB, from every other state",
               "silence here reads as a tap that never registered")
         check(all(v["label"] == "Warming up"
-                  for c, v in zip(combos, views) if c["running"] and c["phase"] == "warming"),
+                  for c, v in zip(combos, views, strict=True) if c["running"] and c["phase"] == "warming"),
               "warming outranks everything below it")
-        check(all(v["label"] == "Off" for c, v in zip(combos, views)
+        check(all(v["label"] == "Off" for c, v in zip(combos, views, strict=True)
                   if c["running"] and c["phase"] == "live" and not c["channelOpen"]),
               "a closed channel reads Off, not Muted and not the agent's state")
-        check(all(v["label"] == "Speaking" and v["timer"] is None for c, v in zip(combos, views)
+        check(all(v["label"] == "Speaking" and v["timer"] is None for c, v in zip(combos, views, strict=True)
                   if c["running"] and c["phase"] == "live" and c["channelOpen"] and c["playing"]),
               "audible playback wins the label and carries no clock")
 
