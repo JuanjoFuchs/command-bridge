@@ -56,6 +56,27 @@ one, which is what makes silent enrolment viable.
 Worth noting: the agent's own synthesized replies score 0.00-0.16, so the tunnel cannot mistake
 itself for him even when echo cancellation lets its own voice back in."""
 
+STRANGER_MAX = 0.15
+"""At or below this, the speaker is CONFIDENTLY not the owner — enough to overrule the
+conversation window, and nothing else.
+
+The same measurements that set AUTO_THRESHOLD bound this one from the other side: three other
+human speakers scored 0.035, 0.055 and 0.096, and the agent's own synthesized voice 0.000-0.132,
+while the owner's worst genuine score was 0.711 on a full turn (and 0.20 on a one-second
+fragment). 0.15 sits above every impostor ever measured here and far below any genuine score,
+which leaves the whole 0.15-0.50 band as "unsure" — and unsure keeps its attention.
+
+**This is the ONE case where identity may withhold attention, and it is deliberately narrow.**
+It cannot override a spoken wake phrase; it only overrides the conversation window, which is an
+inference rather than an instruction — the guess that whoever is speaking now is the same person
+who spoke a moment ago. When someone else in the room is talking, that guess is simply wrong, and
+JJ found it live on 2026-08-07 when another person speaking landed as an addressed turn.
+
+Why this does not reopen the false-negative risk the additive rule was protecting against: being
+ignored mid-sentence requires the gate to be confident you are a stranger, and the margin between
+0.15 and a genuine 0.711 is the same 5x that makes the positive direction safe.
+"""
+
 ENROLL_MIN_SECONDS = 1.0
 """Utterances shorter than this carry too little voice to learn from."""
 
@@ -286,17 +307,41 @@ def enroll_from_wav(
 
 
 def should_address(
-    wake_said: bool, speaker: str | None, similarity: float, owner: str = "me"
+    wake_said: bool,
+    speaker: str | None,
+    similarity: float,
+    owner: str = "me",
+    grant: str | None = None,
+    scored: bool = False,
 ) -> tuple[bool, str]:
     """Combine the wake gate and the voice gate. Returns `(addressed, reason)`.
 
-    **Additive by construction.** If the wake phrase fired, this returns True regardless of what
-    the voiceprint thinks — a voice match can grant attention but can never take it away. That
-    asymmetry is the whole safety argument: a false positive wastes one read, a false negative
-    means being ignored mid-sentence, and this project has already demonstrated how bad that
-    feels.
+    `grant` is how the wake gate addressed it — 'phrase', 'window', or None (see
+    `WakeGate.last_grant`). `scored` says whether `similarity` came from a real embedding; a turn
+    too short or too quiet to embed reports 0.0, which must never be read as "confidently a
+    stranger".
+
+    **Additive, with exactly one exception.** A spoken wake phrase always wins: identity cannot
+    take away attention someone explicitly asked for. That asymmetry is the safety argument — a
+    false positive wastes one read, a false negative means being ignored mid-sentence, and this
+    project has already demonstrated how bad that feels.
+
+    The exception is the conversation WINDOW, which is not an instruction but an inference: that
+    whoever is speaking now is whoever spoke a moment ago. A confident stranger (see
+    STRANGER_MAX) is direct evidence that the inference is wrong, so it loses. Nothing else about
+    the window changes, and an unsure score keeps its attention.
     """
+    # `match` returns the BEST entry in the gallery whatever it scores, and the gallery here
+    # normally holds one name — the owner. So a stranger comes back as ("me", 0.06), NOT as a
+    # different name: keying "is this a stranger" off the NAME would never fire in the case this
+    # exists for. The score is the signal; the name only adds the case where someone else is
+    # enrolled and confidently recognised.
+    nobody_known = scored and similarity <= STRANGER_MAX
+    confident_other = scored and speaker != owner and similarity >= AUTO_THRESHOLD
+    stranger = nobody_known or confident_other
     if wake_said:
+        if grant == "window" and stranger:
+            return False, f"not-owner:{similarity:.2f}"
         return True, "wake"
     if speaker == owner and similarity >= AUTO_THRESHOLD:
         return True, f"voice:{similarity:.2f}"

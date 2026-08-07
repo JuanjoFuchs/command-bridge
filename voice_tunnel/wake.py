@@ -91,9 +91,18 @@ class WakeGate:
         self.window_s = float(window_s)
         self.enabled = bool(enabled)
         self._last_addressed_at: float | None = None
+        self.last_grant: str | None = None
+        """HOW the most recent `evaluate` addressed the turn: 'phrase' | 'window' | None.
+
+        Valid only for the call that just returned — it is a detail of the last verdict, not
+        state. The caller needs it because the two grants carry different authority: a spoken
+        phrase is an unambiguous instruction from a person, while the window is an INFERENCE that
+        whoever is talking now is the same person who was talking a moment ago. Only the second
+        one is safe for another signal to overrule."""
 
     def reset(self) -> None:
         self._last_addressed_at = None
+        self.last_grant = None
 
     def set_phrases(self, phrases: Iterable[str]) -> None:
         """Swap the accepted summons without ending the conversation in progress.
@@ -105,61 +114,96 @@ class WakeGate:
         """
         self.phrases = sorted((_norm(p) for p in phrases), key=len, reverse=True)
 
-    def _find_phrase(self, normalized: str) -> tuple[str | None, bool]:
-        """Return `(phrase, at_start)`. Detection is generous; stripping is not.
+    def _find_phrase(self, normalized: str) -> str | None:
+        """Return the wake phrase that woke this utterance, or None.
 
-        A phrase anywhere wakes the agent, but only a phrase at the START is a summons we may
-        safely remove. Mid-sentence, the speaker is usually *referring* to the phrase rather
-        than using it — JJ, live, 2026-07-29: "and do I need to say hey Claude every time?"
-        became "and do I need to say every time?", which changes what he asked.
-
-        The asymmetry is deliberate: leaving a stray wake phrase in the text costs the agent
-        nothing, while removing one the speaker meant to keep corrupts the request. When in
-        doubt, do not edit the user's words.
+        Detection only — **the phrase is never removed from the text.** Where a phrase sits in
+        the sentence used to decide whether it was safe to strip; now that nothing is stripped,
+        position carries no consequence and the distinction is gone.
         """
-        # 1. An exact configured phrase, leading — the clean case, safe to strip.
+        # 1. An exact configured phrase, leading — the clean case.
         for p in self.phrases:
             if normalized == p or normalized.startswith(p + " "):
-                return p, True
+                return p
 
         words = normalized.split()
 
         # 2. A greeting followed by something close enough to "claude" that ASR probably
-        #    mangled the name. Still safe to strip: the intent is unambiguous.
+        #    mangled the name. The intent is unambiguous.
         if (
             len(words) >= 2
             and words[0] in GREETINGS
             and _is_nameish(words[1], _RATIO_AFTER_GREETING)
         ):
-            return " ".join(words[:2]), True
+            return " ".join(words[:2])
 
-        # 3. A greeting opening the utterance, whatever follows. WAKE but DO NOT STRIP.
+        # 3. A greeting opening the utterance, whatever follows.
         #    Parakeet turned "hey Claude" into "hey grab" and "hey grub", which no fuzzy match
         #    on the name can recover — the sound simply isn't there any more. In a session the
         #    user deliberately opened and tapped into, an utterance that opens with a greeting
         #    is addressed to the only other participant. Waking wrongly costs a wasted read;
         #    staying silent costs him talking to nobody, which is far worse.
         if len(words) >= 2 and words[0] in GREETINGS:
-            return words[0], False
+            return words[0]
 
-        # 4. A full greeting-plus-name anywhere else — wake, but never edit their words.
+        # 4. A full greeting-plus-name anywhere else.
         for p in self.phrases:
             if (" " + p + " ") in (" " + normalized + " "):
-                return p, False
+                return p
 
         # There is deliberately no rule for the BARE name. It used to be rule 5, gated on
         # `config.wake_allows_bare()`, and it is the reason "let's ship it Thursday" kept waking
         # the agent after the bare form had already been removed from `wake_phrases()` — the
         # phrase list and the matcher were two separate paths and only one of them was fixed.
         # Now the greeting is mandatory (see config.GREETINGS), so a name alone is just a word.
-        return None, False
+        return None
+
+    @property
+    def window_anchor(self) -> float | None:
+        """When the conversation window last restarted. Read it BEFORE `evaluate` if the caller
+        may reject the turn: `evaluate` extends the window as it grants, and a turn that is
+        rejected downstream must not leave the window it opened behind."""
+        return self._last_addressed_at
+
+    def mark_addressed(self, ended: float | None) -> None:
+        """Open or extend the conversation window from OUTSIDE this gate.
+
+        The voiceprint can grant attention to a turn with no wake phrase in it. When it does, the
+        conversation is exactly as live as if the phrase had been spoken — but only this class
+        holds the window, so without this call a voice-addressed turn started no conversation and
+        the NEXT sentence had to qualify entirely on its own.
+
+        **The turns that fell out were the short ones, and that is not a coincidence.** A one- or
+        two-word follow-up is too short for the embedder to score confidently, so it cannot pass
+        the voice gate either, and it landed as `not-addressed` in the middle of a conversation
+        already in progress. Reported live by JJ, 2026-08-07: "I have said a few things to you
+        directing myself to you, but I see they're being categorized as [not addressed]" — his
+        "But", "Yeah, yeah", "Just one thing" and "That's my taste" all went unheard between
+        turns that were heard.
+
+        The rule this restores: **whatever grants attention also extends the window.** A gate
+        that can start a conversation but not continue one is not a gate, it is a doorbell.
+
+        Passing None winds the window back — used to undo the extension `evaluate` applied to
+        a turn that another gate then rejected.
+        """
+        self._last_addressed_at = ended
 
     def evaluate(self, text: str, now: float, ended: float | None = None) -> tuple[bool, str]:
         """Return `(addressed, text_for_the_agent)`.
 
-        A **leading** wake phrase is stripped, because the agent should receive the request
-        ("what is the status") and not the summons ("hey claude what is the status"). A
-        mid-sentence mention still wakes but is left intact — see :meth:`_find_phrase`.
+        **The text is returned exactly as spoken — the wake phrase is never removed.**
+        JJ, 2026-08-07: "when I initially said hey clot [Claude], you removed that hay clot
+        from the transcription. I think we should stop doing that. It's fine that it's a wake
+        word or two words, but we shouldn't remove it."
+
+        *Why this beats the old strip-the-leading-summons rule:* the turn log is a record of
+        what a person said, and an agent that can read "hey claude what is the status" can
+        ignore two words without help. Editing costs something real — it made the log disagree
+        with his memory of the sentence, and the failure mode was silent. The earlier fix
+        narrowed stripping to leading phrases only, after "do I need to say hey Claude every
+        time?" came back with the phrase deleted; this removes the class of bug rather than
+        another instance of it.
 
         `now` is when this utterance STARTED and `ended` when it finished, both on one monotonic
         clock. The distinction is load-bearing: measuring the conversation window to the *end*
@@ -169,19 +213,20 @@ class WakeGate:
         The gap that matters is silence between turns — previous end to this start.
         """
         ended = now if ended is None else ended
+        self.last_grant = None
         if not self.enabled:
             self._last_addressed_at = ended
+            self.last_grant = "phrase"     # push-to-talk: the operator signalled intent by hand
             return True, text.strip()
 
         normalized = _norm(text)
         if not normalized:
             return False, text.strip()
 
-        phrase, at_start = self._find_phrase(normalized)
-        if phrase is not None:
+        if self._find_phrase(normalized) is not None:
             self._last_addressed_at = ended
-            # Strip only a leading summons; leave a mid-sentence mention intact.
-            return True, (_strip_phrase(text, phrase) if at_start else text.strip())
+            self.last_grant = "phrase"
+            return True, text.strip()
 
         # No phrase — still addressed if this utterance BEGAN within the window of the last
         # one ending. Comparing starts-to-ends is what stops a long turn from timing itself out.
@@ -190,25 +235,7 @@ class WakeGate:
             and (now - self._last_addressed_at) <= self.window_s
         ):
             self._last_addressed_at = ended  # each exchange extends the window
+            self.last_grant = "window"
             return True, text.strip()
 
         return False, text.strip()
-
-
-def _strip_phrase(original: str, normalized_phrase: str) -> str:
-    """Remove the wake phrase from the ORIGINAL text, preserving its casing and punctuation
-    elsewhere. Falls back to the original string if the phrase can't be located verbatim —
-    better to hand the agent a slightly noisy request than to mangle it."""
-    words = normalized_phrase.split()
-    pattern = r"[^\w]*".join(re.escape(w) for w in words)
-    out = re.sub(
-        r"^\s*[^\w]*" + pattern + r"[^\w]*\s*",
-        "",
-        original,
-        count=1,
-        flags=re.IGNORECASE,
-    )
-    if out != original:
-        return out.strip()
-    out = re.sub(pattern, " ", original, count=1, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", out).strip() or original.strip()

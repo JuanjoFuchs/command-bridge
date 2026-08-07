@@ -2,9 +2,13 @@
 
 The name is configurable (`VOICE_TUNNEL_WAKE_NAME`) and defaults to a role, not a product. The
 tests below still exercise "claude" on purpose: they encode behaviour discovered against real
-speech — the greeting-prefix rule, the fuzzy threshold, mid-sentence mentions that must not be
-stripped — and rewriting them for a new name would throw that history away to prove nothing. The
-autouse fixture pins the name so they keep testing behaviour rather than configuration.
+speech — the greeting-prefix rule and the fuzzy threshold — and rewriting them for a new name
+would throw that history away to prove nothing. The autouse fixture pins the name so they keep
+testing behaviour rather than configuration.
+
+**Nothing is ever removed from the transcript** (JJ, 2026-08-07). Several tests below assert
+that directly, because the previous rule stripped a leading summons and the class of bug it
+produced — the log disagreeing with what he remembers saying — was silent every time.
 
 The tests at the bottom cover the rule that a GREETING IS ALWAYS REQUIRED, which replaced the
 per-name `VOICE_TUNNEL_WAKE_BARE` opt-in.
@@ -30,19 +34,25 @@ def test_turn_without_wake_phrase_is_not_addressed():
     assert text == "so then I told him it was fine"
 
 
-def test_wake_phrase_addresses_and_is_stripped():
-    """AC-5 — the agent should get the request, not the summons."""
+def test_wake_phrase_addresses_and_the_words_are_left_alone():
+    """AC-5 — the phrase wakes the agent and STAYS in the transcript.
+
+    JJ, 2026-08-07: "you removed that hay clot [hey Claude] from the transcription. I think we
+    should stop doing that." The turn log records what a person said; an agent can ignore two
+    words on its own, and editing them made the log disagree with his memory of the sentence.
+    """
     g = WakeGate()
     addressed, text = g.evaluate("Hey Claude, what is the status?", now=100.0)
     assert addressed is True
-    assert text == "what is the status?"
+    assert text == "Hey Claude, what is the status?"
 
 
 def test_wake_phrase_matching_is_punctuation_and_case_insensitive():
+    """Matching normalizes; the text handed on does not."""
     for utterance in ["hey claude what's up", "Hey, Claude! what's up", "HEY CLAUDE what's up"]:
         addressed, text = WakeGate().evaluate(utterance, now=1.0)
         assert addressed is True
-        assert "claude" not in text.lower()
+        assert text == utterance
 
 
 def test_follow_up_inside_the_window_stays_addressed_without_the_phrase():
@@ -52,6 +62,28 @@ def test_follow_up_inside_the_window_stays_addressed_without_the_phrase():
     addressed, text = g.evaluate("and what about the other one", now=110.0)
     assert addressed is True
     assert text == "and what about the other one"   # nothing stripped, nothing was said
+
+
+def test_the_window_can_be_opened_by_another_gate():
+    """The voiceprint grants attention to turns with no phrase in them, and the window has to
+    follow — otherwise a voice-addressed turn starts no conversation and the next short
+    follow-up, too brief for the embedder to score, arrives unaddressed mid-exchange.
+
+    Live, 2026-08-07: "I have said a few things to you directing myself to you, but I see
+    they're being categorized as [not addressed]."
+    """
+    g = WakeGate(window_s=30.0)
+
+    # No phrase, so this gate alone would not address it. The server did, on the voiceprint.
+    assert g.evaluate("each state gets its own count", now=100.0, ended=104.0)[0] is False
+    g.mark_addressed(104.0)
+
+    # The follow-up now rides the window, exactly as if a phrase had opened it.
+    assert g.evaluate("just one thing", now=106.0, ended=107.0)[0] is True
+    # ...and continuing extends it, so a long exchange never times itself out.
+    assert g.evaluate("that's my taste", now=130.0, ended=131.0)[0] is True
+    # The window is still a window: leave for long enough and it closes.
+    assert g.evaluate("unrelated chatter", now=200.0)[0] is False
 
 
 def test_conversation_window_expires():
@@ -84,19 +116,16 @@ def test_a_bare_name_never_wakes_however_uncommon_it_is(monkeypatch):
     assert text == "claude status please", "an unaddressed turn must not be edited"
 
 
-def test_the_greeting_form_wakes_and_strips():
+def test_the_greeting_form_wakes_and_keeps_every_word():
     addressed, text = WakeGate().evaluate("okay claude status please", now=1.0)
     assert addressed is True
-    assert text == "status please"
+    assert text == "okay claude status please"
 
 
-def test_mid_sentence_mention_wakes_but_is_not_stripped():
-    """Detection is generous, stripping is conservative.
-
-    Regression for a live bug (JJ, 2026-07-29): "and do I need to say hey Claude every time?"
-    became "and do I need to say every time?" — he was REFERRING to the phrase, not using it,
-    and stripping changed what he asked. Leaving a stray phrase costs the agent nothing;
-    removing one the speaker meant to keep corrupts the request.
+def test_mid_sentence_mention_wakes_and_survives_intact():
+    """Regression for the live bug that started this (JJ, 2026-07-29): "and do I need to say hey
+    Claude every time?" became "and do I need to say every time?" — he was REFERRING to the
+    phrase, not using it. That fix spared mid-sentence mentions; 2026-08-07 spared all of them.
     """
     addressed, text = WakeGate().evaluate("so hey claude can you check that", now=1.0)
     assert addressed is True
@@ -111,10 +140,11 @@ def test_referring_to_the_phrase_does_not_mangle_the_sentence():
     assert text == "and do I need to say hey Claude every time?"
 
 
-def test_leading_phrase_is_still_stripped():
+def test_a_leading_phrase_is_kept_too():
+    """The case that used to be the one exception. There are no exceptions now."""
     addressed, text = WakeGate().evaluate("hey claude do I need to say it every time?", now=1.0)
     assert addressed is True
-    assert text == "do I need to say it every time?"
+    assert text == "hey claude do I need to say it every time?"
 
 
 def test_disabled_gate_addresses_everything():
@@ -177,13 +207,13 @@ def test_mangled_name_after_a_greeting_still_wakes():
         assert addressed is True, f"should wake on {utterance!r}"
 
 
-def test_a_near_miss_on_the_name_is_stripped_but_a_wild_miss_is_not():
-    # "clod" is plausibly the name -> safe to remove.
-    _, text = WakeGate().evaluate("hey clod what is the status", now=1.0)
-    assert text == "what is the status"
-    # "grab" is not recoverable as the name -> wake, but leave the words alone.
-    _, text = WakeGate().evaluate("hey grab what is the status", now=1.0)
-    assert text == "hey grab what is the status"
+def test_a_near_miss_on_the_name_wakes_and_still_changes_nothing():
+    """Both of these wake the agent — "clod" by fuzzy match, "grab" by the greeting rule — and
+    the difference between them no longer shows up in the text, because neither is edited."""
+    for said in ["hey clod what is the status", "hey grab what is the status"]:
+        addressed, text = WakeGate().evaluate(said, now=1.0)
+        assert addressed is True
+        assert text == said
 
 
 def test_a_greeting_alone_does_not_mangle_an_ordinary_sentence():
@@ -210,9 +240,15 @@ def test_the_name_is_configurable(monkeypatch):
     monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
 
     addressed, text = WakeGate().evaluate("Hey Thursday, what is the status?", now=100.0)
-
     assert addressed is True
-    assert text == "what is the status?"
+    assert text == "Hey Thursday, what is the status?"   # woken, and not edited
+
+    # A LEADING greeting wakes whatever the name is, so it cannot prove the name was configured.
+    # A mid-sentence phrase can: it matches the configured phrase verbatim or not at all.
+    mid = "so I said hey thursday and he laughed"
+    assert WakeGate().evaluate(mid, now=200.0)[0] is True
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    assert WakeGate().evaluate(mid, now=300.0)[0] is False
 
 
 def test_a_common_word_name_does_not_fire_bare(monkeypatch):
@@ -241,7 +277,7 @@ def test_the_greeting_form_still_wakes_a_common_word_name(monkeypatch):
                  "okay thursday go ahead"]:
         addressed, text = WakeGate().evaluate(said, now=1.0)
         assert addressed is True, f"{said!r} should wake the agent"
-        assert "thursday" not in text.lower(), "the summons should be stripped"
+        assert text == said, "the summons is kept, like every other word"
 
 
 def test_a_greeting_is_mandatory_and_cannot_be_switched_off(monkeypatch):
@@ -266,9 +302,10 @@ def test_every_greeting_builds_a_phrase(monkeypatch):
     """
     monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "codex")
     for greeting in config.GREETINGS:
-        addressed, text = WakeGate().evaluate(f"{greeting} codex what is the status", now=1.0)
+        said = f"{greeting} codex what is the status"
+        addressed, text = WakeGate().evaluate(said, now=1.0)
         assert addressed is True, f"{greeting!r} should open a summons"
-        assert text == "what is the status", f"{greeting!r} should strip fully"
+        assert text == said, f"{greeting!r} must wake without editing the words"
 
 
 def test_an_ordinary_word_name_is_safe_because_the_greeting_is_mandatory(monkeypatch):
@@ -300,13 +337,16 @@ def test_renaming_does_not_end_the_conversation_in_progress(monkeypatch):
     # Mid-conversation, so no phrase is needed at all.
     assert g.evaluate("and the other one", now=110.0)[0] is True
 
-    # STRIPPING is what proves the phrase list actually changed, not waking. "hey claude" still
-    # wakes after the rename, and that is rule 3 working as designed: an utterance opening with a
-    # greeting is a summons whatever follows it, because Parakeet renders the name as grab / grub
-    # / Crawley and no fuzzy match can recover a sound that is not there. The gate is generous
-    # about listening and conservative about editing, so the two cases separate cleanly:
-    assert g.evaluate("hey codex status", now=500.0) == (True, "status")
-    assert g.evaluate("hey claude status", now=900.0) == (True, "hey claude status")
+    # A MID-SENTENCE phrase is what proves the list actually changed. A leading greeting wakes
+    # whoever is listening — that is rule 3 working as designed, because Parakeet renders the
+    # name as grab / grub / Crawley and no fuzzy match can recover a sound that is not there —
+    # so only rule 4, which needs the configured phrase verbatim, can tell old from new:
+    assert g.evaluate("I told them hey codex is running", now=500.0)[0] is True
+    assert g.evaluate("I told them hey claude is running", now=900.0)[0] is False
+
+    # Both still wake from the front, and neither is edited.
+    assert g.evaluate("hey codex status", now=1000.0) == (True, "hey codex status")
+    assert g.evaluate("hey claude status", now=1100.0) == (True, "hey claude status")
 
     # The bare old name, with no greeting, is now simply a word.
     assert g.evaluate("claude status", now=1300.0)[0] is False

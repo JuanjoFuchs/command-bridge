@@ -951,17 +951,23 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # Session-relative audio time, not wall clock: it is monotonic, it matches the timestamps
     # written to the log, and it lets the gate compare "silence between turns" rather than
     # "time since the last transcription finished".
+    # Captured BEFORE evaluate, which extends the window as it grants: if the voiceprint then
+    # rejects this turn, the window it opened has to be wound back or a stranger's speech
+    # would hold the conversation open on the owner's behalf.
+    window_anchor = state.wake.window_anchor
     wake_said, agent_text = state.wake.evaluate(text, now=t_start, ended=t_end)
+    grant = state.wake.last_grant
 
     # Voice identity. Learn from turns the wake phrase already confirmed, and let a confident
     # match grant attention on turns where it did not fire. Additive only — see
     # voiceprint.should_address for why a match can never withhold attention.
-    speaker, similarity = None, 0.0
+    speaker, similarity, scored = None, 0.0, False
     if state.embedder.available:
         try:
             emb = await loop.run_in_executor(None, state.embedder.embed, samples)
             if emb is not None:
                 speaker, similarity = voiceprint.match(emb)
+                scored = True
                 if wake_said:
                     rec = voiceprint.enroll(config.owner_name(), emb)
                     state.voice_samples = int(rec.get("count", 0))
@@ -969,8 +975,16 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
             state.last_error = f"voiceprint: {exc}"
 
     addressed, reason = voiceprint.should_address(
-        wake_said, speaker, similarity, owner=config.owner_name()
+        wake_said, speaker, similarity, owner=config.owner_name(),
+        grant=grant, scored=scored,
     )
+    if not addressed:
+        state.wake.mark_addressed(window_anchor)
+    if addressed and not wake_said:
+        # Identity granted this one, so identity has to extend the window too — otherwise the
+        # conversation only ever continues from phrases, and short follow-ups (too brief for the
+        # embedder to score) drop out mid-exchange. See WakeGate.mark_addressed.
+        state.wake.mark_addressed(t_end)
     turn = store.append_turn(
         session=state.session,
         text=agent_text,

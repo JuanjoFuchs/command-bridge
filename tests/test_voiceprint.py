@@ -99,6 +99,51 @@ def test_another_speaker_never_addresses_however_confident():
     assert addressed is False
 
 
+def test_a_confident_stranger_loses_the_conversation_window():
+    """The one case where identity may withhold attention, and only this one.
+
+    Found live 2026-08-07: JJ's son spoke inside JJ's 30 s window and it logged as an
+    addressed turn. The window is an INFERENCE — that whoever is speaking now is whoever spoke a
+    moment ago — and a confident stranger is direct evidence that the inference is wrong.
+    """
+    addressed, reason = vp.should_address(
+        True, "me", vp.STRANGER_MAX - 0.05, grant="window", scored=True
+    )
+    assert addressed is False
+    assert reason.startswith("not-owner:")
+
+
+def test_a_spoken_phrase_still_wins_even_from_a_stranger():
+    """A phrase is an instruction, not an inference. Someone who walks up and says the words is
+    asking for attention on purpose, and a voiceprint does not get to overrule that — otherwise
+    nobody but the owner could ever hand the agent a sentence."""
+    addressed, reason = vp.should_address(
+        True, "me", 0.0, grant="phrase", scored=True
+    )
+    assert addressed is True
+    assert reason == "wake"
+
+
+def test_an_unsure_score_keeps_the_window():
+    """Between STRANGER_MAX and AUTO_THRESHOLD the gate does not know, and not knowing must not
+    cost him his turn. This is the band that protects against the failure the additive rule was
+    written for."""
+    for sim in [vp.STRANGER_MAX + 0.01, 0.30, vp.AUTO_THRESHOLD - 0.01]:
+        addressed, reason = vp.should_address(True, "me", sim, grant="window", scored=True)
+        assert addressed is True, f"{sim} is unsure, not a stranger"
+        assert reason == "wake"
+
+
+def test_an_unscored_turn_is_never_read_as_a_stranger():
+    """A turn too short or too quiet to embed reports similarity 0.0, which is numerically
+    indistinguishable from a perfect stranger. Without the `scored` flag every "uh huh" inside a
+    conversation would be thrown away as somebody else — which is precisely the class of turn the
+    window exists to keep."""
+    addressed, reason = vp.should_address(True, None, 0.0, grant="window", scored=False)
+    assert addressed is True
+    assert reason == "wake"
+
+
 def test_embedder_reports_unavailable_rather_than_raising(tmp_path):
     e = vp.Embedder(model_path=str(tmp_path / "missing.onnx"))
     assert e.available is False
