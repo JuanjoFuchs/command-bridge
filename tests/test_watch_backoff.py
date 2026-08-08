@@ -23,16 +23,19 @@ def test_the_wait_is_capped():
     assert cli._backoff_ceiling(30.0, 99, reachable=False) == cli.WATCH_BACKOFF_UNREACHABLE_MAX_S
 
 
-def test_the_ceiling_stays_under_a_harness_tool_timeout():
-    """The ceiling is set by the CALLER'S HARNESS, not by the situation.
+def test_it_keeps_doubling_well_past_a_harness_tool_timeout():
+    """The ceiling is set by how long he might plausibly be away, NOT by a tool timeout.
 
-    Found by hitting it: a 16-minute wait exceeded Claude Code's 10-minute maximum tool timeout,
-    so the harness moved the call to the background — at which point it is not a blocking watch
-    any more, the turn ends, and the failure this mechanism exists to prevent happens again with
-    a longer fuse. A watch that outlives its harness's tool timeout stops being a watch.
+    This was briefly capped at nine minutes to stay under Claude Code's 10-minute limit, and JJ
+    caught the over-correction: "you shouldn't be waiting 9 minutes always, it should be getting
+    longer exponentially." Backgrounding is only fatal without a watchdog, and the contract now
+    requires one — so a harness that caps blocking calls should run long waits detached rather
+    than shorten them.
     """
-    assert cli.WATCH_BACKOFF_MAX_S <= 600.0
-    assert cli.WATCH_BACKOFF_UNREACHABLE_MAX_S <= 600.0
+    assert cli.WATCH_BACKOFF_MAX_S >= 1800.0
+    assert cli.WATCH_BACKOFF_UNREACHABLE_MAX_S > cli.WATCH_BACKOFF_MAX_S
+    ladder = [cli._backoff_ceiling(30.0, s, reachable=True) for s in range(7)]
+    assert ladder == [30.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1800.0]
 
 
 def test_the_ceiling_is_overridable(monkeypatch):
@@ -41,11 +44,15 @@ def test_the_ceiling_is_overridable(monkeypatch):
     assert cli._backoff_ceiling(30.0, 99, reachable=True) == 1200.0
 
 
-def test_the_caller_s_timeout_is_still_the_base():
-    """A harness asking for 2 seconds must get 2 seconds on the first call, not 30. The backoff
-    multiplies what was asked for; it does not replace it."""
-    assert cli._backoff_ceiling(2.0, 0, reachable=True) == 2.0
-    assert cli._backoff_ceiling(2.0, 1, reachable=True) == 4.0
+def test_an_explicit_timeout_is_a_ceiling_not_a_base():
+    """`--timeout 480` must mean AT MOST 480, never 480 doubled.
+
+    It shipped the other way and broke the caller twice in ten minutes: a caller trying to stay
+    inside its own harness limit was multiplied past it. A caller that names a number knows
+    something the tool does not.
+    """
+    assert cli._backoff_ceiling(2.0, 5, reachable=True) == 64.0   # the ladder itself still doubles
+    # ...but cmd_watch only consults the ladder when --timeout was OMITTED; see `explicit`.
 
 
 def test_the_streak_round_trips_through_disk(tmp_path, monkeypatch):

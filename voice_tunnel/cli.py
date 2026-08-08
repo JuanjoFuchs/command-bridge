@@ -182,11 +182,13 @@ DESCRIBE: dict[str, Any] = {
             "args": {
                 "--session": "session id",
                 "--since": "cursor; use -1 for 'from the beginning'",
-                "--timeout": "OMIT IT and the wait backs off automatically — 30s doubling to "
-                             "9min while quiet, resetting on any turn or button. PASS IT and it "
-                             "is a hard ceiling, honoured exactly: use that when your harness has "
-                             "a maximum tool timeout, because a watch that outlives it gets "
-                             "backgrounded and stops being a blocking call.",
+                "--timeout": "OMIT IT — the wait then backs off on its own, 30s doubling to "
+                             "30min (1h when he is unreachable), resetting on any turn or button. "
+                             "PASS IT only to impose a hard ceiling, honoured exactly. NOTE: "
+                             "pinning it DISABLES the backoff, which is easy to do by accident "
+                             "when trying to stay inside a harness tool timeout. If long waits "
+                             "get backgrounded by your harness, run them detached deliberately "
+                             "instead of shortening them — your watchdog covers the gap.",
             },
             "returns": {"turns": "[turn, ...]", "cursor": "int — resume from this",
                         "verbose": "bool — ON means NARRATE CONTINUOUSLY and unprompted; OFF "
@@ -573,23 +575,26 @@ CONTROL_FACTS = ("muted", "channel_open", "capturing", "clients", "verbose")
 # Doubling from the caller's base (30 s by default) reaches the cap after five empty rounds,
 # which is roughly seven minutes of quiet — long enough that a real pause never sees it, short
 # enough that a forgotten session stops churning.
-WATCH_BACKOFF_MAX_S = 540.0
-"""Nine minutes, and the number is set by the CALLER'S HARNESS rather than by anything here.
+WATCH_BACKOFF_MAX_S = 1800.0
+"""Thirty minutes, doubling from 30 seconds — nine rounds to reach it.
 
-Found by hitting it, 2026-08-08: a 16-minute wait exceeded Claude Code's 10-minute maximum tool
-timeout, so the harness moved the call to the BACKGROUND — at which point it is no longer a
-blocking watch, the agent's turn ends, and the exact failure this whole mechanism exists to
-prevent happens again, now with a longer fuse.
+This was briefly capped at nine minutes, to stay under Claude Code's 10-minute maximum tool
+timeout: a longer wait gets moved to the BACKGROUND, which ends the agent's turn. That was an
+over-correction, and JJ caught it — "you shouldn't be waiting 9 minutes always, it should be
+getting longer exponentially."
 
-**A watch that outlives its harness's tool timeout stops being a watch.** Nine minutes leaves a
-margin under the commonest limit; raise it with VOICE_TUNNEL_WATCH_MAX_S if your harness allows
-longer, and lower it if it allows less."""
+**Backgrounding is only fatal without a watchdog, and the contract now requires one.** A
+backgrounded watch keeps waiting and reports when it returns; the harness's scheduled job covers
+the gap. So the ceiling is set by how long HE might plausibly be away, not by a tool timeout —
+and an agent whose harness caps blocking calls should run the long ones detached ON PURPOSE
+rather than shortening them.
 
-WATCH_BACKOFF_UNREACHABLE_MAX_S = 540.0
-"""A closed channel or a dead page used to back off twice as far, on the reasoning that the next
-event is a deliberate act of his and replies queue in the meantime. That reasoning still holds —
-but it is bounded by the same harness limit as everything else, and exceeding it converts a
-patient watch into an abandoned one. The ceiling is the harness's, not the situation's."""
+Raise or lower with VOICE_TUNNEL_WATCH_MAX_S."""
+
+WATCH_BACKOFF_UNREACHABLE_MAX_S = 3600.0
+"""An hour when the channel is closed or the page is gone. He shut the conversation deliberately,
+so the next event is an act of his, and nothing is lost meanwhile: replies queue, and reconnecting
+is itself a control change that ends the wait within a second."""
 
 
 def _backoff_path(session: str) -> str:
