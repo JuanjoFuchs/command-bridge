@@ -1139,6 +1139,13 @@ def run(
     # detached (which is the normal way an agent runs it), so the operator never sees the URL.
     print(f"voice-tunnel serving   http://{host}:{port}/?token={token}", flush=True)
     print(f"  session            {session}", flush=True)
+    # The FIRST thing an agent reads after starting the tunnel, because it is the one instruction
+    # this CLI cannot enforce on its own. Everything else here makes staying in `watch` the easy
+    # path; nothing makes an agent RE-ENTER once it has fallen out, and that is the failure this
+    # project keeps hitting — five times in one session, always the same shape: answer in prose,
+    # end the turn, and the person on the phone is talking to nobody.
+    print("  watchdog           register a ~1/min job in YOUR harness that re-arms `watch` "
+          "(see `voice-tunnel describe` -> watchdog)", flush=True)
     print(f"  log                {store.log_path(session)}", flush=True)
     # The banner is what the operator reads before speaking, so it has to say the phrase. Without
     # this line the one thing you must know to use the tool at all was the one thing it never

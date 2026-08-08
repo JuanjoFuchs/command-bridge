@@ -87,7 +87,51 @@ DESCRIBE: dict[str, Any] = {
     # it hands them over, and the orb's status is derived from which commands are running — so
     # there is nothing to acknowledge and nothing to declare. Every step an agent could forget is
     # a step it eventually does forget.
+    # REGISTER A WATCHDOG IN YOUR HARNESS. This is the one instruction the tool cannot enforce
+    # for itself, so it has to be the loudest thing in the contract.
+    #
+    # Everything else here is designed so that staying in `watch` is the easy path: the hints
+    # hand back runnable commands, the wait holds through mute and backs off on silence, and no
+    # branch ever says stop. None of that makes an agent RE-ENTER once it has fallen out, and
+    # falling out is the failure this project keeps hitting — five times in one session on
+    # 2026-08-07/08, always the same shape: reply to the user in prose, end the turn, and the
+    # person on the phone is talking to nobody.
+    #
+    # JJ, 2026-08-08: "hint, or in the next actions, say to the harness that it should do a cron
+    # job." He is right that it belongs here rather than in an agent's memory.
+    #
+    # THE ORDER IS THE BUG: write prose BEFORE the watch call, never after. A turn whose last
+    # action is text is a turn that ended without listening.
+    "watchdog": {
+        "why": "Nothing in this CLI can force an agent back into `watch` once it has stopped. A "
+               "scheduled prompt in your harness can. Register one before your first watch.",
+        "how": "A recurring job, about once a minute, whose prompt is: 'if you are reading this "
+               "you are NOT in a blocking `voice-tunnel watch` — get the cursor from `status` "
+               "(turns_logged - 1) and re-arm, as the LAST tool call of the turn.'",
+        # NAMED GENERICALLY, with per-harness recipes underneath. "Cron job" is Claude Code's
+        # word for it; another harness calls the same thing a scheduled prompt, a reminder, or a
+        # notification, and an instruction that only makes sense in one harness is an instruction
+        # most readers will skip. JJ, 2026-08-08: "maybe we should call it cron job for Claude and
+        # notification for every other harness."
+        "what_it_is": "Any mechanism your harness has for re-entering a prompt on a schedule — a "
+                      "cron job, a scheduled prompt, a reminder, a timer, a notification. The "
+                      "name does not matter; the property does: it must be able to wake you when "
+                      "you are doing nothing.",
+        "claude_code": "CronCreate, cron '* * * * *'. Fires only while the REPL is IDLE, so it "
+                       "cannot interrupt a watch that is already blocking — it fires exactly when "
+                       "you have stopped, which is the only time it is needed.",
+        "codex_opencode_other": "Any recurring reminder or scheduled prompt. If the harness has "
+                                "none, say so OUT LOUD at the start of the session (`say --now`) "
+                                "so he knows the net is missing and can watch for silence "
+                                "himself.",
+        "backoff": "Do NOT put a backoff in the schedule. `watch` already backs off (30s doubling "
+                   "to 15min, 30min when he is unreachable), and the two run in SERIES: the job "
+                   "fires, you enter a watch, and the job cannot fire again until that watch "
+                   "returns. The spacing you want is already there.",
+        "rule": "Prose BEFORE the watch, never after. End every turn on the blocking call.",
+    },
     "the_loop": [
+        "REGISTER A WATCHDOG FIRST — see `watchdog` above. Without it, nothing brings you back.",
         "voice-tunnel serve --session <s>            # start it (long-running; run detached)",
         "voice-tunnel watch --session <s> --since -1 # <- IMMEDIATELY. BLOCKS until a turn lands.",
         "  -> drain: re-watch from the cursor until count == 0",
@@ -507,6 +551,62 @@ def _next_action(turns, live: dict[str, Any] | None,
 # own doing.
 CONTROL_FACTS = ("muted", "channel_open", "capturing", "clients", "verbose")
 
+# How long a watch waits before handing back an empty heartbeat, when nothing at all has
+# happened for a while.
+#
+# JJ, 2026-08-08: "whenever I take longer you also stop watching... we need to design the watch
+# timeouts with a back off period, an exponential backoff, so that whenever I stop talking for
+# quite a while and you're still watching you stop wasting turns in silence, and whenever I hit
+# the orb to turn off the conversation you back off even more."
+#
+# **THE BACKOFF IS FREE, and that is the whole reason it is safe.** The timeout governs one
+# thing: how long this call is willing to wait before returning empty. It does NOT govern how
+# fast anything is noticed — a turn is picked up by `store.watch` at its 0.1 s poll and a control
+# change by the 1 s status check inside the loop, whatever the ceiling is. So extending the wait
+# costs nothing in responsiveness and saves the agent a turn it would have spent learning that
+# silence is still silence.
+#
+# Doubling from the caller's base (30 s by default) reaches the cap after five empty rounds,
+# which is roughly seven minutes of quiet — long enough that a real pause never sees it, short
+# enough that a forgotten session stops churning.
+WATCH_BACKOFF_MAX_S = 900.0
+WATCH_BACKOFF_UNREACHABLE_MAX_S = 1800.0
+"""A closed channel or a dead page backs off twice as far. He shut the conversation deliberately,
+so the next thing to happen is HIM, and nothing is being missed in the meantime: replies queue,
+and reopening the channel is itself a control change that ends the wait immediately."""
+
+
+def _backoff_path(session: str) -> str:
+    return os.path.join(config.session_dir(), f"{session}.watch.json")
+
+
+def _empty_streak(session: str) -> int:
+    """How many watches in a row have come back with nothing.
+
+    Persisted rather than held in memory because every invocation is a fresh process — the state
+    has to outlive the command that observed it, or the backoff resets on every call and does
+    nothing at all.
+    """
+    try:
+        with open(_backoff_path(session), encoding="utf-8") as fh:
+            return max(0, int(json.load(fh).get("empty_streak", 0)))
+    except Exception:
+        return 0
+
+
+def _set_empty_streak(session: str, value: int) -> None:
+    try:
+        os.makedirs(config.session_dir(), exist_ok=True)
+        with open(_backoff_path(session), "w", encoding="utf-8") as fh:
+            json.dump({"empty_streak": max(0, int(value))}, fh)
+    except Exception:
+        pass          # a watch must never fail over its own bookkeeping
+
+
+def _backoff_ceiling(base: float, streak: int, reachable: bool) -> float:
+    cap = WATCH_BACKOFF_MAX_S if reachable else WATCH_BACKOFF_UNREACHABLE_MAX_S
+    return min(cap, base * (2 ** min(streak, 12)))
+
 
 def _controls(live: Any) -> dict[str, Any] | None:
     if not isinstance(live, dict) or live.get("error"):
@@ -541,8 +641,21 @@ def cmd_watch(args) -> dict[str, Any]:
     # separately, and a separate saying is a thing it can forget. Best-effort: a watch must keep
     # working against a log on disk with no server at all.
     _request(args.session, "/watching", {"open": True})
-    baseline = _controls(_request(args.session, "/status"))
-    deadline = time.monotonic() + max(0.0, float(args.timeout))
+    # `--since -1` means "from the beginning", which by convention is the FIRST watch of a
+    # session. That is the one moment an agent is oriented rather than mid-conversation, so it is
+    # where the watchdog instruction belongs. `serve` says it too, but `serve` is run detached and
+    # its banner is routinely never read — the loop is entered from here.
+    first_watch = int(args.since) < 0
+    status0 = _request(args.session, "/status")
+    baseline = _controls(status0)
+    base = max(0.0, float(args.timeout))
+    # Reachable means a page is connected AND the channel is open — i.e. he could speak right now
+    # if he chose to. When he could not, the wait doubles again, because the next event is a
+    # deliberate act of his and there is nothing to miss until he makes it.
+    reachable = bool(baseline and baseline.get("clients") and baseline.get("channel_open"))
+    streak = _empty_streak(args.session)
+    waited_ceiling = _backoff_ceiling(base, streak, reachable)
+    deadline = time.monotonic() + waited_ceiling
     turns: list[dict[str, Any]] = []
     cursor = args.since
     while True:
@@ -567,6 +680,7 @@ def cmd_watch(args) -> dict[str, Any]:
                     "next": _next_action([], {**(_request(args.session, "/status") or {})},
                                          args.session, cursor),
                 }
+                _set_empty_streak(args.session, 0)
                 _watch_closed(args.session)
                 return payload
     if turns:
@@ -601,6 +715,9 @@ def cmd_watch(args) -> dict[str, Any]:
             except Exception:
                 pass
         result["next"] = _next_action(turns, live, args.session, cursor)
+        if first_watch:
+            result["watchdog"] = DESCRIBE["watchdog"]
+        _set_empty_streak(args.session, 0)
         _watch_closed(args.session)
         return result
 
@@ -651,6 +768,15 @@ def cmd_watch(args) -> dict[str, Any]:
         args.session,
         cursor,
     )
+    # Nothing happened, so the next wait is longer. Reported rather than silent: a command that
+    # quietly blocks for fifteen minutes when you asked for thirty seconds is indistinguishable
+    # from a hang, and an agent that cannot tell those apart will kill it and poll instead.
+    _set_empty_streak(args.session, streak + 1)
+    if first_watch:
+        result["watchdog"] = DESCRIBE["watchdog"]
+    result["waited"] = round(waited_ceiling, 1)
+    result["next_wait"] = round(_backoff_ceiling(base, streak + 1, reachable), 1)
+    result["quiet_rounds"] = streak + 1
     _watch_closed(args.session)
     return result
 
