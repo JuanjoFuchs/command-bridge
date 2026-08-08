@@ -23,11 +23,22 @@ def test_the_wait_is_capped():
     assert cli._backoff_ceiling(30.0, 99, reachable=False) == cli.WATCH_BACKOFF_UNREACHABLE_MAX_S
 
 
-def test_an_unreachable_tunnel_backs_off_further():
-    """A closed channel or a dead page means the next event is a deliberate act of his, so there
-    is nothing to miss by waiting — and replies queue in the meantime."""
-    assert (cli._backoff_ceiling(30.0, 6, reachable=False)
-            > cli._backoff_ceiling(30.0, 6, reachable=True))
+def test_the_ceiling_stays_under_a_harness_tool_timeout():
+    """The ceiling is set by the CALLER'S HARNESS, not by the situation.
+
+    Found by hitting it: a 16-minute wait exceeded Claude Code's 10-minute maximum tool timeout,
+    so the harness moved the call to the background — at which point it is not a blocking watch
+    any more, the turn ends, and the failure this mechanism exists to prevent happens again with
+    a longer fuse. A watch that outlives its harness's tool timeout stops being a watch.
+    """
+    assert cli.WATCH_BACKOFF_MAX_S <= 600.0
+    assert cli.WATCH_BACKOFF_UNREACHABLE_MAX_S <= 600.0
+
+
+def test_the_ceiling_is_overridable(monkeypatch):
+    """A harness with a longer limit should be able to use it."""
+    monkeypatch.setenv("VOICE_TUNNEL_WATCH_MAX_S", "1200")
+    assert cli._backoff_ceiling(30.0, 99, reachable=True) == 1200.0
 
 
 def test_the_caller_s_timeout_is_still_the_base():

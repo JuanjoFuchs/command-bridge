@@ -182,7 +182,11 @@ DESCRIBE: dict[str, Any] = {
             "args": {
                 "--session": "session id",
                 "--since": "cursor; use -1 for 'from the beginning'",
-                "--timeout": "seconds to block before returning empty (default 30)",
+                "--timeout": "OMIT IT and the wait backs off automatically — 30s doubling to "
+                             "9min while quiet, resetting on any turn or button. PASS IT and it "
+                             "is a hard ceiling, honoured exactly: use that when your harness has "
+                             "a maximum tool timeout, because a watch that outlives it gets "
+                             "backgrounded and stops being a blocking call.",
             },
             "returns": {"turns": "[turn, ...]", "cursor": "int — resume from this",
                         "verbose": "bool — ON means NARRATE CONTINUOUSLY and unprompted; OFF "
@@ -569,11 +573,23 @@ CONTROL_FACTS = ("muted", "channel_open", "capturing", "clients", "verbose")
 # Doubling from the caller's base (30 s by default) reaches the cap after five empty rounds,
 # which is roughly seven minutes of quiet — long enough that a real pause never sees it, short
 # enough that a forgotten session stops churning.
-WATCH_BACKOFF_MAX_S = 900.0
-WATCH_BACKOFF_UNREACHABLE_MAX_S = 1800.0
-"""A closed channel or a dead page backs off twice as far. He shut the conversation deliberately,
-so the next thing to happen is HIM, and nothing is being missed in the meantime: replies queue,
-and reopening the channel is itself a control change that ends the wait immediately."""
+WATCH_BACKOFF_MAX_S = 540.0
+"""Nine minutes, and the number is set by the CALLER'S HARNESS rather than by anything here.
+
+Found by hitting it, 2026-08-08: a 16-minute wait exceeded Claude Code's 10-minute maximum tool
+timeout, so the harness moved the call to the BACKGROUND — at which point it is no longer a
+blocking watch, the agent's turn ends, and the exact failure this whole mechanism exists to
+prevent happens again, now with a longer fuse.
+
+**A watch that outlives its harness's tool timeout stops being a watch.** Nine minutes leaves a
+margin under the commonest limit; raise it with VOICE_TUNNEL_WATCH_MAX_S if your harness allows
+longer, and lower it if it allows less."""
+
+WATCH_BACKOFF_UNREACHABLE_MAX_S = 540.0
+"""A closed channel or a dead page used to back off twice as far, on the reasoning that the next
+event is a deliberate act of his and replies queue in the meantime. That reasoning still holds —
+but it is bounded by the same harness limit as everything else, and exceeding it converts a
+patient watch into an abandoned one. The ceiling is the harness's, not the situation's."""
 
 
 def _backoff_path(session: str) -> str:
@@ -605,6 +621,10 @@ def _set_empty_streak(session: str, value: int) -> None:
 
 def _backoff_ceiling(base: float, streak: int, reachable: bool) -> float:
     cap = WATCH_BACKOFF_MAX_S if reachable else WATCH_BACKOFF_UNREACHABLE_MAX_S
+    try:
+        cap = float(os.environ.get("VOICE_TUNNEL_WATCH_MAX_S") or cap)
+    except ValueError:
+        pass
     return min(cap, base * (2 ** min(streak, 12)))
 
 
@@ -648,13 +668,22 @@ def cmd_watch(args) -> dict[str, Any]:
     first_watch = int(args.since) < 0
     status0 = _request(args.session, "/status")
     baseline = _controls(status0)
-    base = max(0.0, float(args.timeout))
+    # AN EXPLICIT --timeout IS A CEILING, NOT A BASE. Omit it and the wait backs off from 30s;
+    # pass it and you get exactly what you asked for.
+    #
+    # It shipped the other way for about ten minutes and broke the caller twice: `--timeout 480`
+    # was multiplied by the streak up to the 540s cap, so a caller asking for eight minutes got
+    # nine and blew its own harness limit. A caller who names a number knows something the tool
+    # does not — usually its harness's maximum tool timeout — and silently exceeding it converts
+    # a blocking watch into a backgrounded one, which is the failure the backoff exists to avoid.
+    base = max(0.0, float(args.timeout if args.timeout is not None else 30.0))
+    explicit = args.timeout is not None
     # Reachable means a page is connected AND the channel is open — i.e. he could speak right now
     # if he chose to. When he could not, the wait doubles again, because the next event is a
     # deliberate act of his and there is nothing to miss until he makes it.
     reachable = bool(baseline and baseline.get("clients") and baseline.get("channel_open"))
     streak = _empty_streak(args.session)
-    waited_ceiling = _backoff_ceiling(base, streak, reachable)
+    waited_ceiling = base if explicit else _backoff_ceiling(base, streak, reachable)
     deadline = time.monotonic() + waited_ceiling
     turns: list[dict[str, Any]] = []
     cursor = args.since
@@ -775,7 +804,8 @@ def cmd_watch(args) -> dict[str, Any]:
     if first_watch:
         result["watchdog"] = DESCRIBE["watchdog"]
     result["waited"] = round(waited_ceiling, 1)
-    result["next_wait"] = round(_backoff_ceiling(base, streak + 1, reachable), 1)
+    result["next_wait"] = round(
+        base if explicit else _backoff_ceiling(base, streak + 1, reachable), 1)
     result["quiet_rounds"] = streak + 1
     _watch_closed(args.session)
     return result
@@ -1393,7 +1423,10 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="block until a turn lands")
     w.add_argument("--session", default="dev")
     w.add_argument("--since", type=int, default=-1)
-    w.add_argument("--timeout", type=float, default=30.0)
+    # default=None so an EXPLICIT value is distinguishable from an omitted one. argparse would
+    # otherwise hand back 30.0 either way, and the two mean opposite things here: omitted means
+    # "you decide, back off as you see fit", named means "this is my ceiling, do not exceed it".
+    w.add_argument("--timeout", type=float, default=None)
 
     y = sub.add_parser("say", help="speak text to the connected client")
     y.add_argument("--session", default="dev")
