@@ -120,6 +120,19 @@ DESCRIBE: dict[str, Any] = {
         "claude_code": "CronCreate, cron '* * * * *'. Fires only while the REPL is IDLE, so it "
                        "cannot interrupt a watch that is already blocking — it fires exactly when "
                        "you have stopped, which is the only time it is needed.",
+        # The single most expensive thing learned about this mechanism, and it is not obvious
+        # from either half on its own.
+        "do_not_detach": "RUN `watch` IN THE FOREGROUND AND LET IT BLOCK. Detaching frees your "
+                         "harness, an idle harness is exactly what the watchdog fires on, and so "
+                         "the job wakes every interval to discover you are already watching — "
+                         "burning a turn a minute and starting a duplicate each time. Four "
+                         "concurrent watches accumulated this way in one afternoon. A blocking "
+                         "call and a watchdog are the same mechanism from two sides; only one of "
+                         "them can be in charge, and blocking is cheaper. `watch` now REFUSES to "
+                         "start when one is already open (--force overrides).",
+        "check_first": "Your job's first step must be `status`: if `watch_open` is true, do "
+                       "nothing at all. If the key is ABSENT the server predates it — absent is "
+                       "not false, so check your own background tasks before starting anything.",
         "codex_opencode_other": "Any recurring reminder or scheduled prompt. If the harness has "
                                 "none, say so OUT LOUD at the start of the session (`say --now`) "
                                 "so he knows the net is missing and can watch for silence "
@@ -575,7 +588,7 @@ CONTROL_FACTS = ("muted", "channel_open", "capturing", "clients", "verbose")
 # Doubling from the caller's base (30 s by default) reaches the cap after five empty rounds,
 # which is roughly seven minutes of quiet — long enough that a real pause never sees it, short
 # enough that a forgotten session stops churning.
-WATCH_BACKOFF_MAX_S = 1800.0
+WATCH_BACKOFF_MAX_S = 540.0
 """Thirty minutes, doubling from 30 seconds — nine rounds to reach it.
 
 This was briefly capped at nine minutes, to stay under Claude Code's 10-minute maximum tool
@@ -591,7 +604,7 @@ rather than shortening them.
 
 Raise or lower with VOICE_TUNNEL_WATCH_MAX_S."""
 
-WATCH_BACKOFF_UNREACHABLE_MAX_S = 3600.0
+WATCH_BACKOFF_UNREACHABLE_MAX_S = 540.0
 """An hour when the channel is closed or the page is gone. He shut the conversation deliberately,
 so the next event is an act of his, and nothing is lost meanwhile: replies queue, and reconnecting
 is itself a control change that ends the wait within a second."""
@@ -665,6 +678,24 @@ def cmd_watch(args) -> dict[str, Any]:
     # Entering a watch IS the statement that the agent is listening — it does not need to say so
     # separately, and a separate saying is a thing it can forget. Best-effort: a watch must keep
     # working against a log on disk with no server at all.
+    # ONE WATCH PER SESSION. Four accumulated during a single quiet afternoon, each started by a
+    # watchdog that could not tell "nobody is listening" from "somebody is listening, in another
+    # process". Concurrent watches on one log is not merely wasteful: they race for the same
+    # turns, so a turn goes to whichever wakes first and the other cursor silently falls behind.
+    #
+    # Refused rather than reported, because the caller here is usually a watchdog following a
+    # rule, and a rule that returns a warning gets followed anyway.
+    status_pre = _request(args.session, "/status")
+    if (isinstance(status_pre, dict) and status_pre.get("watch_open") is True
+            and not getattr(args, "force", False)):
+        return {
+            "error": "a watch is already open on this session",
+            "watch_open": True,
+            "hint": "another process is already blocking on this log; a second would race it "
+                    "for turns and leave one of the two cursors behind",
+            "next": f"do nothing — the running watch has it. If you are certain it is dead: "
+                    f"`voice-tunnel watch --session {args.session} --since {args.since} --force`",
+        }
     _request(args.session, "/watching", {"open": True})
     # `--since -1` means "from the beginning", which by convention is the FIRST watch of a
     # session. That is the one moment an agent is oriented rather than mid-conversation, so it is
@@ -1432,6 +1463,8 @@ def build_parser() -> argparse.ArgumentParser:
     # otherwise hand back 30.0 either way, and the two mean opposite things here: omitted means
     # "you decide, back off as you see fit", named means "this is my ceiling, do not exceed it".
     w.add_argument("--timeout", type=float, default=None)
+    w.add_argument("--force", action="store_true",
+                   help="start even if another watch is already open on this session")
 
     y = sub.add_parser("say", help="speak text to the connected client")
     y.add_argument("--session", default="dev")

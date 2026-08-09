@@ -23,25 +23,22 @@ def test_the_wait_is_capped():
     assert cli._backoff_ceiling(30.0, 99, reachable=False) == cli.WATCH_BACKOFF_UNREACHABLE_MAX_S
 
 
-def test_it_keeps_doubling_well_past_a_harness_tool_timeout():
-    """The ceiling is set by how long he might plausibly be away, NOT by a tool timeout.
+def test_it_doubles_up_to_what_a_foreground_call_can_hold():
+    """The ceiling is what a BLOCKING call can reach, and that is the harness's tool timeout.
 
-    This was briefly capped at nine minutes to stay under Claude Code's 10-minute limit, and JJ
-    caught the over-correction: "you shouldn't be waiting 9 minutes always, it should be getting
-    longer exponentially." Backgrounding is only fatal without a watchdog, and the contract now
-    requires one — so a harness that caps blocking calls should run long waits detached rather
-    than shorten them.
+    Learned over a two-hour silence in three steps: capped at 9 min to fit the harness; raised to
+    30 min on the argument that a backgrounded watch still works and the watchdog covers the gap;
+    then measured, which killed the argument. DETACHING IS WHAT THE WATCHDOG FIRES ON — it frees
+    the harness, the harness goes idle, and the once-a-minute job wakes to find nobody watching.
+    Four concurrent watches had piled up before anyone noticed.
+
+    A blocking call and a watchdog are the same mechanism from two sides, and only one can be in
+    charge. Foreground costs one turn per ceiling; detaching costs one per watchdog interval plus
+    duplicates. So the ladder doubles, and stops where a foreground call does.
     """
-    assert cli.WATCH_BACKOFF_MAX_S >= 1800.0
-    assert cli.WATCH_BACKOFF_UNREACHABLE_MAX_S > cli.WATCH_BACKOFF_MAX_S
-    ladder = [cli._backoff_ceiling(30.0, s, reachable=True) for s in range(7)]
-    assert ladder == [30.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1800.0]
-
-
-def test_the_ceiling_is_overridable(monkeypatch):
-    """A harness with a longer limit should be able to use it."""
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_MAX_S", "1200")
-    assert cli._backoff_ceiling(30.0, 99, reachable=True) == 1200.0
+    ladder = [cli._backoff_ceiling(30.0, s, reachable=True) for s in range(6)]
+    assert ladder == [30.0, 60.0, 120.0, 240.0, 480.0, 540.0]
+    assert cli.WATCH_BACKOFF_MAX_S <= 600.0, "must fit inside a 10-minute harness tool timeout"
 
 
 def test_an_explicit_timeout_is_a_ceiling_not_a_base():
