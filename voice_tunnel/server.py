@@ -155,6 +155,17 @@ class TunnelState:
         Separate from the utterance buffer on purpose: that one is segmenting a turn, this one is
         answering a different question — "is the person talking over me actually him". Discarded
         the moment the agent stops speaking, so it never grows without bound."""
+        self.watch_open: bool = False
+        """Is an agent sitting in `watch` RIGHT NOW.
+
+        Unambiguous on purpose. `agent_state == "idle"` almost means this, and cannot be used for
+        it: idle is also what a freshly started server reports before any agent has ever called.
+        A watchdog that reads idle as "someone is listening" would stay silent on exactly the
+        session where nobody ever arrived.
+
+        Needed because a watch run DETACHED leaves the harness idle, which is what triggers the
+        watchdog — so without this the net fires every minute against a watch that is already
+        running, and each firing starts another one."""
         self.barges: int = 0
         self.last_barge_score: float = 0.0
         self.user_speaking: bool = False
@@ -217,6 +228,7 @@ class TunnelState:
             "muted": self.muted,
             "capturing": self.capturing,
             "channel_open": self.channel_open,
+            "watch_open": self.watch_open,
             "barges": self.barges,
             "last_barge_score": self.last_barge_score,
             "turn_detection": (self.turn.describe() if self.turn else {"enabled": False}),
@@ -703,6 +715,7 @@ async def handle_watching(request: web.Request) -> web.Response:
     # already in flight: a watch is routinely re-armed while a reply is still playing (that is the
     # normal loop), and stamping over `speaking` or `synthesizing` would blank the orb
     # mid-sentence.
+    state.watch_open = watching
     if watching:
         if state.agent_state == "thinking":
             await _set_agent_state(state, "idle")
