@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.2.7 — 2026-08-10
+
+The README now says two commands: `npm install`, then one line pasted to your agent. An agent was
+handed exactly that line and nothing else, and it worked right up to the last step — where it
+produced a loopback URL and offered it as the page to open on a phone. Everything here is what
+that run exposed.
+
+### Added
+
+- **`status` reports `phone: {ready, why, remedy}`** beside the URL. A browser will not give a
+  page a microphone outside a secure context, so `http://` to anything but localhost yields *no
+  microphone* rather than an error — the page looks connected and hears nothing. The warnings
+  existed and named the wrong things: `the_loop` said `192.168.*`, the serve banner said "a LAN
+  IP", and the address actually printed was loopback, which is not mic-less but unreachable
+  outright. The one command whose job is to hand over that URL had no caveat at all. `the_loop`
+  now tells the agent to read `phone.ready` *before* handing the link over, and notes that the
+  default bind makes `false` the normal first answer.
+
+### Fixed
+
+- **The backoff cap is documented from the constant.** There were three hand-written copies and no
+  two agreed — `watchdog.backoff` said 15min/30min, `watch --timeout` said 30min/1h, the
+  constant's own docstring said thirty minutes, and the constant has been 540 seconds throughout.
+  Two of them contradicted each other inside one `describe` payload, which does more damage than
+  any single wrong number: it says the document is not maintained. All of them now read `9min`,
+  generated from `WATCH_BACKOFF_MAX_S`.
+- **`invocation.no_env_vars_needed` admits its exception.** It promised no per-call exports while
+  `VOICE_TUNNEL_HOME` — the variable the tool's own isolation advice recommends — cannot be
+  persisted and must be exported every call. An audit kept prefixing every command while reading
+  the line that said it needn't.
+- **The watchdog section names a behaviour, not an API.** It said "CronCreate, cron `* * * * *`",
+  and an audit in a harness without that tool reported it as stale — the failure the same section
+  warns about one line earlier. What matters is that the scheduler fires only while the session is
+  idle, whatever it is called.
+
 ## 0.2.6 — 2026-08-10
 
 The fifth cold-start audit reached a fully configured install in five commands and produced no

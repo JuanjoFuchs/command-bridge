@@ -11,6 +11,16 @@
 **Talk to your coding agent from your phone.** One command opens a page any phone browser can
 load — no app, no App Store — and carries audio both ways.
 
+I wanted my own Jarvis: to drive my coding agents by voice while out of the house, without handing
+my screen or my speech to a third party. So the premise is deliberately small — **a local CLI, so
+if your agent can run bash, it can talk to you.** No server to host, no account, no API key.
+
+Speech recognition and speech synthesis both run on your own machine, and the CLI is **fully
+self-describing**: your agent installs it and immediately knows how to drive it, without an MCP
+server or a doc you have to keep in sync. One caveat, and it is a browser rule rather than a
+choice: to use this from outside your own network you will want Tailscale or ngrok, because a
+phone will not give a web page a microphone over plain http.
+
 ## Watch it work
 
 https://github.com/user-attachments/assets/a5be07a0-b1dc-446d-919f-c9351a583a2f
@@ -21,24 +31,39 @@ than editing it out. The tunnel's own half of the round trip is about a second.
 
 ## Quick start
 
+Two commands, and only the first one is yours.
+
 ```bash
 npm install -g @juanjofuchs/voice-tunnel
-voice-tunnel setup                     # engines + models, one command
-voice-tunnel serve --wake claude       # use YOUR agent's name
 ```
 
-Open the printed URL on your phone, tap once, and say *"hey Claude, what's the status?"*
+Then paste this to your coding agent:
 
-The npm package is a launcher, not a bundle: **it needs Python 3.10+ on PATH** and builds a
-private environment inside itself, touching nothing else on your machine. If you would rather
-skip that layer, `pipx install voice-tunnel` is the same tool with one fewer wrapper, and
-[WinGet](#winget-windows-no-python-needed) needs nothing installed at all.
+> Run `voice-tunnel describe` and follow it end to end: install anything missing, start the tunnel
+> under your own name, give me the URL to open on my phone, and then stay in `watch` so you can
+> hear me.
+
+That is the whole handoff. Your agent installs the engines, downloads the models, starts the
+server and hands you back a URL. Open it on your phone, tap once, and say *"hey Claude, can you
+hear me?"*
+
+Needs **Python 3.10+ on PATH** — the npm package is a launcher, not a bundle, and builds a private
+environment inside itself without touching anything else on your machine. `pipx install
+voice-tunnel` is the same tool with one fewer wrapper, and [WinGet](#winget-windows-no-python-needed)
+needs nothing installed at all.
+
+**The one thing your agent cannot do for you:** a phone needs HTTPS to reach a microphone at all,
+so a plain LAN address gives *no microphone* rather than a broken one. If the URL you get back
+looks like `http://192.168.…`, run `tailscale serve --bg 8765` and use the address it prints. Your
+agent will tell you when this applies.
 
 Everything runs on your machine. **No GPU. No account. No speech API.**
 
-## Driving this from an agent
+Would rather drive it yourself? [Use it](#use-it) is the manual path.
 
-Point it at `describe` before anything else:
+## Why one line is enough
+
+Point the agent at `describe` before anything else — the line above does exactly that:
 
 ```bash
 voice-tunnel describe     # the whole contract, as JSON
@@ -55,6 +80,10 @@ what to do at the moment it applies, rather than in a document it read once.
 the way a README can. When something is wrong, `voice-tunnel doctor` says what and hands back the
 command that fixes it — read its `degraded` list even when `ok` is true, because a machine can
 have a neural voice and a fast recognizer sitting on disk while this process uses neither.
+
+That claim gets tested the only way it can be: hand an agent a fresh install, nothing but
+`voice-tunnel describe`, and ask it to reach the best configuration the machine allows. Several
+releases have come out of watching where those runs got stuck.
 
 The wedge is borrowed from [agent-mail][am].
 
@@ -138,7 +167,8 @@ unusable on a slow connection.
 
 ## Use it
 
-Start the tunnel with **your agent's own name**, and put its page somewhere your phone can reach.
+The manual path, if you would rather not hand the whole thing to an agent. Start the tunnel with
+**your agent's own name**, and put its page somewhere your phone can reach.
 
 ```bash
 voice-tunnel serve --wake claude          # or codex, grok, whatever is driving
