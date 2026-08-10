@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.2.1 — 2026-08-10
+
+Turn detection did not work in 0.2.0 outside a source checkout, and the tool's own advice for
+fixing it could not work either. Found by giving an agent nothing but `voice-tunnel describe` and
+asking it to reach the best available configuration.
+
+### Fixed
+
+- **Turn detection is installable.** It imports `onnxruntime` and `transformers`, and neither was
+  declared in any extra — so the feature could not load for anyone who installed from PyPI. There
+  is now a `turn` extra carrying both, included in `all`.
+- **The remedies pointed at the wrong extra.** `doctor`, `download turn`, and the runtime error
+  all advised `pip install voice-tunnel[parakeet]`, which installs sherpa-onnx and neither of the
+  packages actually needed. Running the printed fix verbatim left you exactly as broken.
+
+### Added
+
+- **`voice-tunnel setup`** — installs the optional engines into the current interpreter and
+  downloads all four models (voice, recognizer, voiceprint, turn) in one idempotent command.
+  Assembling that from four separate instructions is four chances to do three of them, and the
+  two axes involved are easy to confuse: the extras supply the engines, the downloads supply the
+  models, and a model without its engine is a state this has produced in practice.
+- **`doctor` reports a DEGRADED state.** `ok: true` used to cover both "correctly configured" and
+  "running on the system voice and the slow recognizer because nothing better is installed".
+  Those now differ: `degraded` lists what is on a fallback, and every non-ok check carries a
+  `remedy` you can run verbatim — a field that was previously null on every line, because a
+  passing check discarded it.
+- **`doctor` reports `runtime`** — version, interpreter, package location, settings file, models
+  directory, and whether this is a source checkout. No single check can ask "am I even the
+  installation you provisioned?"; the set can.
+
 ## 0.2.0 — 2026-08-10
 
 A minor rather than a patch, because four things break callers written against 0.1.2. Everything
