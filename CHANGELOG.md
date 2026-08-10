@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.2.6 — 2026-08-10
+
+The fifth cold-start audit reached a fully configured install in five commands and produced no
+broken states at all. Everything below is the tool being wrong *about itself* to an agent that had
+already done everything right — which is the only failure mode left once it works.
+
+### Fixed
+
+- **Every remedy `setup` covers now names `setup`.** `next` reads those strings to work out what
+  one command fixes, so remedies naming only their narrow `pip install voice-tunnel[piper]` made
+  `setup` look smaller than it is: the audit was told it covered two checks and handed pip lines
+  for two more, when `[all]` had already fixed all four.
+- **The ASR remedy no longer tells you to pin what selects itself.** It ended with
+  `config set VOICE_TUNNEL_ASR parakeet` while the same `describe` warns that an explicit value
+  wins over what is installed — so following it pinned a choice already made and took away the
+  tool's ability to move you off it later. Installing the runtime is the whole fix.
+- **`VOICE_TUNNEL_HOME` is documented.** The variable scoping the settings file, the model cache
+  and the session directory was in no list at all, and `config get` called it an unknown setting.
+  It now appears under `describe.env_process_only` and `config get` explains it — including *why*
+  it cannot be persisted: it decides where the file that would persist it lives.
+- **`describe` documents every flag the parser accepts.** `say --now`, `say --voice` and
+  `watch --force` were missing, and two audits found them by running `--help` per subcommand.
+  `--now` is the difference between interrupting a reply and queueing behind it, and `describe`'s
+  own watchdog prompt uses it. A test now fails on any new flag that goes undocumented.
+- **`watch` hands over a watchdog prompt that exists.** It attached the static section — whose
+  `prompt` is null — directly beside the line telling you to use the ready-made text in `prompt`
+  rather than paraphrasing it.
+- **The same error code always means the same exit status.** `config get NOPE` exited 1 and
+  `wake --name "two words"` exited 2, both carrying `code: invalid_input`, because one was
+  returned and the other raised.
+- **`status` reports the live wake name.** `wake` compares persisted against live and the live
+  half read `null` forever, beside a correct list of phrases containing the name — the server
+  visibly knew it and would not say it.
+- **A global flag works after the subcommand.** `doctor --human` is how people write it, and it
+  exited 2 with `unrecognized arguments: --human` while the usage line advertised `[--human]`.
+- **`stop` documents both shapes** — `how` when it stopped something, `reason` when there was
+  nothing to stop.
+
+### Added
+
+- **`status` returns `url`.** `serve` printed the client URL and its token exactly once, to
+  stdout, and nothing could reproduce it; losing that output meant restarting the server to get
+  back to the page. The token was already on disk.
+- **The `serve` banner names `stop`.** It explained how to rename the assistant and change the
+  speech rate, and not how to shut the thing down.
+
 ## 0.2.5 — 2026-08-10
 
 A fourth cold-start audit, and the first run against a locally built wheel rather than a published

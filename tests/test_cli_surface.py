@@ -34,8 +34,48 @@ def test_describe_documents_every_command_the_parser_accepts():
     assert not undocumented, f"add these to DESCRIBE['commands']: {sorted(undocumented)}"
 
 
+def test_describe_documents_every_flag_the_parser_accepts():
+    """One level deeper than the command check, and found the same way it was.
+
+    Two audits used `--help` per subcommand to discover flags `describe` never mentioned:
+    `say --now`, `say --voice`, `watch --force`. `describe` calls itself the contract, and an
+    agent that trusts an `args` block and finds it short has been told something false about the
+    tool's capabilities — `--now` in particular is the difference between interrupting a reply and
+    queueing behind it, and `describe`'s own watchdog prompt uses it.
+    """
+    import argparse as _ap
+
+    parser = cli.build_parser()
+    sub = next(a for a in parser._actions if isinstance(a, _ap._SubParsersAction))
+    missing = {}
+    for name, p in sub.choices.items():
+        documented = set(cli.DESCRIBE["commands"].get(name, {}).get("args") or ())
+        for action in p._actions:
+            if isinstance(action, _ap._HelpAction) or not action.option_strings:
+                continue
+            # The long form is what gets documented; `--session` is on nearly every command and
+            # is documented per-command already.
+            longest = max(action.option_strings, key=len)
+            if longest not in documented:
+                missing.setdefault(name, []).append(longest)
+    assert not missing, f"undocumented flags in DESCRIBE['commands']: {missing}"
+
+
 def test_describe_documents_every_setting_the_code_reads():
     assert set(cli.DESCRIBE["env"]) == {s["key"] for s in config.SETTINGS}
+
+
+def test_the_variables_that_cannot_be_settings_are_still_documented():
+    """VOICE_TUNNEL_HOME scopes the settings file, the models and the sessions, so it cannot live
+    in the file it locates — and it was therefore in no list at all. An audit ran a whole session
+    inside it, found `config get` calling it an "unknown setting", and had to reconstruct what it
+    did from one line of `doctor.runtime.isolate_with`.
+    """
+    process_only = cli.DESCRIBE["env_process_only"]
+    assert "VOICE_TUNNEL_HOME" in process_only
+    assert set(process_only).isdisjoint({s["key"] for s in config.SETTINGS}), (
+        "a variable cannot be both persistable and process-only"
+    )
 
 
 def test_describe_carries_exit_codes_and_the_error_shape():
@@ -122,9 +162,38 @@ def test_config_get_on_an_unknown_key_names_the_remedy(capsys, tmp_path, monkeyp
 
     code, payload, _ = run(["config", "get", "VOICE_TUNNEL_NOPE"], capsys)
 
-    assert code == cli.EXIT_ERROR
+    # EXIT_USAGE, not EXIT_ERROR. The next test asserts `config set` of a foreign key exits 2 with
+    # this same `invalid_input` code; these two exited 1 and 2 for the identical class of mistake,
+    # purely because one was raised and the other returned. An audit found the pair and had no way
+    # to tell which document was wrong.
+    assert code == cli.EXIT_USAGE
     assert payload["code"] == "invalid_input"
     assert "voice-tunnel config show" in payload["remedy"]
+
+
+def test_the_same_code_always_means_the_same_exit_status(capsys, tmp_path, monkeypatch):
+    """Raised and returned rejections must not disagree — a caller branches on one or the other,
+    never both."""
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
+
+    returned, payload, _ = run(["config", "get", "VOICE_TUNNEL_NOPE"], capsys)
+    raised, _, err = run(["wake", "--name", "two words", "--no-save"], capsys)
+
+    assert payload["code"] == "invalid_input"
+    assert "invalid_input" in err
+    assert returned == raised == cli.EXIT_USAGE
+
+
+def test_a_process_only_variable_is_explained_rather_than_disowned(capsys, tmp_path, monkeypatch):
+    """`config get VOICE_TUNNEL_HOME` answered "unknown setting" about the variable that decides
+    where the settings file `config` reads actually lives."""
+    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
+
+    code, payload, _ = run(["config", "get", "VOICE_TUNNEL_HOME"], capsys)
+
+    assert code == cli.EXIT_OK
+    assert "error" not in payload
+    assert payload["what"] and payload["note"], "say what it does and why it cannot be persisted"
 
 
 def test_config_set_of_a_foreign_key_exits_usage_with_a_remedy(capsys, tmp_path, monkeypatch):

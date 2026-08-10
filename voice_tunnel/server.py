@@ -243,6 +243,13 @@ class TunnelState:
         return {
             "session": self.session,
             "uptime_s": round(time.time() - self.started_at, 1),
+            # THE LIVE WAKE NAME. `voice-tunnel wake` reads this to show what the running gate
+            # actually accepts, as distinct from what is persisted — the two differ for the whole
+            # life of a server started before the name was changed. `wake_phrases` was here from
+            # the start and the NAME was not, so that comparison reported `live: {"name": null}`
+            # beside a correct list of phrases containing it: the server visibly knew the name and
+            # would not say it.
+            "wake": config.wake_name(),
             "clients": len(self.clients),
             "frames_received": self.frames_received,
             "audio_seconds": round(self.samples_received / float(config.TARGET_SR), 2),
@@ -1271,6 +1278,11 @@ def run(
         flush=True,
     )
     print(f"  allowlist          {', '.join(security.allowed_cidrs())}", flush=True)
+    # THE WAY OUT, on the banner that starts it. This told you how to rename the assistant and how
+    # to change the speech rate, and not how to shut the thing down — an audit had to find `stop`
+    # by reading the whole `describe` payload. The command that starts a background process should
+    # say how it ends, in the same breath.
+    print(f"  stop it with       voice-tunnel stop --session {session}", flush=True)
     print(
         "  (a phone needs HTTPS: `tailscale serve` this port — a LAN IP will NOT work)",
         flush=True,

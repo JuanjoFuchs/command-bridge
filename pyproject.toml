@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voice-tunnel"
-version = "0.2.5"
+version = "0.2.6"
 description = "A local voice tunnel: talk to your coding agent from a phone browser, no app"
 authors = [{ name = "JuanjoFuchs" }]
 readme = "README.md"

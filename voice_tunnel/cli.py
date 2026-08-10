@@ -164,7 +164,11 @@ DESCRIBE: dict[str, Any] = {
     ],
     "invocation": INVOCATION,
     "commands": {
-        "describe": {"args": [], "returns": "this document"},
+        "describe": {
+            "args": {"--session": "session id — substituted into the ready-to-schedule "
+                                  "`watchdog.prompt` so it can be used verbatim"},
+            "returns": "this document",
+        },
         "doctor": {
             "args": [],
             "returns": {"ok": "bool — can it run at all",
@@ -246,6 +250,10 @@ DESCRIBE: dict[str, Any] = {
                              "when trying to stay inside a harness tool timeout. If long waits "
                              "get backgrounded by your harness, run them detached deliberately "
                              "instead of shortening them — your watchdog covers the gap.",
+                "--force": "start even if another watch is already open on this session. The "
+                           "refusal exists because concurrent watches race for the same turns "
+                           "and one cursor silently falls behind; override only when you know "
+                           "the other watch is dead.",
             },
             "returns": {"turns": "[turn, ...]", "cursor": "int — resume from this",
                         "verbose": "bool — ON means NARRATE CONTINUOUSLY and unprompted; OFF "
@@ -302,7 +310,9 @@ DESCRIBE: dict[str, Any] = {
                      "blamed twice and was under 0.1 s both times.",
         },
         "say": {
-            "args": {"--session": "session id", "text": "positional; what to speak"},
+            "args": {"--session": "session id", "text": "positional; what to speak",
+                     "--now": "interrupt whatever is playing instead of queueing behind it",
+                     "--voice": "piper voice NAME for this one line (see `voice-tunnel voices`)"},
             "returns": {"queued": "bool", "id": "clip id", "seconds": "float"},
             "notes": "Returns when queued, not when playback finishes.",
         },
@@ -313,8 +323,11 @@ DESCRIBE: dict[str, Any] = {
         },
         "stop": {
             "args": {"--session": "session id"},
-            "returns": {"stopped": "bool", "how": "graceful | signal | already_gone",
-                        "pid": "int"},
+            "returns": {"stopped": "bool",
+                        "how": "graceful | signal | already_gone — present only when stopped",
+                        "pid": "int — present only when stopped",
+                        "reason": "no_runtime_file | unreachable_and_no_pid | signal_failed — "
+                                  "present only when NOT stopped, in place of `how`"},
             "notes": "The other half of a detached `serve`. Asks the server to shut down so the "
                      "turn log is flushed, and falls back to a signal on the recorded pid. Safe "
                      "to call when nothing is running.",
@@ -381,7 +394,14 @@ DESCRIBE: dict[str, Any] = {
                      "page. Cheaper and faster than speaking 'let me think about that'.",
         },
         "voiceprint": {
-            "args": {"--forget": "NAME to delete"},
+            "args": {
+                "--forget": "NAME to delete",
+                "--learn-from": "WAV file or directory — bootstrap the gallery from recordings "
+                                "you already have, instead of waiting for live wake-confirmed "
+                                "turns. The fastest way to make the wake phrase optional.",
+                "--owner": "name to learn under (default: VOICE_TUNNEL_OWNER)",
+                "--channel": "0 = mic/left (you), 1 = system/right (everyone else)",
+            },
             "returns": {"known": "[{name, count, updated}]", "threshold": "float"},
             "notes": "Speaker identity. The tunnel learns the owner's voice from turns the wake "
                      "phrase confirmed, and a confident match then addresses WITHOUT the phrase. "
@@ -418,6 +438,25 @@ DESCRIBE: dict[str, Any] = {
     # documented 8 of the 17 variables the code reads, and the ones it omitted (VOICE_TUNNEL_PIPER_BIN,
     # VOICE_TUNNEL_PIPER_VOICE) were exactly the ones an agent could not run piper without.
     "env": {s["key"]: s["what"] for s in config.SETTINGS},
+    # SETTINGS THAT CANNOT BE SETTINGS. These decide WHERE the settings file is, so a value stored
+    # inside it could never be read in time to matter — they are process-environment only, by
+    # construction. That is a good reason to leave them out of `config`, and it was not a reason to
+    # leave them undocumented: an audit ran an entire session inside VOICE_TUNNEL_HOME, found it
+    # absent from `env`, absent from `config show`, and rejected by `config get` as an unknown
+    # setting, and had to reconstruct what it did from one line of `doctor.runtime.isolate_with`.
+    # The most important variable in the tool read as one it had never heard of.
+    "env_process_only": {
+        "VOICE_TUNNEL_HOME": (
+            "One root scoping the settings file, the model cache and the session directory "
+            "together — the way to keep one installation to itself. PROCESS ENVIRONMENT ONLY: it "
+            "decides where the file that would persist it lives, so it cannot be stored there and "
+            "`config set` refuses it. VOICE_TUNNEL_ENV_FILE, VOICE_TUNNEL_MODELS_DIR and "
+            "VOICE_TUNNEL_DIR each override one of the three, so isolating everything while "
+            "sharing one 600 MB model cache is possible. Note VOICE_TUNNEL_DIR scopes the session "
+            "directory ONLY — setting it does not isolate settings or models, which is the "
+            "mistake this variable exists to fix."
+        ),
+    },
 }
 
 
@@ -454,6 +493,18 @@ def read_runtime(session: str) -> dict[str, Any] | None:
         return None
 
 
+def _url_for(rt: dict[str, Any], path: str = "/") -> str:
+    """A URL into a running server, token included. One place, so the client URL `status` hands
+    back and the URL every request uses cannot disagree about the token."""
+    return (f"http://{rt['host']}:{rt['port']}{path}"
+            f"?token={urllib.parse.quote(rt['token'])}")
+
+
+def _client_url(session: str) -> str | None:
+    rt = read_runtime(session)
+    return _url_for(rt, "/") if rt else None
+
+
 def _serve_remedy(session: str) -> str:
     """The command that fixes 'nothing is listening'. Spelled out, because the fix is two steps
     (start it detached, then go straight back into `watch`) and an agent that only gets told
@@ -475,7 +526,7 @@ def _request(session: str, path: str, payload: dict[str, Any] | None = None) -> 
             "code": "no_server",
             "remedy": _serve_remedy(session),
         }
-    url = f"http://{rt['host']}:{rt['port']}{path}?token={urllib.parse.quote(rt['token'])}"
+    url = _url_for(rt, path)
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"} if data else {}
@@ -526,14 +577,27 @@ def _request(session: str, path: str, payload: dict[str, Any] | None = None) -> 
 # -------------------------------------------------------------------- commands
 
 
+def _watchdog_block(session: str) -> dict[str, Any]:
+    """The watchdog section with its prompt filled in for this session.
+
+    The static DESCRIBE entry carries no `prompt` key, and `watch` used to attach that entry
+    verbatim — so the first watch of a session returned `watchdog.prompt: null` directly beside
+    the sibling line telling you to "use the ready-made text in `prompt` below rather than
+    paraphrasing it". An audit noticed it points at nothing, and observed that an agent meeting
+    the watchdog through `watch` instead of `describe` would be sent to text that does not exist.
+
+    One function so the two callers cannot drift again.
+    """
+    return {**DESCRIBE["watchdog"], "prompt": WATCHDOG_PROMPT.format(session=session)}
+
+
 def cmd_describe(args) -> dict[str, Any]:
     # The watchdog prompt goes out with the session already substituted, so it can be scheduled
     # verbatim. A template with a placeholder still in it is one more thing to get wrong at the
     # moment the agent is least able to check.
     out = dict(DESCRIBE)
     session = getattr(args, "session", None) or "dev"
-    out["watchdog"] = {**DESCRIBE["watchdog"],
-                       "prompt": WATCHDOG_PROMPT.format(session=session)}
+    out["watchdog"] = _watchdog_block(session)
 
     # INVOCATION IS RESOLVED, NOT RECITED. The static text describes a source checkout — bin/,
     # <repo>/.env, the shim that finds the venv — and most installations have none of that. An
@@ -945,7 +1009,7 @@ def cmd_watch(args) -> dict[str, Any]:
                 pass
         result["next"] = _next_action(turns, live, args.session, cursor)
         if first_watch:
-            result["watchdog"] = DESCRIBE["watchdog"]
+            result["watchdog"] = _watchdog_block(args.session)
         _set_empty_streak(args.session, 0)
         _watch_closed(args.session)
         return result
@@ -1002,7 +1066,7 @@ def cmd_watch(args) -> dict[str, Any]:
     # from a hang, and an agent that cannot tell those apart will kill it and poll instead.
     _set_empty_streak(args.session, streak + 1)
     if first_watch:
-        result["watchdog"] = DESCRIBE["watchdog"]
+        result["watchdog"] = _watchdog_block(args.session)
     result["waited"] = round(waited_ceiling, 1)
     result["next_wait"] = round(
         base if explicit else _backoff_ceiling(base, streak + 1, reachable), 1)
@@ -1343,6 +1407,12 @@ def cmd_status(args) -> dict[str, Any]:
     if isinstance(out, dict) and rt and out.get("running") is not False:
         out.setdefault("pid", rt.get("pid"))
         out.setdefault("runtime_file", runtime_path(args.session))
+        # THE CLIENT URL, RECOVERABLE. `serve` prints it once, to stdout, with the token in it —
+        # and nothing else could produce it again. An audit realised that had it not captured
+        # stdout when it launched the server, the only way back to the page would have been to
+        # restart the server and lose the session. The token is already on disk in the runtime
+        # file; there was no reason it could not be asked for.
+        out.setdefault("url", _client_url(args.session))
     return out
 
 
@@ -1422,10 +1492,25 @@ def cmd_config(args) -> dict[str, Any]:
         for row in config.effective(reveal=True):
             if row["key"] == args.key:
                 return row
+        # PROCESS-ONLY VARIABLES ARE NOT UNKNOWN VARIABLES. `config get VOICE_TUNNEL_HOME` used to
+        # answer "unknown setting" about the variable scoping the very file `config` reads —
+        # technically true of this command's namespace and completely misleading about the tool.
+        # Say what it is and why it cannot live here.
+        if args.key in DESCRIBE["env_process_only"]:
+            return {
+                "key": args.key,
+                "value": os.environ.get(args.key) or None,
+                "source": "env" if os.environ.get(args.key) else "unset",
+                "what": DESCRIBE["env_process_only"][args.key],
+                "note": "process environment only — it decides where the settings file lives, so "
+                        "it cannot be stored in that file. `config set` will refuse it.",
+            }
         return {
             "error": f"unknown setting {args.key!r}",
             "code": "invalid_input",
-            "remedy": "run `voice-tunnel config show` for the settings this tool knows about",
+            "remedy": "run `voice-tunnel config show` for the settings this tool knows about, or "
+                      "`voice-tunnel describe` → env_process_only for the ones that scope where "
+                      "those settings live",
         }
 
     if args.config_cmd == "set":
@@ -1662,15 +1747,22 @@ def cmd_doctor(_args) -> dict[str, Any]:
         # resident, a difference this codebase measures at 7-26x on synthesis alone. Degraded is
         # for exactly this — it runs, and it is not what you want.
         spawning = engine_ok and not resident
+        # EVERY REMEDY HERE NAMES `setup`, because `setup` installs [all] and therefore fixes
+        # every one of them. It used to name only the narrow `pip install voice-tunnel[piper]`,
+        # so `next` — which reads these strings to find what one command covers — reported setup
+        # as covering two checks when it actually covered four, and handed out three redundant
+        # pip lines beside it. An audit nearly ran all three.
         remedy = ""
         if not engine_ok:
-            remedy = ("`pip install voice-tunnel[piper]` for the engine, then "
-                      "`voice-tunnel download voice` for a voice")
+            remedy = ("`voice-tunnel setup` does all of this; or `pip install voice-tunnel[piper]` "
+                      "for the engine, then `voice-tunnel download voice` for a voice")
         elif not voice:
-            remedy = "`voice-tunnel download voice` — the engine is here but no voice is installed"
+            remedy = ("`voice-tunnel setup`, or `voice-tunnel download voice` on its own — the "
+                      "engine is here but no voice is installed")
         elif spawning:
-            remedy = ("`pip install voice-tunnel[piper]` — spawning piper.exe per reply costs "
-                      "~3.5s of process startup that the in-process voice does not")
+            remedy = ("`voice-tunnel setup`, or `pip install voice-tunnel[piper]` — spawning "
+                      "piper.exe per reply costs ~3.5s of process startup that the in-process "
+                      "voice does not")
         checks.append(_check(
             "tts", engine_ok and bool(voice),
             f"piper via {how}, voice={voice or '(none installed)'}",
@@ -1732,8 +1824,15 @@ def cmd_doctor(_args) -> dict[str, Any]:
         if config.parakeet_dir() and not config.have_module("sherpa_onnx"):
             detail = ("a parakeet model is on disk but unusable without sherpa-onnx "
                       "(~8x faster once installed)")
-            remedy = ("`pip install voice-tunnel[parakeet]`, then "
-                      "`voice-tunnel config set VOICE_TUNNEL_ASR parakeet`")
+            # NO `config set` HERE. Installing the runtime is enough — `asr_engine()` selects
+            # parakeet on its own the moment both halves exist. This used to end with
+            # `config set VOICE_TUNNEL_ASR parakeet`, which PINS the choice, and the same
+            # `describe` warns that an explicit value wins over what is installed. Two parts of
+            # the tool giving opposite advice is worse than either one alone, and it turned a
+            # remedy into a footgun: pin it now and a later `setup` cannot move you off it.
+            remedy = ("`voice-tunnel setup`, or `pip install voice-tunnel[parakeet]` — that is "
+                      "all; parakeet is selected automatically once its runtime is present, so "
+                      "do NOT pin VOICE_TUNNEL_ASR")
     checks.append(_check("asr", asr_ok, detail, remedy, degraded=asr_degraded))
 
     # Not a failure: the voiceprint is additive. A match can grant attention but never withhold
@@ -2099,6 +2198,17 @@ def main(argv=None) -> int:
     # is still just a prefix — which is exactly what scripts/e2e.py relies on.
     config.load_env_file()
 
+    # GLOBAL FLAGS ARE ACCEPTED AFTER THE SUBCOMMAND TOO. `voice-tunnel doctor --human` is the
+    # obvious way to write it and the way an audit wrote it, and argparse answered "unrecognized
+    # arguments: --human" — true, unhelpful, and silent about the fix being a word order. The
+    # usage line shows `[--human]` before the subcommand, so the flag visibly exists and appears
+    # not to work. Moving it costs nothing and removes a round of trial and error; the parser
+    # stays honest about where it is DEFINED, and this stops that from being the user's problem.
+    argv = list(sys.argv[1:] if argv is None else argv)
+    for flag in ("--human",):
+        if flag in argv[1:]:
+            argv = [flag] + [a for a in argv if a != flag]
+
     args = build_parser().parse_args(argv)
     handlers = {
         "describe": cmd_describe,
@@ -2140,6 +2250,13 @@ def main(argv=None) -> int:
         # Distinct from a generic failure: the caller should start a server, not rephrase the
         # request. Branching on an exit code beats string-matching an error message.
         return EXIT_NO_SERVER
+    if result.get("code") == "invalid_input":
+        # ONE CODE, ONE EXIT STATUS. Rejected input raised as an exception exited 2 while the same
+        # `invalid_input` code returned as a payload exited 1, so `config get NOPE` and
+        # `wake --name "two words"` — identical `code`, identical class of mistake — disagreed on
+        # the number. An audit caught the pair. A caller branching on the code and a caller
+        # branching on the status must not reach opposite conclusions.
+        return EXIT_USAGE
     if result.get("error"):
         return EXIT_ERROR
     if args.cmd == "doctor" and not result.get("ok"):
