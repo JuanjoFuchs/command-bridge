@@ -2,10 +2,10 @@
 
 Android suspends a backgrounded tab, so the socket drops every time the screen locks — and
 `/say` used to answer 409 and throw the reply away. Over one live session that silently ate
-several answers: JJ asked a question, got nothing back, and asked it again. Twice he asked the
+several answers: the owner asked a question, got nothing back, and asked it again. Twice he asked the
 same question three times.
 
-JJ, live 2026-08-01: "whenever the client is disconnected or you detect that my phone is locked
+Live, 2026-08-01: "whenever the client is disconnected or you detect that my phone is locked
 or whatever, you should queue up your reply back to me. So whenever I reconnect, they all send
 down to me."
 

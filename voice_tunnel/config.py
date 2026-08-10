@@ -112,7 +112,7 @@ zero turns (AC-1)."""
 NOISE_MARGIN = 3.0
 """How far above the measured room noise a window must be to count as speech.
 
-A FIXED silence threshold assumes a quiet room, and JJ's is not one. Live 2026-07-31: with the
+A FIXED silence threshold assumes a quiet room, and the owner's is not one. Live, 2026-07-31, with the
 air conditioning running, its white noise sat above SILENCE_RMS_FLOOR, so trailing silence never
 accumulated, the utterance never ended, and he had to MUTE HIS MICROPHONE to get a turn to close
 — "I had finished speaking a while ago and I had to mute the microphone for you to pick up what
@@ -128,7 +128,7 @@ NOISE_PERCENTILE = 20
 
 **A min-tracker was tried first and failed in the room.** It snapped DOWN to the quietest window
 ever seen, so after one near-silent moment the AC sat ~24x above the latched floor and read as
-speech indefinitely; the upward creep recovered under 2x per minute. JJ, live 2026-07-31:
+speech indefinitely; the upward creep recovered under 2x per minute. Live, 2026-07-31:
 "I finished speaking a while ago on this new turn, and the white noise kept running, and you
 didn't recognize the stop" — a 63.7 second turn that only closed when he muted.
 
@@ -139,7 +139,7 @@ than on the voice — and when the AC switches on, the estimate follows within s
 END_OF_UTTERANCE_MS = _int_env("VOICE_TUNNEL_END_OF_UTTERANCE_MS", 1500)
 """Silence that ends a turn. Override live with VOICE_TUNNEL_END_OF_UTTERANCE_MS.
 
-Raised 1000 -> 1500 after JJ, live 2026-07-31: "whenever I haven't finished speaking, it ends my
+Raised 1000 -> 1500 after this, live 2026-07-31: "whenever I haven't finished speaking, it ends my
 turn and you start processing and you might interrupt me." He thinks in pauses, and a threshold
 tuned for clipped dictation fragments a person who is composing a thought out loud.
 
@@ -147,7 +147,7 @@ The cost is 0.5 s added to every reply. That is the right trade here — being c
 ruins the exchange, while half a second of extra pause is merely slower. Earlier history:
 
 at 700 ms a single continuous thought
-**fragmented into five separate turns** — JJ, live, 2026-07-29: "...I don't like the voice much.
+**fragmented into five separate turns** — Live, 2026-07-29: "...I don't like the voice much.
 Um I like um" / "Voices that have a lower register." / "And do I need to say every time?" —
 because filler-and-pause is normal speech, not the end of a sentence.
 
@@ -248,7 +248,7 @@ def turn_threads() -> int:
 
 # ----------------------------------------------------------------- barge-in
 #
-# JJ, 2026-08-06: "barge in but only for my voice." The constraint is the feature — a tunnel that
+# Reported 2026-08-06: "barge in but only for my voice." The constraint is the feature — a tunnel that
 # stops talking whenever the room makes a noise is worse than one that cannot be interrupted.
 #
 # THE MEASUREMENT THAT SHAPED THIS. Confirming identity and rejecting an impostor are not the same
@@ -304,7 +304,7 @@ SPEAK_GRACE_S = 0.8
 """Extra pause before speaking, after the speaker appears to have stopped.
 
 The mid-utterance hold is not enough on its own: a pause longer than END_OF_UTTERANCE_MS closes
-the turn, so someone who is merely thinking looks exactly like someone who has finished. JJ,
+the turn, so someone who is merely thinking looks exactly like someone who has finished. The owner,
 live 2026-07-29: "actually, you did interrupt me because I was not done speaking" — the hold had
 released and he resumed a moment later.
 
@@ -327,7 +327,7 @@ MAX_UTTERANCE_MS = 120_000
 WAKE_NAME = "assistant"
 """What you call the agent on the other end. Set it with `serve --wake <name>`.
 
-**The tool holds no model, so nothing ties it to any vendor except this string.** JJ, live
+**The tool holds no model, so nothing ties it to any vendor except this string.** Live
 2026-08-03: *"my goal is to be able to use this with any AI agent, not just cloud [Claude]."*
 
 **The name should be the agent's own** — `--wake claude` when Claude starts it, `--wake codex`
@@ -350,7 +350,7 @@ words, and none of that matters once "hey" has to come first.
 
 This started as a per-name setting (`WAKE_REQUIRE_GREETING`, overridable with
 `VOICE_TUNNEL_WAKE_BARE`) on the theory that an uncommon name like "claude" could safely be said
-bare. JJ removed the option: *"I would make it a default to always require the hey, and the only
+bare. The owner removed the option: *"I would make it a default to always require the hey, and the only
 thing the agent or the user can choose is the wake word that is pronounced after hey."*
 
 **Deleting the option deleted a class of bug rather than a feature.** It is the tool asking every
@@ -391,12 +391,12 @@ CHIME_TRAILING_SILENCE_S = 0.2
 SENTENCE_SILENCE_S = 0.5
 """Default silence between sentences. Overridable live and persisted — see `sentence_pause`.
 
-Piper defaults to 0.0, which runs sentences together: fine for one remark, bad for a list. JJ,
+Piper defaults to 0.0, which runs sentences together: fine for one remark, bad for a list. The owner,
 live from the phone 2026-07-31: "you read this list back to back and it was hard to understand."
 Speech has no scrollback — the listener cannot re-read item two while item three is arriving, so
 the pause IS the punctuation.
 
-**0.5 s, and the shorter value tried here was a mistake.** The hiss JJ reported in the same
+**0.5 s, and the shorter value tried here was a mistake.** The hiss the owner reported in the same
 session ("started sounding like very loud white noise instead of silence") was CLIPPING, not the
 gap — piper measured at peak 1.000, and clipping generates exactly the broadband harmonics that
 sound like white noise (see PEAK_CEILING). The gaps themselves measured silent at 0.00001 RMS.
@@ -429,11 +429,11 @@ SPEECH_SPEED = 1.18
 
 **SPEED is the unit this codebase speaks, everywhere** — settings file, `voice-tunnel rate`, the `/rate`
 endpoint, `status`. Piper's own knob is `length_scale`, which is INVERTED (lower is faster), and
-letting that leak out was a real defect: JJ asked for 2.0 expecting twice as fast and got half
+letting that leak out was a real defect: the owner asked for 2.0 expecting twice as fast and got half
 speed. The inversion now exists in exactly one line, `length_scale_for` below, and nothing above
 the piper boundary ever sees it.
 
-1.18 (= 1/0.85) because en_GB-alan-medium — the voice JJ picked — reads noticeably slowly at
+1.18 (= 1/0.85) because en_GB-alan-medium — the voice the owner picked — reads noticeably slowly at
 native pace ("I kind of liked Alan, it's just he speaks too slowly"). This scales duration, not
 pitch, so the voice keeps its character. Above ~1.33 it starts clipping consonants and sounding
 rushed. Override with VOICE_TUNNEL_SPEECH_SPEED, or live and persistently with `voice-tunnel rate --speed`."""
@@ -456,7 +456,7 @@ def length_scale_for(speed: float) -> float:
 def speech_speed() -> float:
     """Persisted speech speed, so a preference tuned by ear survives a restart.
 
-    JJ had to re-set this on every server start, which meant the value that was right for him
+    The owner had to re-set this on every server start, which meant the value that was right for him
     lived only in a running process — the definition of a setting that will be lost."""
     raw = _env("VOICE_TUNNEL_SPEECH_SPEED")
     if raw:
@@ -492,7 +492,7 @@ TTS_SR = 22050
 DEFAULT_PIPER_VOICE = "en_GB-alan-medium"
 """Which voice piper uses when nothing names one.
 
-Alan is the voice JJ picked ("I kind of liked Alan") — the same choice SPEECH_SPEED above
+Alan is the voice the owner picked ("I kind of liked Alan") — the same choice SPEECH_SPEED above
 was tuned for. Naming a default here is what lets `VOICE_TUNNEL_TTS=piper` be the ONLY setting a piper
 session needs: with no default the backend refused to start unless the caller also threaded
 VOICE_TUNNEL_PIPER_VOICE through every invocation, which is precisely the env-var tax this file exists to
@@ -527,11 +527,11 @@ def verbose_default() -> bool:
     """Whether the agent narrates every action. Persisted, and GLOBAL rather than per-device.
 
     The split that matters: **verbose is about the AGENT, mute is about a MICROPHONE.** A
-    preference for how much the agent explains itself is one preference JJ holds, so flipping it
+    preference for how much the agent explains itself is one preference the owner holds, so flipping it
     on a laptop must reach the phone. Muting is a fact about the device in front of him, so it
     stays local — muting a phone must not deafen a desktop in another room.
 
-    JJ, live 2026-08-03: "I would like the verbose toggle to be server-side persisted. If I toggle
+    Live, 2026-08-03: "I would like the verbose toggle to be server-side persisted. If I toggle
     it in a browser then it should be remembered on my phone."
     """
     return (_env("VOICE_TUNNEL_VERBOSE", "0") or "0") not in ("0", "false", "no", "off")

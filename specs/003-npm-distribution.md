@@ -200,5 +200,5 @@ to be exercised by accident.
 
 - `specs/002-packaging.md` — PyPI, GitHub Releases, WinGet, and the measurements behind the
   no-binary decision
-- `agent-mail-cli/specs/003-npm-distribution.md` — the prior art
+- `agent-mail-cli`'s own npm spec — the prior art
 - `npm/README.md` — the user-facing statement of the Python prerequisite

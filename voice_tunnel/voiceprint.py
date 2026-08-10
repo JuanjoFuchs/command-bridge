@@ -1,4 +1,4 @@
-"""voice_tunnel.voiceprint — learn what JJ sounds like, so the wake word stops being mandatory.
+"""voice_tunnel.voiceprint — learn what the owner sounds like, so the wake word stops being mandatory.
 
 The wake word has been the weakest link in this project. A general-purpose recognizer rendered
 "Claude" as Grab, Grub, God, Well, Joe, Clock, Clos, quote, club and Crawley and never once got
@@ -6,12 +6,12 @@ it right from the headset — because it is a rare token carried by a fraction o
 audio. **Speaker identity is carried by the whole utterance**, so it degrades gracefully exactly
 where a wake word fails outright.
 
-Two operations, mirroring `meeting-copilot/mc/voiceprint.py`, which already proved this stack
+Two operations, mirroring a sibling project's implementation, which already proved this stack
 here (NeMo TitaNet-large; wespeaker-CAM++ and 3dspeaker-CAM++ collapsed speakers to near chance):
 
   * **enroll** — merge an utterance's embedding into a running centroid. `count` grows with every
     confirmed turn, so the print strengthens the more it is used. Nothing to sit through: the
-    only utterances enrolled are ones already confirmed as JJ by the wake phrase.
+    only utterances enrolled are ones already confirmed as the owner by the wake phrase.
   * **match** — cosine-compare a new utterance against the gallery.
 
 **The gate is ADDITIVE, never subtractive** (see :func:`should_address`). A voice match can only
@@ -70,7 +70,7 @@ which leaves the whole 0.15-0.50 band as "unsure" — and unsure keeps its atten
 It cannot override a spoken wake phrase; it only overrides the conversation window, which is an
 inference rather than an instruction — the guess that whoever is speaking now is the same person
 who spoke a moment ago. When someone else in the room is talking, that guess is simply wrong, and
-JJ found it live on 2026-08-07 when another person speaking landed as an addressed turn.
+Found live on 2026-08-07 when another person speaking landed as an addressed turn.
 
 Why this does not reopen the false-negative risk the additive rule was protecting against: being
 ignored mid-sentence requires the gate to be confident you are a stranger, and the margin between
@@ -272,8 +272,8 @@ def enroll_from_wav(
 ) -> dict[str, int]:
     """Learn a voice from one recording's channel. Returns `{windows, enrolled}`.
 
-    Built for `meeting-copilot` session WAVs, which are 16 kHz stereo with **mic on the left and
-    system audio on the right** — so channel 0 is JJ speaking, already labelled by construction
+    Built for meeting-recorder WAVs, which are commonly 16 kHz stereo with **mic on the left and
+    system audio on the right** — so channel 0 is the owner speaking, already labelled by construction
     with no diarization required. Hours of his real voice, in many rooms and moods, is a far
     better starting print than anything a scripted enrolment sentence would produce.
 

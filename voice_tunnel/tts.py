@@ -345,7 +345,7 @@ def synthesize(
 
     `speed` is a MULTIPLE OF NATIVE PACE: higher is faster. It is deliberately not piper's
     `length_scale`, which is inverted — that inversion leaked out once already and produced half
-    speed when JJ asked for double.
+    speed when the owner asked for double.
     """
     if not text or not text.strip():
         raise TTSError("nothing to speak")

@@ -428,6 +428,6 @@ After a tag push: the GitHub Release carries both artifacts, PyPI shows the vers
 ## References
 
 - `specs/001-voice-tunnel.md` — the behaviour being packaged
-- `agent-mail-cli/specs/002-packaging.md` — the prior art this borrows from
-- `agent-mail-cli/.github/workflows/` — the proven workflow implementations
+- `agent-mail-cli`'s own packaging spec — the prior art this borrows from
+- `agent-mail-cli`'s workflows — the proven implementations
 - `ai-docs/reference/security.md` — transport trust, which the README must not overstate

@@ -1,6 +1,6 @@
 """Barge-in acceptance — does HIS voice stop a reply, and does nothing else?
 
-JJ, 2026-08-06: "barge in but only for my voice." Both halves matter and they fail differently:
+Reported 2026-08-06: "barge in but only for my voice." Both halves matter and they fail differently:
 a tunnel that cannot be interrupted is annoying, and one that stops whenever the room makes a
 noise is unusable.
 

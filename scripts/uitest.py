@@ -370,7 +370,7 @@ def main() -> int:
 def _analyze_capture(wav: str, turns: list) -> None:
     """Measure the audio the server actually received, per turn.
 
-    Spectral centroid is the load-bearing number here: JJ's first utterance measured 405 Hz
+    Spectral centroid is the load-bearing number here: the owner's first utterance measured 405 Hz
     against 1515 Hz for later ones — heavily low-passed, missing the high frequencies that
     carry consonants. Level alone would not have shown that.
     """

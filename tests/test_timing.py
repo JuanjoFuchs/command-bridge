@@ -1,7 +1,7 @@
 """The timing log — the instrument that replaces guessing about latency.
 
 It exists because "why is this slow" was answered by hand twice in one live session, from clip
-IDs and wall-clocks, and the intuition was wrong both times in the same direction: JJ blamed
+IDs and wall-clocks, and the intuition was wrong both times in the same direction: the owner blamed
 Tailscale, and the network was under 0.1 s while the AGENT spent 39 s and 60 s. A breakdown that
 only measured the tool would have confirmed the wrong hypothesis, which is why `consumed ->
 say_requested` is a named stage rather than an unlabelled gap.

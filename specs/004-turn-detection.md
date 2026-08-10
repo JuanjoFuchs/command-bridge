@@ -15,13 +15,13 @@ speaker has actually finished, and remove the hand-tuned constant from the clien
 signal. Both changes are mined from [huggingface/speech-to-speech][hf], which runs this stack in
 production on thousands of Reachy Mini robots.
 
-`VOICE_TUNNEL_END_OF_UTTERANCE_MS` is 1500 ms. It was raised from 1000 after JJ was repeatedly cut
+`VOICE_TUNNEL_END_OF_UTTERANCE_MS` is 1500 ms. It was raised from 1000 after the owner was repeatedly cut
 off mid-thought, and **it is a permanent compromise**: short enough still interrupts someone
 composing out loud, long enough makes every short question wait 1.5 s for nothing. No single
 number fixes both, because the right wait depends on whether the sentence sounded finished.
 
 > **Completion rule:** This spec is not complete until the acceptance criteria are verified by
-> running the model against real recorded speech from `sessions/*.wav` — utterances JJ actually
+> running the model against real recorded speech from `sessions/*.wav` — utterances the owner actually
 > spoke, including the ones that were cut off. Unit tests with synthetic arrays are necessary and
 > not sufficient: the failure this fixes is about prosody, which synthetic audio does not have.
 
@@ -128,7 +128,7 @@ and that was found live, not by testing. Smart Turn sits *after* the VAD boundar
 change to it, so it can be taken on its own. Replacing the VAD is a separate spec with its own
 regression risk.
 
-**Speculative turns are DECIDED AGAINST, not merely deferred — JJ, live 2026-08-06.**
+**Speculative turns are DECIDED AGAINST, not merely deferred — Live, 2026-08-06.**
 
 He asked how an agent would even learn that a turn had grown, given `watch` blocks and the drain
 loop already exists, and then answered it himself: *"I don't understand how these speculative
@@ -235,7 +235,7 @@ this with data instead of impressions.
 
 ### Against real speech, not synthetic arrays
 
-`sessions/*.wav` holds every utterance JJ has spoken through this tunnel, including the ones that
+`sessions/*.wav` holds every utterance the owner has spoken through this tunnel, including the ones that
 were cut off mid-thought — the failures that produced the 1500 ms constant. **That is the test
 set.** Prosody is the entire signal the model reads, and synthetic audio has none.
 

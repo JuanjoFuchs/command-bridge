@@ -1,6 +1,6 @@
 """A quiet watch waits longer each round, and anything at all resets it.
 
-JJ, 2026-08-08: "whenever I take longer you also stop watching... we need to design the watch
+Reported 2026-08-08: "whenever I take longer you also stop watching... we need to design the watch
 timeouts with a back off period, an exponential backoff, so that whenever I stop talking for
 quite a while and you're still watching you stop wasting turns in silence."
 

@@ -1,13 +1,13 @@
 """voice_tunnel.asr — utterance-buffered speech recognition.
 
-**Why this is simpler than meeting-copilot's streaming ASR.** `mc` transcribes a meeting, where
+**Why this is simpler than a streaming ASR.** A meeting transcriber works where
 you cannot wait for a speaker to stop — it needs incremental commits (LocalAgreement-2) to react
 mid-monologue. Here the turn boundary *is* the end of the utterance: nobody wants a reply before
 they have finished their sentence. So we buffer until end-of-utterance and transcribe once. That
 is more accurate (Whisper sees whole sentences), far less code, and has no duplicate-commit class
 of bug at all. At RTF ~0.1 a 3-second utterance transcribes in ~0.3 s.
 
-Silence discipline, inherited from `mc` because Whisper confidently hallucinates on silence
+Silence discipline, inherited from that prior art because Whisper confidently hallucinates on silence
 ("you", "Thank you."):
   1. an RMS energy gate means a near-silent buffer is never sent to the model (this is what
      makes AC-1 a guarantee rather than a hope),

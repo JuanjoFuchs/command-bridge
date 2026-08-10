@@ -75,8 +75,8 @@ class TunnelState:
 
         Android suspends a backgrounded tab, so the socket drops every time the phone locks — and
         `/say` used to answer 409 and throw the reply away. Over one session that silently ate
-        several answers, and from JJ's side he had simply asked a question and never been told
-        anything. JJ, live 2026-08-01: "whenever the client is disconnected or you detect that my
+        several answers, and from the owner's side he had simply asked a question and never been told
+        anything. Live, 2026-08-01: "whenever the client is disconnected or you detect that my
         phone is locked or whatever, you should queue up your reply back to me. So whenever I
         reconnect, they all send down to me."
 
@@ -92,13 +92,13 @@ class TunnelState:
         second header overwrote the first before any audio arrived — so one reply played under
         the other's identity and the other was dropped.
 
-        This is the SAME defect JJ heard on the move ("those two play together, overlapping one
+        This is the SAME defect the owner heard on the move ("those two play together, overlapping one
         on top of the other") surviving one layer deeper than the first fix. Queuing playback on
         the client made the audio serial; it could not restore a pairing the server had already
         scrambled. An invariant the client depends on has to be guaranteed by the sender.
         """
         self.verbose: bool = config.verbose_default()
-        """Does JJ want every action narrated? Toggled from the page or by voice, read by the agent.
+        """Does the owner want every action narrated? Toggled from the page or by voice, read by the agent.
 
         **The SERVER is the source of truth, not the browser.** Each client used to push its own
         localStorage value on connect, so opening the page on a phone silently reverted a
@@ -109,7 +109,7 @@ class TunnelState:
         The TOOL only stores and publishes this — it does not act on it. Deciding what counts as
         "an action worth narrating" is exactly the unbounded judgment that belongs in the agent
         (AGENTS.md rule 1), and a flag is the smallest thing that can carry the preference across
-        the boundary. JJ, live 2026-07-31: "a toggle that says a verbose mode for you so that I
+        the boundary. Live, 2026-07-31: "a toggle that says a verbose mode for you so that I
         don't have to ask you to describe the actions and we don't have to write it into the
         guide. This button would toggle live how you respond."
         """
@@ -118,7 +118,7 @@ class TunnelState:
 
         These look identical from the agent's side and are not the same thing at all. A page that
         has loaded but never been tapped holds an open WebSocket, reports `clients: 1`, and sends
-        no audio — so an agent sits in `watch` believing someone is listening to it. JJ, live
+        no audio — so an agent sits in `watch` believing someone is listening to it. Live
         2026-08-03: "I just refreshed the UI and I didn't hit tap to start, you should have a way
         to be aware of that."
 
@@ -141,7 +141,7 @@ class TunnelState:
         Off means neither direction carries: no audio up, and **nothing plays down**. Replies
         synthesized while it is closed go to `undelivered` and arrive when he reopens it.
 
-        JJ, live 2026-08-06: *"the orb should control whether or not this interaction is live...
+        Live, 2026-08-06: *"the orb should control whether or not this interaction is live...
         if I turn off the orb, that means that you cannot talk to me either. And your responses
         get queued up server side until I turn the orb back on."*
 
@@ -178,7 +178,7 @@ class TunnelState:
 
         Used ADDITIVELY with the server-side signal — hold if either says he is talking. A false
         positive costs a moment of delay; a false negative costs interrupting him, which is the
-        failure this exists to prevent. JJ, live 2026-08-06, having just been interrupted: *"the
+        failure this exists to prevent. Live, 2026-08-06, having just been interrupted: *"the
         client needs to send a signal back to the server whenever it's detecting me speaking so
         that you don't interrupt me."*"""
         self.embedder = voiceprint.Embedder()
@@ -187,7 +187,7 @@ class TunnelState:
         self.last_partial_at: float = 0.0
         self.partial_text: str = ""
         # Failsafe capture: everything the server actually received, at 16 kHz. Borrowed from
-        # meeting-copilot, where it repeatedly turned "the ASR is bad" into a question you can
+        # a sibling project, where it repeatedly turned "the ASR is bad" into a question you can
         # answer by listening — is the audio quiet, clipped, or fine and the model just wrong?
         self._wav: wave.Wave_write | None = None
 
@@ -400,7 +400,7 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
     clip_id = f"clip-{int(time.time() * 1000)}"
 
     # Do not talk over the speaker. Synthesis is done, but if they are mid-utterance, hold the
-    # audio until they finish. JJ, live 2026-07-29: a batch of voice auditions cut across him
+    # audio until they finish. Live, 2026-07-29: a batch of voice auditions cut across him
     # mid-sentence, which is the difference between a conversation and a machine that shouts.
     # Bounded so a stuck VAD can never silence the agent permanently.
     waited = 0.0
@@ -408,7 +408,7 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
     # A muted microphone cannot be mid-sentence. Without this the hold ran anyway: muting stops
     # frames arriving, so nothing ever closes the utterance and `speech_active` stays stuck true
     # from the last frame before the mute — the agent then announces it is waiting for someone to
-    # finish speaking who has physically switched their microphone off. JJ, live 2026-08-01:
+    # finish speaking who has physically switched their microphone off. Live, 2026-08-01:
     # "whenever I mute, you say that you're listening and you're waiting for me to finish, but
     # I'm muted."
     # EITHER signal holds the clip. The client's is faster — it reads the microphone level
@@ -529,7 +529,7 @@ async def _push_cue(state: TunnelState, name: str) -> None:
         return
     # Cues go through the same lock as speech. A cue landing between a reply's header and its
     # bytes is the exact sequence that made a reply play tagged as a cue, with no transcript row
-    # and no playback receipt — so the server believed it had spoken and JJ had heard nothing.
+    # and no playback receipt — so the server believed it had spoken and the owner had heard nothing.
     await _send_clip(
         state,
         {"type": "audio_header", "id": f"cue-{name}", "sample_rate": rate,
@@ -559,7 +559,7 @@ async def handle_cue(request: web.Request) -> web.Response:
 async def handle_rate(request: web.Request) -> web.Response:
     """Set speech speed and/or sentence pause at runtime. Either may be omitted.
 
-    JJ asked whether "talk faster" could take effect mid-conversation or would need a code
+    The owner asked whether "talk faster" could take effect mid-conversation or would need a code
     change. Holding these in server state rather than reading env per call is what makes the
     former possible — a preference the user expresses out loud should not require restarting the
     conversation to apply.
@@ -580,7 +580,7 @@ async def handle_rate(request: web.Request) -> web.Response:
     previous = {"speed": round(state.speech_speed, 2), "pause": state.sentence_pause}
 
     # SPEED, not duration. Piper's length_scale is inverted — lower means faster — and exposing
-    # that leaked straight through: JJ asked for 2.0 expecting twice as fast and got half speed.
+    # that leaked straight through: the owner asked for 2.0 expecting twice as fast and got half speed.
     # An API that contradicts the plain meaning of its own parameter name is a defect, so speed
     # is what crosses this boundary and the inversion lives in config.length_scale_for alone.
     raw_speed = body.get("speed", body.get("value"))     # `value` kept: the original field name
@@ -616,9 +616,9 @@ async def handle_rate(request: web.Request) -> web.Response:
 
 
 async def handle_verbose(request: web.Request) -> web.Response:
-    """Set narration mode from the agent side, so JJ can flip it by ASKING rather than tapping.
+    """Set narration mode from the agent side, so the owner can flip it by ASKING rather than tapping.
 
-    JJ, live 2026-08-03: "I also want you to be able to toggle the verbose. If I ask it via here,
+    Live, 2026-08-03: "I also want you to be able to toggle the verbose. If I ask it via here,
     I would want you to toggle it and I would want the UI properly updated with that." The
     broadcast is what makes the second half true — every connected page repaints its switch.
     """
@@ -681,7 +681,7 @@ async def handle_wake(request: web.Request) -> web.Response:
 async def handle_watching(request: web.Request) -> web.Response:
     """The agent has gone back into `watch`. Therefore it is listening — derive, do not ask.
 
-    **The agent no longer declares what it is doing; the tool observes it.** JJ, 2026-08-07:
+    **The agent no longer declares what it is doing; the tool observes it.** Reported 2026-08-07:
     *"I have noticed that you are controlling the status changes using commands. But I would like
     to remove that control... when a watch resolves and you don't run another one, that means
     you're thinking. If it detects that you are running another watch, that means you're
@@ -719,7 +719,7 @@ async def handle_watching(request: web.Request) -> web.Response:
     #
     # Reporting only the opening made the state useless in the case that matters: the loop
     # drains by re-watching, so the flip to thinking survived for milliseconds and the real
-    # 20-second think that followed the last drain was painted "Listening" the whole way. JJ,
+    # 20-second think that followed the last drain was painted "Listening" the whole way. The owner,
     # 2026-08-07: "I haven't seen the thinking that often. Whenever the watch resolves and there's
     # no watch going on, I don't see thinking."
     #
@@ -876,7 +876,7 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         # DELIBERATELY does not touch agent_state. It used to force "idle" while muted, which
         # made muting mid-thought overwrite what the agent was actually doing — the orb dropped
         # from Thinking to Listening and the elapsed-seconds counter vanished with it, while the
-        # agent kept working. JJ found it live on 2026-08-07: "the thinking status had the timer,
+        # agent kept working. Found live on 2026-08-07: "the thinking status had the timer,
         # and then the counter disappeared while it was in thinking status."
         #
         # The rule: agent_state says what the AGENT is doing; `muted` says whether he can be
@@ -908,7 +908,7 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
 async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
     """Stop the reply if HE is talking over it — and only if it is him.
 
-    JJ, 2026-08-06: "barge in but only for my voice." The constraint is the feature: a tunnel that
+    Reported 2026-08-06: "barge in but only for my voice." The constraint is the feature: a tunnel that
     stops talking whenever the room makes a noise is worse than one you cannot interrupt at all.
 
     **The gate is deliberately "not the agent" rather than "definitely him", because those need

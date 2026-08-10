@@ -21,7 +21,7 @@ first fragment answers the wrong question.
 
 **This tool is DUMB and holds no LLM.** It moves audio and appends turns to a log. Every ounce
 of intelligence lives in the agent that started it. *Why:* it's the split that made
-`meeting-copilot` work — a deterministic tool can be verified with `exit 0`, and keeping all
+a sibling project — a deterministic tool can be verified with `exit 0`, and keeping all
 judgment in the agent is what makes the assistant *yours* rather than a generic voice bot.
 **If a change requires a model inside this repo, the design has been violated — stop.**
 
@@ -33,7 +33,7 @@ judgment in the agent is what makes the assistant *yours* rather than a generic 
 | The CLI contract, or what a command does | Run `voice-tunnel describe` | `describe` is the LIVE source of truth — trust it over any doc, including this one |
 | **How to invoke this tool at all** — `voice-tunnel` not found, "which python", a missing dependency, anything that made you reach for `python -c` | Run `voice-tunnel doctor` | Every failing check carries the command that fixes it. **Never invoke this as `python -c "import sys; sys.path.insert(...)"`** — `bin/voice-tunnel` (bash) and `bin/voice-tunnel.cmd` (PowerShell/cmd) resolve the repo root and the venv from any cwd |
 | A setting: TTS backend, piper paths, where turn logs live, ASR engine | Run `voice-tunnel config show` | Settings persist in a `.env` loaded by every command (`voice-tunnel config path` says where — repo-local in a checkout, the user config dir once installed). `voice-tunnel config set VOICE_TUNNEL_TTS piper` **once**, not four env-var prefixes per call. Process env still overrides the file |
-| How the agent SOUNDS — "talk faster", "slow down", a list that ran together | Run `voice-tunnel rate --speed <n>` / `--pause <s>` | Applies immediately AND persists, because these are tuned by ear mid-conversation and used to be lost on every restart. **Speed is a MULTIPLE — higher is faster.** Piper's inverted `length_scale` is not exposed anywhere above `config.length_scale_for`; leaking it once produced half speed when JJ asked for double |
+| How the agent SOUNDS — "talk faster", "slow down", a list that ran together | Run `voice-tunnel rate --speed <n>` / `--pause <s>` | Applies immediately AND persists, because these are tuned by ear mid-conversation and used to be lost on every restart. **Speed is a MULTIPLE — higher is faster.** Piper's inverted `length_scale` is not exposed anywhere above `config.length_scale_for`; leaking it once produced half speed when the owner asked for double |
 | Auth, allowlists, exposing the server | @ai-docs/reference/security.md | The WS handshake is the trust boundary — HTTP middleware does NOT cover it |
 | Turn log, cursors, `watch` semantics | @ai-docs/reference/turn-log.md | Never drop a turn; the cursor is the contract |
 | Browser/mic/audio behavior, Android limits | @ai-docs/reference/browser.md | Secure context, foreground-only mic, wake lock |

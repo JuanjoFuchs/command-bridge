@@ -3,7 +3,7 @@
 Two defects live here, both already paid for once:
 
   * **The inverted unit.** Piper's `length_scale` means "duration", so lower is faster. Exposing
-    it produced half speed when JJ asked for 2.0. Every layer above the piper call now speaks
+    it produced half speed when the owner asked for 2.0. Every layer above the piper call now speaks
     SPEED, and these tests pin that — including the one conversion, which is the only place the
     inversion is allowed to exist.
   * **Settings that lived only in a running process.** Speed and pause are tuned by ear during a

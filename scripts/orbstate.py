@@ -3,7 +3,7 @@
 **Why this harness exists, in one sentence:** the orb said "Thinking" with no elapsed-seconds
 counter, and nothing in the suite could have caught it.
 
-JJ, live 2026-08-07: *"the thinking status had the timer, the seconds counter, and then the
+Live, 2026-08-07: *"the thinking status had the timer, the seconds counter, and then the
 second counter disappeared while it was in thinking status. So I want to make sure we do proper
 unit testing of that logic and proper UI testing of the transitions, so that we can catch
 regressions."*
@@ -274,7 +274,7 @@ try:
         # The agent no longer declares its status, so this has to hold from the tool's own
         # behaviour. The first version reported only the opening edge, which made "thinking"
         # last milliseconds — the loop drains by re-watching — and painted the real 20-second
-        # think as "Listening". JJ, 2026-08-07: "I haven't seen the thinking that often."
+        # think as "Listening". Reported 2026-08-07: "I haven't seen the thinking that often."
         import subprocess as _sp2
 
         _sp2.run([sys.executable, "-m", "voice_tunnel", "watch", "--session", SESSION,
@@ -290,7 +290,7 @@ try:
         # ---------------------------------------------------------------- watch wakes on mute
         # A BLOCKED WATCH MUST RETURN WHEN HE PRESSES A BUTTON, not only when he speaks.
         #
-        # JJ, 2026-08-07, after four abandonments in one session: "the fact that the guide said
+        # Reported 2026-08-07, after four abandonments in one session: "the fact that the guide said
         # that when muted we should stop watching doesn't make any sense. Because how else would
         # you know when I am muted? ... let's make sure that whenever I mute or unmute, that
         # resolves the watch so that you immediately get notified whenever that button was
@@ -461,7 +461,7 @@ try:
         # THE DIVIDER MUST BE ON SCREEN, not one line below the fold.
         #
         # `placeDivider` inserts it AFTER the row that was just scrolled to, so with a
-        # scroll-to-the-row policy it was permanently invisible. JJ, 2026-08-07: "the text that
+        # scroll-to-the-row policy it was permanently invisible. Reported 2026-08-07: "the text that
         # says claude has read to here is not always displayed... it's below the scroll and I
         # need to scroll to see it."
         page.evaluate("""() => {

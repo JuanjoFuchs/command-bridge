@@ -6,7 +6,7 @@ speech — the greeting-prefix rule and the fuzzy threshold — and rewriting th
 would throw that history away to prove nothing. The autouse fixture pins the name so they keep
 testing behaviour rather than configuration.
 
-**Nothing is ever removed from the transcript** (JJ, 2026-08-07). Several tests below assert
+**Nothing is ever removed from the transcript** (Reported 2026-08-07). Several tests below assert
 that directly, because the previous rule stripped a leading summons and the class of bug it
 produced — the log disagreeing with what he remembers saying — was silent every time.
 
@@ -37,7 +37,7 @@ def test_turn_without_wake_phrase_is_not_addressed():
 def test_wake_phrase_addresses_and_the_words_are_left_alone():
     """AC-5 — the phrase wakes the agent and STAYS in the transcript.
 
-    JJ, 2026-08-07: "you removed that hay clot [hey Claude] from the transcription. I think we
+    Reported 2026-08-07: "you removed that hay clot [hey Claude] from the transcription. I think we
     should stop doing that." The turn log records what a person said; an agent can ignore two
     words on its own, and editing them made the log disagree with his memory of the sentence.
     """
@@ -101,7 +101,7 @@ def test_each_exchange_extends_the_window():
 
 
 def test_a_bare_name_never_wakes_however_uncommon_it_is(monkeypatch):
-    """The rule that replaced a setting. JJ: "I would make it a default to always require the
+    """The rule that replaced a setting. The owner: "I would make it a default to always require the
     hey, and the only thing the agent or the user can choose is the wake word."
 
     This used to be opt-in per name, on the theory that "claude" is uncommon enough to say bare
@@ -123,7 +123,7 @@ def test_the_greeting_form_wakes_and_keeps_every_word():
 
 
 def test_mid_sentence_mention_wakes_and_survives_intact():
-    """Regression for the live bug that started this (JJ, 2026-07-29): "and do I need to say hey
+    """Regression for the live bug that started this (Reported 2026-07-29): "and do I need to say hey
     Claude every time?" became "and do I need to say every time?" — he was REFERRING to the
     phrase, not using it. That fix spared mid-sentence mentions; 2026-08-07 spared all of them.
     """
@@ -167,7 +167,7 @@ def test_reset_clears_the_conversation_window():
 
 
 def test_a_long_monologue_does_not_time_itself_out():
-    """Regression (JJ, live 2026-07-29): a ~60 s continuous turn came back addressed=False.
+    """Regression (Live, 2026-07-29): a ~60 s continuous turn came back addressed=False.
 
     The window was measured from the previous turn's END to this turn's END, so talking for a
     long time looked identical to staying silent for a long time. The gap that matters is the
@@ -195,7 +195,7 @@ def test_ended_defaults_to_now_for_simple_callers():
 
 
 # --- robustness to mistranscribed names --------------------------------------
-# Live 2026-07-29: Parakeet rendered JJ's "hey Claude" as "hey grab" / "hey grub", so the gate
+# Live, 2026-07-29: Parakeet rendered the owner's "hey Claude" as "hey grab" / "hey grub", so the gate
 # correctly matched nothing and he spent a whole session talking to nobody.
 
 def test_mangled_name_after_a_greeting_still_wakes():
@@ -235,7 +235,7 @@ def test_ordinary_words_are_not_mistaken_for_the_name():
 def test_the_name_is_configurable(monkeypatch):
     """The tool holds no model, so nothing should tie it to one vendor's name.
 
-    JJ, live 2026-08-03: "my goal is to be able to use this with any AI agent, not just cloud."
+    Live, 2026-08-03: "my goal is to be able to use this with any AI agent, not just cloud."
     """
     monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
 
@@ -254,7 +254,7 @@ def test_the_name_is_configurable(monkeypatch):
 def test_a_common_word_name_does_not_fire_bare(monkeypatch):
     """The whole reason a day of the week is usable at all.
 
-    "Let's ship it Thursday" must NOT wake the agent, while "hey Thursday" must. JJ spotted this
+    "Let's ship it Thursday" must NOT wake the agent, while "hey Thursday" must. The owner spotted this
     himself when the objection was that days are words you say constantly: the wake phrase is a
     GREETING PLUS A NAME, and nobody says "hey Thursday" by accident.
     """

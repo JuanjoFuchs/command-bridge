@@ -277,7 +277,7 @@
     -webkit-mask:radial-gradient(circle closest-side, transparent 0 56%, #000 78%);
             mask:radial-gradient(circle closest-side, transparent 0 56%, #000 78%);
   }
-  /* The elapsed-seconds counter, shown only while the orb is working. JJ, 2026-08-07:
+  /* The elapsed-seconds counter, shown only while the orb is working. Reported 2026-08-07:
      "whenever the orb is spinning and something's happening... we should start a timer inside
      the orb that just starts counting from zero... 120 seconds, as much as it needs to. And
      the color of the seconds starts getting redder as it increases."
@@ -400,7 +400,7 @@
   }
   #verbose[aria-checked="true"], #mute[aria-checked="true"] { border-color:color-mix(in srgb, var(--warm) 50%, transparent); }
 
-  /* NOTE: the orb no longer carries mute at all. JJ, 2026-08-07: "I want to remove the mute
+  /* NOTE: the orb no longer carries mute at all. Reported 2026-08-07: "I want to remove the mute
      from the orb, the mute status, because the mute toggle is what represents the mute status...
      whenever mute is on, the only thing that happens with the orb is that instead of listening,
      we say muted, and every other status is the same."
@@ -572,7 +572,7 @@
       <div class="aura" aria-hidden="true"></div>
     </div>
     <!-- ONE row under the orb, as close to it as the layout allows, so everything below is
-         transcript. JJ, 2026-08-07: "lower the mute and verbose buttons in the same row where
+         transcript. Reported 2026-08-07: "lower the mute and verbose buttons in the same row where
          the microphone selector is and move all of those up closer to the orb so that the
          transcription panel has more space."
 
@@ -606,7 +606,7 @@
     </div>
     <!-- ERRORS ONLY. There used to be a permanent status line here relaying "say hey claude",
          "muted — tap the orb to talk" and friends, reserving three lines of a phone screen to
-         repeat what the orb already says. JJ, 2026-08-07: "that secondary status section... I
+         repeat what the orb already says. Reported 2026-08-07: "that secondary status section... I
          think we should remove that to make use of the vertical real estate."
 
          It is not deleted outright, because two of its messages are the only way to learn why a
@@ -616,7 +616,7 @@
     <div id="err" role="status" hidden></div>
   </main>
 
-  <!-- The transcript's OWN header, not a fourth control in the orb's row. JJ, 2026-08-07: "the
+  <!-- The transcript's OWN header, not a fourth control in the orb's row. Reported 2026-08-07: "the
        button to toggle the transcripts should be below, and it shouldn't be a button, it should
        be like a header above the transcripts that says transcript, and that's what we click,
        with an arrow, to collapse it or expand it, and it should be centered."
@@ -651,7 +651,7 @@
   // Clips wait their turn here. A single `pendingClip` variable was not enough: a cue arriving
   // between a reply's header and its audio OVERWROTE the reply, so the reply either played
   // labelled as a cue (no transcript row, no `played` receipt) or was dropped outright — and
-  // when two clips did survive they played SIMULTANEOUSLY, one on top of the other. JJ, live
+  // when two clips did survive they played SIMULTANEOUSLY, one on top of the other. Live
   // on the move 2026-07-31: "those two play together, overlapping one on top of the other."
   const clipQueue = [];
   let draining = false;
@@ -716,7 +716,7 @@
     // A reply is PROOF the turns above it were read, so it belongs ABOVE the read boundary.
     // Appending every row at the end put claude's answer below "claude has read to here", which
     // reads as an answer to something he hasn't been shown yet — and left the unread marker
-    // stranded mid-log instead of at the bottom where the waiting turns are. JJ, live from the
+    // stranded mid-log instead of at the bottom where the waiting turns are. Live from the
     // car 2026-07-31: "whatever responses you generate ... should show on top of that. I have
     // noticed that they show below that."
     if (cls === "claude" && $divider && $divider.parentNode === $log) {
@@ -731,7 +731,7 @@
   //
   // This used to target the specific row that had arrived, which was right for rows and wrong for
   // everything else — most visibly the read-boundary divider, which `placeDivider` inserts AFTER
-  // the row that was already scrolled to, i.e. permanently one line below the fold. JJ,
+  // the row that was already scrolled to, i.e. permanently one line below the fold. The owner,
   // 2026-08-07: "the text that says claude has read to here is not always displayed... it's below
   // the scroll and I need to scroll to see it. I would like the scroll to happen automatically
   // and always take me to the bottom of the transcript."
@@ -786,7 +786,7 @@
   diag.signal = tellServer;
 
   // Tell the server he is TALKING, from the microphone level, before any of that audio has
-  // crossed the network. JJ, live 2026-08-06, immediately after being interrupted: "the client
+  // crossed the network. Live, 2026-08-06, immediately after being interrupted: "the client
   // needs to send a signal back to the server whenever it's detecting me speaking so that you
   // don't interrupt me... the responses get queued up until I shut up."
   //
@@ -833,7 +833,7 @@
   function setMuted(next) {
     muted = Boolean(next);
     // sessionStorage, NOT localStorage — mute is SESSION state, not a device preference.
-    // JJ, 2026-08-11. It survives a reload, which matters because he refreshes constantly
+    // Reported 2026-08-11. It survives a reload, which matters because he refreshes constantly
     // mid-conversation and re-muting every time would be its own annoyance; it does NOT survive
     // closing the tab. He shut the laptop on a Saturday and opened it Monday still muted, on a
     // page that otherwise looked live — deaf, with no event to explain why.
@@ -866,7 +866,7 @@
   //   otherwise    -> whatever the agent is doing, with MUTED replacing only the idle label
   //
   // Mute changes exactly one thing and never anything else. It is not a colour, not a glow, and
-  // not a state of its own — the mute button carries that. JJ, 2026-08-07.
+  // not a state of its own — the mute button carries that. Reported 2026-08-07.
   const ORB_LABELS = {
     idle: "Listening", transcribing: "Transcribing", thinking: "Thinking",
     synthesizing: "Synthesizing", waiting: "Waiting", speaking: "Speaking",
@@ -904,7 +904,7 @@
   // How long the orb has been in ITS CURRENT STATE, reddening as it climbs.
   //
   // ONE CLOCK PER STAGE, restarting at every transition. This shipped as a single clock across
-  // the whole chain and JJ corrected it the moment he saw it: "I meant counts per stage. Each
+  // the whole chain and the owner corrected it the moment he saw it: "I meant counts per stage. Each
   // state gets its own count." He is right and the reason is what the number is FOR — a total
   // says the wait was long, which he already knows from waiting; a per-stage count says WHICH
   // stage was long, which is the only version that tells him anything he can act on.
@@ -919,7 +919,7 @@
 
   function paintBusyTimer() {
     const s = (performance.now() - busySince) / 1000;
-    // THREE DECIMALS, and they are not decoration. JJ, 2026-08-07: "we should add decimal points
+    // THREE DECIMALS, and they are not decoration. Reported 2026-08-07: "we should add decimal points
     // to that second counter because it looks a bit dull." A whole-second counter is motionless
     // for a full second at a time, which reads as FROZEN — the exact thing he is watching the
     // orb to rule out. Moving milliseconds say "still running" without him having to wonder.
@@ -975,7 +975,7 @@
   // control would flip and flip back.
   diag.orbView = orbView;
 
-  // Collapse the transcript. JJ, 2026-08-07: "I want to make that collapsible so that I can just
+  // Collapse the transcript. Reported 2026-08-07: "I want to make that collapsible so that I can just
   // collapse it and hide it and just have the orb and the buttons and not see the transcript
   // text."
   //
@@ -1062,7 +1062,7 @@
   // The orb is the ONLY microphone control. First tap grants and starts; every tap after that
   // mutes or unmutes, and never tears the session down.
   //
-  // JJ, live 2026-08-01: "it doesn't make sense that it's a separate button from the middle orb.
+  // Live, 2026-08-01: "it doesn't make sense that it's a separate button from the middle orb.
   // Because when I tap the middle orb to start, that's what makes you listen to me. Maybe I can
   // tap it again to mute and unmute... as soon as the page is loaded, that is connected. What the
   // orb does is just helps us have this conversation."
@@ -1072,7 +1072,7 @@
   // hold a microphone it was never handed. That tap is a browser rule, not a design choice.
   // THE ORB IS THE CHANNEL, not the microphone. Tapping it opens or closes the conversation in
   // BOTH directions: closed means nothing is heard and nothing plays, and replies queue on the
-  // server until it reopens. JJ, live 2026-08-06: "the orb should control whether or not this
+  // server until it reopens. Live, 2026-08-06: "the orb should control whether or not this
   // interaction is live... if I turn off the orb, that means that you cannot talk to me either.
   // And your responses get queued up server side until I turn the orb back on."
   //
@@ -1104,7 +1104,7 @@
   //
   // The server already refuses to send new replies while the channel is shut, which looked like
   // enough and was not: a clip already delivered kept playing to the end and the local queue
-  // kept its backlog. JJ, 2026-08-07: "I hit the orb to turn off because I was not hearing you.
+  // kept its backlog. Reported 2026-08-07: "I hit the orb to turn off because I was not hearing you.
   // I was talking to somebody else and I didn't want you to speak. However, you spoke anyway."
   //
   // A switch whose effect waits for the current sentence to finish is not an off switch. He
@@ -1311,7 +1311,7 @@
     // Do NOT claim to be listening until audio is actually arriving. Between tapping and the
     // first frames there is socket setup plus the mic's own warm-up, and a page that says
     // "Listening" during that window invites you to start talking into a gap — which is very
-    // likely why JJ's first utterance after a reload came back garbled.
+    // likely why the owner's first utterance after a reload came back garbled.
     phase = "warming";
     applyOrb();
     const framesAtStart = diag.framesSent;
@@ -1386,10 +1386,10 @@
   }
 
   // --- staying connected ----------------------------------------------------
-  // Android suspends a backgrounded tab, so the socket dies whenever the phone locks or JJ
+  // Android suspends a backgrounded tab, so the socket dies whenever the phone locks or the owner
   // switches apps. The MICROPHONE genuinely cannot record in the background — that is a platform
   // rule, not something to work around — but needing a manual page refresh to get the session
-  // back is entirely self-inflicted. JJ, live 2026-08-01: "whenever I switch screens or lock my
+  // back is entirely self-inflicted. Live, 2026-08-01: "whenever I switch screens or lock my
   // phone for just up to a minute, it disconnects and I have to refresh."
   let reconnectTimer = null, reconnectDelay = 0, reconnecting = false;
   const RECONNECT_MIN = 500, RECONNECT_MAX = 8000;
@@ -1398,7 +1398,7 @@
     if (reconnecting) return;
     // Deliberately NOT gated on `running`. The page connects on load now, so the socket can drop
     // before the first tap — and when this was gated, that drop produced silence: no reconnect
-    // attempt and no message. JJ, live 2026-08-01: "the server or the UI did not show me when it
+    // attempt and no message. Live, 2026-08-01: "the server or the UI did not show me when it
     // was disconnected. And I tried speaking and the transcription didn't work."
     //
     // A retry loop that hides the disconnection is worse than no retry loop, because at least a
@@ -1491,7 +1491,7 @@
         // Silence is ambiguous. Naming the state is what separates "it did not hear me" from
         // "it heard me and is working" from "it is holding back so as not to cut me off".
         // Name the operation, do not soften it. "Hearing you" was a friendlier word for
-        // transcribing and it cost precision — JJ, live: "it's not clear, hearing you, we should
+        // transcribing and it cost precision — Live: "it's not clear, hearing you, we should
         // say transcribing." He is watching a machine work; the label should say which machine.
         // The names themselves live in ORB_LABELS, next to the reducer that uses them.
         //
@@ -1580,7 +1580,7 @@
       if (!isCue) {
         // Clearing the flag returns the orb to whatever the model actually says — muted, closed,
         // still thinking. Hard-coding "Listening" here is what used to un-label the mute after
-        // every reply. JJ, live 2026-08-03: "whenever I mute, it says muted. But if you speak
+        // every reply. Live, 2026-08-03: "whenever I mute, it says muted. But if you speak
         // after that, it goes back to listening."
         playing = false;
         applyOrb();
@@ -1633,7 +1633,7 @@
   $orb.addEventListener("click", orbTapped);
 
   // Connect on load, before any tap. The socket needs no permission and no gesture — only the
-  // microphone does — so making the page arrive already connected costs nothing and is what JJ
+  // microphone does — so making the page arrive already connected costs nothing and is what the owner
   // already believed was happening. It also means the transcript, cues and replies work the
   // moment the page opens, and the first tap has one job instead of three.
   (async () => {

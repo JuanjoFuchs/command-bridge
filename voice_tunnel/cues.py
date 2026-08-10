@@ -1,6 +1,6 @@
 """voice_tunnel.cues — short non-speech sounds that make the agent's state audible.
 
-JJ's original 2026-06-18 capture asked for "sounds for whenever it is typing, running stuff", and
+The owner's original 2026-06-18 capture asked for "sounds for whenever it is typing, running stuff", and
 the reason resurfaced on 2026-07-31: a pause feels dangerous because silence is ambiguous. You
 cannot tell *listening* from *thinking* from *about to talk over me*, and the on-screen state
 only helps someone already looking at the page — which defeats a hands-free, eyes-free tool.

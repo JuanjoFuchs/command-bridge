@@ -1,6 +1,6 @@
 """voice_tunnel.turndetect — did he actually finish, or is he still thinking?
 
-**The problem this replaces.** `END_OF_UTTERANCE_MS` is 1500. It was raised from 1000 after JJ was
+**The problem this replaces.** `END_OF_UTTERANCE_MS` is 1500. It was raised from 1000 after the owner was
 cut off mid-thought, and it is a permanent compromise: short enough still interrupts someone
 composing out loud, long enough makes every short question wait a second and a half for nothing.
 **No single number fixes both, because the right wait depends on whether the sentence sounded

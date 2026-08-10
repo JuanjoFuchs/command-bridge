@@ -161,7 +161,7 @@ def test_asr_imports_no_model_at_module_scope():
 
 
 # --- barge-in: only HIS voice may stop a reply ---------------------------------
-# JJ, 2026-08-06: "barge in but only for my voice." The gate asks "is this a person and not the
+# Reported 2026-08-06: "barge in but only for my voice." The gate asks "is this a person and not the
 # agent" rather than "is this definitely him", because those need very different amounts of audio
 # — see config.BARGE_IN_THRESHOLD for the measured scores.
 

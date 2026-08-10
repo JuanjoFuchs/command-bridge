@@ -176,7 +176,7 @@ class WakeGate:
         **The turns that fell out were the short ones, and that is not a coincidence.** A one- or
         two-word follow-up is too short for the embedder to score confidently, so it cannot pass
         the voice gate either, and it landed as `not-addressed` in the middle of a conversation
-        already in progress. Reported live by JJ, 2026-08-07: "I have said a few things to you
+        already in progress. Reported live by Reported 2026-08-07: "I have said a few things to you
         directing myself to you, but I see they're being categorized as [not addressed]" — his
         "But", "Yeah, yeah", "Just one thing" and "That's my taste" all went unheard between
         turns that were heard.
@@ -193,7 +193,7 @@ class WakeGate:
         """Return `(addressed, text_for_the_agent)`.
 
         **The text is returned exactly as spoken — the wake phrase is never removed.**
-        JJ, 2026-08-07: "when I initially said hey clot [Claude], you removed that hay clot
+        Reported 2026-08-07: "when I initially said hey clot [Claude], you removed that hay clot
         from the transcription. I think we should stop doing that. It's fine that it's a wake
         word or two words, but we shouldn't remove it."
 
@@ -208,7 +208,7 @@ class WakeGate:
         `now` is when this utterance STARTED and `ended` when it finished, both on one monotonic
         clock. The distinction is load-bearing: measuring the conversation window to the *end*
         of an utterance means a long monologue looks like a long silence, and the speaker gets
-        dropped out of the conversation for talking too much. Reported live by JJ, 2026-07-29:
+        dropped out of the conversation for talking too much. Reported live by Reported 2026-07-29:
         a ~60 s continuous turn came back `addressed: false` while he was still mid-flow.
         The gap that matters is silence between turns — previous end to this start.
         """

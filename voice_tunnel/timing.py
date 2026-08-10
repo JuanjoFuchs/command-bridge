@@ -2,7 +2,7 @@
 
 **Why this exists.** Twice in one live session the answer to "why is this slow" had to be
 reconstructed by hand, from clip IDs and log wall-clocks, after the fact. Both times the guess
-was wrong in the same direction: JJ blamed the network, and the network was under a tenth of a
+was wrong in the same direction: the owner blamed the network, and the network was under a tenth of a
 second — the tool spent ~2 s and the AGENT spent 39 s and 60 s. A stopwatch in someone's head is
 not an instrument, and a conversation is exactly the kind of thing you cannot re-run to measure.
 
@@ -51,7 +51,7 @@ STAGES = (
 
 `consumed` -> `say_requested` is the gap that mattered most and was invisible: it is the agent
 thinking, and it dwarfed everything the tool does. Naming it as a stage is the point — a
-breakdown that only measures the tool would have confirmed JJ's wrong hypothesis instead of
+breakdown that only measures the tool would have confirmed the owner's wrong hypothesis instead of
 correcting it."""
 
 

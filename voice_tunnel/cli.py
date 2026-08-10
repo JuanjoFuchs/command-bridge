@@ -97,7 +97,7 @@ DESCRIBE: dict[str, Any] = {
     # 2026-08-07/08, always the same shape: reply to the user in prose, end the turn, and the
     # person on the phone is talking to nobody.
     #
-    # JJ, 2026-08-08: "hint, or in the next actions, say to the harness that it should do a cron
+    # Reported 2026-08-08: "hint, or in the next actions, say to the harness that it should do a cron
     # job." He is right that it belongs here rather than in an agent's memory.
     #
     # THE ORDER IS THE BUG: write prose BEFORE the watch call, never after. A turn whose last
@@ -111,7 +111,7 @@ DESCRIBE: dict[str, Any] = {
         # NAMED GENERICALLY, with per-harness recipes underneath. "Cron job" is Claude Code's
         # word for it; another harness calls the same thing a scheduled prompt, a reminder, or a
         # notification, and an instruction that only makes sense in one harness is an instruction
-        # most readers will skip. JJ, 2026-08-08: "maybe we should call it cron job for Claude and
+        # most readers will skip. Reported 2026-08-08: "maybe we should call it cron job for Claude and
         # notification for every other harness."
         "what_it_is": "Any mechanism your harness has for re-entering a prompt on a schedule — a "
                       "cron job, a scheduled prompt, a reminder, a timer, a notification. The "
@@ -545,7 +545,7 @@ def _next_action(turns, live: dict[str, Any] | None,
                  session: str = "dev", cursor: int | None = None) -> str:
     """What the agent should do RIGHT NOW, given the state this call just observed.
 
-    JJ, live 2026-08-03: *"let's not only encode this in describe. I think on every command, for
+    Live, 2026-08-03: *"let's not only encode this in describe. I think on every command, for
     example in watch, whenever verbose is on, we should include a next attribute that... tells the
     agent that it should acknowledge and respond."*
 
@@ -558,7 +558,7 @@ def _next_action(turns, live: dict[str, Any] | None,
     Ordered by urgency: a fact he is waiting on beats a habit he prefers.
 
     **EVERY BRANCH ENDS IN A COMMAND THAT CAN BE RUN VERBATIM**, session and cursor already
-    substituted. JJ, 2026-08-07: *"the command instructions that we give it should include
+    substituted. Reported 2026-08-07: *"the command instructions that we give it should include
     parameters. For example, the watch should include the cursor that it should listen from,
     right? Because we know now."*
 
@@ -573,13 +573,13 @@ def _next_action(turns, live: dict[str, Any] | None,
         else f"`voice-tunnel watch --session {session} --since <cursor>`"
     # EVERY branch starts with an imperative verb. Shortening these into noun fragments made them
     # read as labels rather than orders — "back to `voice-tunnel watch`" states a destination and commands
-    # nothing. JJ, live 2026-08-03: "I just want to make sure that you're including verbs in the
+    # nothing. Live, 2026-08-03: "I just want to make sure that you're including verbs in the
     # next actions... I would like to avoid any confusion."
     # NOTHING HERE EVER SAYS "STOP WATCHING", and that is the correction that matters.
     #
     # Three of these branches used to end in "stop watching" — for a dropped page, a closed
     # channel, and (via the muted branch, in practice) a muted microphone. Following them cost
-    # four abandonments in one session on 2026-08-07. JJ: "the fact that the guide said that when
+    # four abandonments in one session on 2026-08-07. The owner: "the fact that the guide said that when
     # muted we should stop watching doesn't make any sense. Because how else would you know when
     # I am muted? In fact we should keep watching."
     #
@@ -609,7 +609,7 @@ def _next_action(turns, live: dict[str, Any] | None,
     if turns:
         # CONVERSATIONAL vs HEADS-DOWN. Verbose off is NOT silent mode — going quiet on your own
         # initiative is how he ends up asking whether you are still there. The order-then-confirm
-        # handshake is what makes a long silence acceptable. JJ, live 2026-08-03: "you wait for me
+        # handshake is what makes a long silence acceptable. Live, 2026-08-03: "you wait for me
         # to explicitly give you an order... you confirm and say what you are going to do and that
         # you will come back once everything is done."
         mode = (f"say what you will do via `voice-tunnel say --session {session} --now \"…\"` "
@@ -623,7 +623,7 @@ def _next_action(turns, live: dict[str, Any] | None,
 # The facts a watch must wake up for, beyond a turn landing. Each is a button he presses, and
 # each one used to be invisible until the agent happened to ask.
 #
-# JJ, 2026-08-07: "let's make sure that whenever I mute or unmute, that resolves the watch so that
+# Reported 2026-08-07: "let's make sure that whenever I mute or unmute, that resolves the watch so that
 # you immediately get notified whenever that button was pressed, similar to the verbose mode."
 #
 # WHY THESE FOUR: they are the complete set of ways the conversation can become impossible or
@@ -636,7 +636,7 @@ CONTROL_FACTS = ("muted", "channel_open", "capturing", "clients", "verbose")
 # How long a watch waits before handing back an empty heartbeat, when nothing at all has
 # happened for a while.
 #
-# JJ, 2026-08-08: "whenever I take longer you also stop watching... we need to design the watch
+# Reported 2026-08-08: "whenever I take longer you also stop watching... we need to design the watch
 # timeouts with a back off period, an exponential backoff, so that whenever I stop talking for
 # quite a while and you're still watching you stop wasting turns in silence, and whenever I hit
 # the orb to turn off the conversation you back off even more."
@@ -656,7 +656,7 @@ WATCH_BACKOFF_MAX_S = 540.0
 
 This was briefly capped at nine minutes, to stay under Claude Code's 10-minute maximum tool
 timeout: a longer wait gets moved to the BACKGROUND, which ends the agent's turn. That was an
-over-correction, and JJ caught it — "you shouldn't be waiting 9 minutes always, it should be
+over-correction, and the owner caught it — "you shouldn't be waiting 9 minutes always, it should be
 getting longer exponentially."
 
 **Backgrounding is only fatal without a watchdog, and the contract now requires one.** A
@@ -812,7 +812,7 @@ def cmd_watch(args) -> dict[str, Any]:
                 _watch_closed(args.session)
                 return payload
     if turns:
-        # Delivering the turns IS the acknowledgement — JJ, 2026-07-31: "the moment you receive
+        # Delivering the turns IS the acknowledgement — Reported 2026-07-31: "the moment you receive
         # that new transcription in your context window, that is the acknowledgement."
         #
         # Reporting it here rather than making the agent call `consumed` removes a round trip
@@ -830,7 +830,7 @@ def cmd_watch(args) -> dict[str, Any]:
         except Exception:
             ack = {}
         # Surface the verbose toggle on every watch rather than making the agent poll for it.
-        # JJ flips it from the page mid-conversation; a preference the agent only notices if it
+        # The owner flips it from the page mid-conversation; a preference the agent only notices if it
         # remembers to ask is a preference that silently stops being honoured.
         result = {"turns": turns, "cursor": cursor, "count": len(turns)}
         live = ack if isinstance(ack, dict) and ack.get("verbose") is not None else None
@@ -851,7 +851,7 @@ def cmd_watch(args) -> dict[str, Any]:
 
     # An EMPTY watch is the moment the agent is about to wait again, and it is exactly where
     # "nobody is actually listening" costs the most — so say so here rather than leaving it to be
-    # discovered by a person wondering why nothing happened. JJ, live 2026-08-03: "I just
+    # discovered by a person wondering why nothing happened. Live, 2026-08-03: "I just
     # refreshed the UI and I didn't hit tap to start, you should have a way to be aware of that."
     result = {"turns": turns, "cursor": cursor, "count": len(turns)}
     live = _request(args.session, "/status")
@@ -939,7 +939,7 @@ def cmd_rate(args) -> dict[str, Any]:
     PERSISTS BY DEFAULT, which is the whole point. These are preferences tuned by ear over a live
     conversation ("you speak too slowly", "that list ran together"), and before this they lived
     only in the running server: every restart threw away the value that was actually right and
-    JJ had to find it again. `--no-save` is there for a one-off experiment.
+    The owner had to find it again. `--no-save` is there for a one-off experiment.
 
     Writes the file FIRST, then applies live. That order matters — with no server running the
     persist still has to succeed, because "set it now, start the tunnel next" is a normal thing
@@ -1554,7 +1554,7 @@ def build_parser() -> argparse.ArgumentParser:
     vpp.add_argument("--forget", default=None, metavar="NAME",
                      help="delete a learned voice")
     vpp.add_argument("--learn-from", default=None, metavar="WAV_OR_DIR",
-                     help="bootstrap from existing recordings (e.g. meeting-copilot sessions)")
+                     help="bootstrap from existing recordings you already have")
     vpp.add_argument("--owner", default=None,
                      help="name to learn under (default: VOICE_TUNNEL_OWNER)")
     vpp.add_argument("--channel", type=int, default=0,

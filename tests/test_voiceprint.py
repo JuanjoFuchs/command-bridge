@@ -102,7 +102,7 @@ def test_another_speaker_never_addresses_however_confident():
 def test_a_confident_stranger_loses_the_conversation_window():
     """The one case where identity may withhold attention, and only this one.
 
-    Found live 2026-08-07: JJ's son spoke inside JJ's 30 s window and it logged as an
+    Found live 2026-08-07: another person spoke inside the owner's 30 s window and it logged as an
     addressed turn. The window is an INFERENCE — that whoever is speaking now is whoever spoke a
     moment ago — and a confident stranger is direct evidence that the inference is wrong.
     """

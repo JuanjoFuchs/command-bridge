@@ -322,7 +322,7 @@ def run(headed: bool, keep: bool) -> int:
         # --- clips queue rather than race ----------------------------------------
         # The defect this guards: a single `pendingClip` variable meant a cue arriving between a
         # reply's header and its bytes OVERWROTE the reply, and two surviving clips played
-        # simultaneously. JJ heard it on the move — "those two play together, overlapping
+        # simultaneously. The owner heard it on the move — "those two play together, overlapping
         # one on top of the other" — after asking the same question three times unanswered.
         print("\n== clips queue, never overlap ==")
         before = page.evaluate("() => window.__voiceTunnel.played.length")
@@ -339,11 +339,11 @@ def run(headed: bool, keep: bool) -> int:
               json.dumps(played_ids))
         # Every clip must have reported playback. Under the old code an overwritten reply never
         # sent a `played` receipt at all, which is exactly how the server kept believing it had
-        # spoken when JJ had heard nothing.
+        # spoken when the owner had heard nothing.
         check(all(i for i in played_ids), "every queued clip acknowledged playback")
 
         # --- the orb is the microphone control -----------------------------------
-        # One control, not two. JJ, live: "it doesn't make sense that it's a separate button from
+        # One control, not two. Live: "it doesn't make sense that it's a separate button from
         # the middle orb... Maybe I can tap it again to mute and unmute."
         print("\n== orb mutes, verbose switch ==")
         check(page.locator("#mute").count() == 0,
@@ -396,7 +396,7 @@ def run(headed: bool, keep: bool) -> int:
 
         # Speaking while muted must NOT silently un-label the mute. The old code hard-coded the
         # orb back to "Listening" when a clip finished, so every reply left him looking at a
-        # listening orb over a microphone that was off. JJ, live 2026-08-03: "whenever I mute, it
+        # listening orb over a microphone that was off. Live, 2026-08-03: "whenever I mute, it
         # says muted. But if you speak after that, it goes back to listening."
         spoke = page.evaluate("() => window.__voiceTunnel.played.length")
         http_json(f"http://127.0.0.1:{port}/say?token={token}",

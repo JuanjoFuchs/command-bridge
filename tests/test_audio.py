@@ -241,7 +241,7 @@ def _noise(n, level, seed=7):
 
 
 def test_a_turn_still_closes_over_room_noise():
-    """Regression (JJ, live 2026-07-31): with the AC running, ambient noise sat above the fixed
+    """Regression (Live, 2026-07-31): with the AC running, ambient noise sat above the fixed
     silence floor, trailing silence never accumulated, the utterance never ended, and he had to
     MUTE HIS MICROPHONE to get a turn to close.
     """
@@ -278,7 +278,7 @@ def test_speech_is_still_detected_in_a_noisy_room():
 
 
 def test_a_quiet_moment_does_not_latch_the_floor_low_forever():
-    """THE regression for the 63.7-second turn (JJ, live 2026-07-31).
+    """THE regression for the 63.7-second turn (Live, 2026-07-31).
 
     A min-tracker snapped DOWN to the quietest window ever seen. After one near-silent moment the
     AC sat ~24x above that latched floor and read as speech indefinitely, so the turn only closed

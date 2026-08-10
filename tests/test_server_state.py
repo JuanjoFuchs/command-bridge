@@ -4,7 +4,7 @@ Regression for a defect found live on 2026-08-07. `_on_control` ran
 `_set_agent_state(state, "idle" if state.muted else state.agent_state)` on every mute toggle, so
 muting while the agent was mid-thought overwrote what it was doing with "idle" — the orb dropped
 from Thinking to Listening and the elapsed-seconds counter vanished, while the agent carried on
-working. JJ: "the thinking status had the timer, and then the counter disappeared while it was in
+working. The owner: "the thinking status had the timer, and then the counter disappeared while it was in
 thinking status."
 
 The browser half is covered in scripts/orbstate.py. This is the half that can be checked without

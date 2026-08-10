@@ -234,7 +234,7 @@ def test_every_allowed_pause_yields_a_whole_number_of_samples(resident):
     old form was `int(rate * pause * 2)` — a BYTE count, odd for 0.7 and 0.85 at 22050 Hz.
 
     The default 0.5 happens to be even, which is exactly why this survived: every automated
-    check and every live session used a value that worked. JJ found it by asking for a longer
+    check and every live session used a value that worked. The owner found it by asking for a longer
     pause and hearing static — twice, because the first time I diagnosed it while still speaking
     through it.
 
