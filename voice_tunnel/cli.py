@@ -321,7 +321,10 @@ DESCRIBE: dict[str, Any] = {
                              "(default parakeet)",
                      "--list": "show what is available and what is installed, fetch nothing",
                      "--force": "re-download even if present"},
-            "returns": {"path": "where it landed", "already_present": "bool", "bytes": "int"},
+            # `bytes_fetched`, not `bytes`: 0 used to read as "this file is empty/corrupt" when
+            # it meant "nothing was downloaded because it is already here".
+            "returns": {"path": "where it landed", "already_present": "bool",
+                        "bytes_fetched": "int — 0 when already_present, not a file size"},
             "notes": "Models are NOT shipped with the package — a Parakeet checkpoint is ~600 MB "
                      "and a voice is 60-120 MB. A fresh install transcribes with whisper and "
                      "speaks in the system voice until you fetch better ones. The three worth "
@@ -1489,12 +1492,26 @@ def cmd_doctor(_args) -> dict[str, Any]:
         binary = config.piper_bin()
         engine_ok = resident or bool(binary)
         how = "resident (in-process)" if resident else f"spawning {binary}" if binary else "none"
+
+        # SPAWNING IS A FALLBACK TOO, and it hid behind a passing check until a cold-start audit
+        # caught it: `status` stayed "ok" while `detail` quietly changed from spawning to
+        # resident, a difference this codebase measures at 7-26x on synthesis alone. Degraded is
+        # for exactly this — it runs, and it is not what you want.
+        spawning = engine_ok and not resident
+        remedy = ""
+        if not engine_ok:
+            remedy = ("`pip install voice-tunnel[piper]` for the engine, then "
+                      "`voice-tunnel download voice` for a voice")
+        elif not voice:
+            remedy = "`voice-tunnel download voice` — the engine is here but no voice is installed"
+        elif spawning:
+            remedy = ("`pip install voice-tunnel[piper]` — spawning piper.exe per reply costs "
+                      "~3.5s of process startup that the in-process voice does not")
         checks.append(_check(
             "tts", engine_ok and bool(voice),
             f"piper via {how}, voice={voice or '(none installed)'}",
-            ("`pip install voice-tunnel[piper]` for the engine, then `voice-tunnel download "
-             "voice` for a voice" if not engine_ok else
-             "`voice-tunnel download voice` — the engine is here but no voice is installed"),
+            remedy,
+            degraded=(spawning and bool(voice)),
         ))
     elif backend == "sapi":
         # SAPI IS THE ZERO-INSTALL FALLBACK, NOT A DESTINATION. It works, which is why this used
@@ -1552,17 +1569,27 @@ def cmd_doctor(_args) -> dict[str, Any]:
     # as an advisory rather than a red check, because a doctor that cries wolf about optional
     # things trains people to ignore it.
     from . import download as _dl
+
+    # ALWAYS EMITTED, present or not. This check used to appear only when the model was MISSING,
+    # so installing it made the line disappear — and a check that vanishes reads as a check that
+    # was never there. A cold-start audit had to confirm the voiceprint independently, through
+    # `download --list`, because `doctor` had gone silent about it at exactly the moment it
+    # started working. Absence of a warning is not evidence of readiness.
     vp_file = os.path.join(config.models_dir(), _dl.VOICEPRINT_MODEL["file"])
     if not _dl._looks_like_a_model(vp_file):
-        # The remedy now goes in `remedy`, where a parser looks. It used to live in `detail`
-        # because `_check` discarded remedies on passing checks — the workaround that made every
-        # `remedy` field in this command null.
-        checks.append(_check(
-            "voiceprint", True,
-            "not installed, so the wake phrase is always required every single turn",
-            "`voice-tunnel setup`, or `voice-tunnel download voiceprint` on its own",
-            degraded=True,
-        ))
+        vp_detail = "not installed, so the wake phrase is always required every single turn"
+        vp_remedy = "`voice-tunnel setup`, or `voice-tunnel download voiceprint` on its own"
+    elif not config.have_module("sherpa_onnx"):
+        vp_detail = "model present but sherpa-onnx is not, so it cannot load"
+        vp_remedy = "`pip install voice-tunnel[parakeet]`, or `voice-tunnel setup`"
+    else:
+        from . import voiceprint as _vp
+        enrolled = len(_vp.known())
+        vp_detail = (f"ready — {enrolled} voice(s) enrolled" if enrolled else
+                     "ready, but no voice is enrolled yet; enrolment happens automatically from "
+                     "wake-confirmed turns, so the phrase is still required until then")
+        vp_remedy = ""
+    checks.append(_check("voiceprint", True, vp_detail, vp_remedy, degraded=bool(vp_remedy)))
 
     # Also an advisory, and for the same reason as the voiceprint: without it the tunnel uses the
     # fixed end-of-utterance timer it has always used. Absent is a worse experience, never a
@@ -1624,6 +1651,22 @@ def cmd_doctor(_args) -> dict[str, Any]:
         "models_dir": config.models_dir(),
         "session_dir": config.session_dir(),
         "source_checkout": config._in_source_checkout(),
+        # WHICH OF THOSE PATHS OTHER COPIES OF THIS TOOL ALSO USE. Sharing models is deliberate —
+        # a Parakeet checkpoint is ~600 MB and re-downloading it per install is worse than the
+        # confusion. Sharing SETTINGS is how a wake name set by one agent turned up already
+        # applied inside another copy's supposedly isolated environment, which is the split-brain
+        # failure in miniature. Naming them is the difference between a design and a trap.
+        "shared": [
+            name for name, shared in (
+                ("settings_file", not config.home_dir()
+                 and not os.environ.get("VOICE_TUNNEL_ENV_FILE")
+                 and not config._in_source_checkout()),
+                ("models_dir", not config.home_dir()
+                 and not os.environ.get("VOICE_TUNNEL_MODELS_DIR")
+                 and not config._in_source_checkout()),
+            ) if shared
+        ],
+        "isolate_with": "VOICE_TUNNEL_HOME=<dir> scopes settings, models and sessions together",
     }
 
     out = {"ok": not failed, "checks": checks, "failed": failed,

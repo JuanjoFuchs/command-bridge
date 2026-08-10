@@ -518,9 +518,28 @@ def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
 
 
+def home_dir() -> str:
+    """One root that scopes EVERYTHING: settings, models, and turn logs.
+
+    `VOICE_TUNNEL_DIR` scopes only the session directory, which reads like isolation and is not.
+    A cold-start audit on 2026-08-10 set it, believed the environment was pristine, and found
+    `VOICE_TUNNEL_WAKE_NAME=codex` already applied — leaked from a different installation through
+    the machine-wide settings file, which that variable never covered.
+
+    That is the split-brain failure in miniature: two copies of the tool sharing state neither one
+    mentions. `VOICE_TUNNEL_HOME` is the switch that actually means "keep this copy to itself",
+    and the individual variables still win over it so a single override stays possible.
+    """
+    return _env("VOICE_TUNNEL_HOME")
+
+
 def session_dir() -> str:
     """Where turn logs and voiceprints live. Repo-local in a checkout, per-user when installed."""
-    return _env("VOICE_TUNNEL_DIR") or _default_path("sessions")
+    explicit = _env("VOICE_TUNNEL_DIR")
+    if explicit:
+        return explicit
+    home = home_dir()
+    return os.path.join(home, "sessions") if home else _default_path("sessions")
 
 
 def verbose_default() -> bool:
@@ -551,8 +570,18 @@ def owner_name() -> str:
 
 def models_dir() -> str:
     """Where downloaded models live (Piper voices, Parakeet). Never vendored — a Parakeet
-    checkpoint is ~600 MB, which belongs in a cache the user owns, not in a wheel."""
-    return _env("VOICE_TUNNEL_MODELS_DIR") or _default_path("models")
+    checkpoint is ~600 MB, which belongs in a cache the user owns, not in a wheel.
+
+    SHARED ACROSS INSTALLATIONS by default, and that is deliberate: re-downloading 600 MB per copy
+    of the tool would be worse than the confusion it can cause. `VOICE_TUNNEL_HOME` scopes it when
+    isolation matters more than disk, and `doctor` names it under `runtime.shared` so nobody has
+    to discover the sharing by being surprised.
+    """
+    explicit = _env("VOICE_TUNNEL_MODELS_DIR")
+    if explicit:
+        return explicit
+    home = home_dir()
+    return os.path.join(home, "models") if home else _default_path("models")
 
 
 def parakeet_dir() -> str:
@@ -793,8 +822,17 @@ def env_file_path() -> str:
 
     VOICE_TUNNEL_ENV_FILE exists so tests can point somewhere disposable — a suite that reads the
     developer's real settings is not a suite, it's a mood.
+
+    THE INSTALLED PATH IS SHARED BY EVERY INSTALLED COPY, which is how a wake name set by one
+    agent turned up pre-applied in another copy's supposedly fresh environment. Preferences
+    following the user is the intent; it stops being the intent when two tools disagree about
+    whose preferences they are. `VOICE_TUNNEL_HOME` scopes this too.
     """
-    return _env("VOICE_TUNNEL_ENV_FILE") or env_file_default()
+    explicit = _env("VOICE_TUNNEL_ENV_FILE")
+    if explicit:
+        return explicit
+    home = home_dir()
+    return os.path.join(home, ".env") if home else env_file_default()
 
 
 def parse_env_text(text: str) -> dict:

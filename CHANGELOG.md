@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.2 — 2026-08-10
+
+Three things a cold-start audit found while confirming 0.2.1's fix. Each is a variant of the same
+mistake: reporting a state as fine when it is merely functional.
+
+### Added
+
+- **`VOICE_TUNNEL_HOME`** — one root that scopes settings, models and turn logs together.
+  `VOICE_TUNNEL_DIR` only ever scoped the session directory, which reads like isolation and is
+  not: an audit set it, believed its environment was pristine, and found a wake name already
+  applied that had leaked from a different installation through the machine-wide settings file.
+  Individual variables still win, so isolating everything while sharing one 600 MB model cache
+  remains possible.
+- **`doctor` reports `runtime.shared`** — which paths other copies of the tool also use. Sharing
+  models is deliberate; discovering it by surprise is not.
+
+### Fixed
+
+- **Piper spawning per reply is now reported as degraded.** It passed silently while `detail`
+  quietly changed between `spawning piper.exe` and `resident (in-process)` — a difference this
+  codebase measures at 7–26× on synthesis alone. A fallback hiding behind a pass is exactly what
+  `degraded` exists to end.
+- **The voiceprint check no longer disappears when it starts working.** It only appeared when the
+  model was *missing*, so installing it removed the line, and readiness had to be confirmed
+  through a different command. It now reports either way, including how many voices are enrolled.
+- **`bytes` became `bytes_fetched` in download results.** `0` read as "this file is empty or
+  corrupt" when it meant "nothing was downloaded, it is already here".
+
 ## 0.2.1 — 2026-08-10
 
 Turn detection did not work in 0.2.0 outside a source checkout, and the tool's own advice for

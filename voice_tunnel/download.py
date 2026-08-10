@@ -158,7 +158,7 @@ def download_voice(name: str, force: bool = False, on_progress=None) -> dict:
     meta = os.path.join(models, f"{name}.onnx.json")
 
     if voice_installed(name) and not force:
-        return {"voice": name, "path": onnx, "already_present": True, "bytes": 0}
+        return {"voice": name, "path": onnx, "already_present": True, "bytes_fetched": 0}
 
     onnx_url, json_url = piper_voice_urls(name)
     written = _fetch(onnx_url, onnx, on_progress)
@@ -173,7 +173,7 @@ def download_voice(name: str, force: bool = False, on_progress=None) -> dict:
     except Exception as exc:
         raise RuntimeError(f"{name}.onnx.json is not valid JSON: {exc}") from exc
 
-    return {"voice": name, "path": onnx, "already_present": False, "bytes": written}
+    return {"voice": name, "path": onnx, "already_present": False, "bytes_fetched": written}
 
 
 def _safe_extract(archive: str, dest: str) -> None:
@@ -207,7 +207,7 @@ def download_asr(which: str = "parakeet", force: bool = False, on_progress=None)
     target = os.path.join(models, spec["dir"])
 
     if os.path.isdir(target) and os.listdir(target) and not force:
-        return {"asr": which, "path": target, "already_present": True, "bytes": 0}
+        return {"asr": which, "path": target, "already_present": True, "bytes_fetched": 0}
 
     os.makedirs(models, exist_ok=True)
     staging = tempfile.mkdtemp(dir=models, prefix=".unpack-")
@@ -224,7 +224,7 @@ def download_asr(which: str = "parakeet", force: bool = False, on_progress=None)
         if os.path.isdir(target):
             shutil.rmtree(target)
         shutil.move(root, target)
-        return {"asr": which, "path": target, "already_present": False, "bytes": written}
+        return {"asr": which, "path": target, "already_present": False, "bytes_fetched": written}
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -234,25 +234,25 @@ def download_voiceprint(force: bool = False, on_progress=None) -> dict:
     dest = os.path.join(config.models_dir(), VOICEPRINT_MODEL["file"])
     if _looks_like_a_model(dest) and not force:
         return {"voiceprint": VOICEPRINT_MODEL["file"], "path": dest,
-                "already_present": True, "bytes": 0}
+                "already_present": True, "bytes_fetched": 0}
     written = _fetch(VOICEPRINT_MODEL["url"], dest, on_progress)
     if not _looks_like_a_model(dest):
         os.unlink(dest)
         raise RuntimeError("voiceprint model downloaded but is too small — removed")
     return {"voiceprint": VOICEPRINT_MODEL["file"], "path": dest,
-            "already_present": False, "bytes": written}
+            "already_present": False, "bytes_fetched": written}
 
 
 def download_turn(force: bool = False, on_progress=None) -> dict:
     """Fetch the turn-detection model — the escape from a fixed end-of-utterance timeout."""
     dest = os.path.join(config.models_dir(), TURN_MODEL["file"])
     if _looks_like_a_model(dest) and not force:
-        return {"turn": TURN_MODEL["file"], "path": dest, "already_present": True, "bytes": 0}
+        return {"turn": TURN_MODEL["file"], "path": dest, "already_present": True, "bytes_fetched": 0}
     written = _fetch(TURN_MODEL["url"], dest, on_progress)
     if not _looks_like_a_model(dest):
         os.unlink(dest)
         raise RuntimeError("turn model downloaded but is too small — removed")
-    return {"turn": TURN_MODEL["file"], "path": dest, "already_present": False, "bytes": written}
+    return {"turn": TURN_MODEL["file"], "path": dest, "already_present": False, "bytes_fetched": written}
 
 
 def catalog() -> dict[str, Any]:
