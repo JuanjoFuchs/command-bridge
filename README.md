@@ -11,14 +11,54 @@
 **Talk to your coding agent from your phone.** One command opens a page any phone browser can
 load — no app, no App Store — and carries audio both ways.
 
+## Watch it work
+
+https://github.com/user-attachments/assets/a5be07a0-b1dc-446d-919f-c9351a583a2f
+
+A real session, phone in hand: *"can you hear me"*, then shipping a release end to end. **The
+`skipped Ns` badges are the agent thinking** — that time is real and this cut discloses it rather
+than editing it out. The tunnel's own half of the round trip is about a second.
+
+## Quick start
+
 ```bash
-pipx install voice-tunnel
-voice-tunnel serve --wake claude
+npm install -g @juanjofuchs/voice-tunnel
+voice-tunnel setup                     # engines + models, one command
+voice-tunnel serve --wake claude       # use YOUR agent's name
 ```
 
 Open the printed URL on your phone, tap once, and say *"hey Claude, what's the status?"*
 
+The npm package is a launcher, not a bundle: **it needs Python 3.10+ on PATH** and builds a
+private environment inside itself, touching nothing else on your machine. If you would rather
+skip that layer, `pipx install voice-tunnel` is the same tool with one fewer wrapper, and
+[WinGet](#winget-windows-no-python-needed) needs nothing installed at all.
+
 Everything runs on your machine. **No GPU. No account. No speech API.**
+
+## Driving this from an agent
+
+Point it at `describe` before anything else:
+
+```bash
+voice-tunnel describe     # the whole contract, as JSON
+```
+
+That one call is the entire onboarding — no MCP server, no daemon, no separate documentation to
+keep in sync. It returns the loop to run, the turn schema, every command and argument, the exit
+codes, and the two rules an agent gets wrong first: **`watch` blocks**, so an agent not sitting in
+it has left you talking to nobody; and **one thought arrives as several turns**, so answering the
+first one answers the wrong question. Every command also returns a `next` field telling the agent
+what to do at the moment it applies, rather than in a document it read once.
+
+`describe` is generated from the same source as the behaviour, so it cannot drift from the tool
+the way a README can. When something is wrong, `voice-tunnel doctor` says what and hands back the
+command that fixes it — read its `degraded` list even when `ok` is true, because a machine can
+have a neural voice and a fast recognizer sitting on disk while this process uses neither.
+
+The wedge is borrowed from [agent-mail][am].
+
+[am]: https://github.com/JuanjoFuchs/agent-mail-cli
 
 ## What this is
 
@@ -26,42 +66,45 @@ The tool holds no model and makes no decisions. It turns your speech into lines 
 into speech; the agent that started it does the thinking. That is why it works with **any** agent
 — Claude Code, Codex and Grok have each driven it unchanged.
 
-```
-Phone browser (no install)
-   |  HTTPS
-   v
-voice-tunnel serve  ── the dumb half ──────────────────────────────┐
-   mic  -> wake gate -> speech recognition -> a line in a log      │
-   spkr <- speech synthesis <- text handed to `voice-tunnel say`   │
-                                                                   v
-                                       The agent that started it (the smart half)
-                                       watch --since <cursor> -> reason -> say
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/JuanjoFuchs/voice-tunnel/main/docs/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/JuanjoFuchs/voice-tunnel/main/docs/architecture-light.svg">
+  <img alt="One spoken turn. You speak into a phone browser; voice-tunnel runs a wake gate and speech recognition and writes a line to a log; your agent reads that line with watch --since, reasons, and calls say; voice-tunnel synthesizes the reply and you hear it. Everything runs on your machine." src="https://raw.githubusercontent.com/JuanjoFuchs/voice-tunnel/main/docs/architecture-light.svg">
+</picture>
+
+The cursor is what makes the split safe. `watch --since <cursor>` blocks until a turn lands and
+returns everything after the cursor, so nothing you said is dropped while the agent spends thirty
+seconds thinking about the last thing.
 
 ## Install
 
-### pipx (recommended)
+### npm
+
+```bash
+npm install -g @juanjofuchs/voice-tunnel
+voice-tunnel setup
+```
+
+Needs Python 3.10+ on PATH. The postinstall builds a private virtualenv inside the package and
+installs the matching PyPI release into it — your global Python environment is never modified, and
+`npm uninstall` removes all of it. A failed postinstall is not fatal: it reports what is missing
+and the launcher repeats the guidance when you actually run the tool.
+
+### pipx
 
 ```bash
 pipx install voice-tunnel
-voice-tunnel doctor
+voice-tunnel setup
 ```
+
+The canonical artifact — this is a Python package, and pipx installs it isolated without the npm
+layer in between.
 
 ### pip
 
 ```bash
 pip install voice-tunnel
 ```
-
-### npm
-
-```bash
-npm install -g @juanjofuchs/voice-tunnel
-```
-
-The npm package is a launcher, not a bundle — **it needs Python 3.10+ on PATH** and builds a
-private environment inside itself on install. `pip install voice-tunnel` does the same thing with
-one less layer.
 
 ### WinGet (Windows, no Python needed)
 
@@ -74,11 +117,10 @@ is unsigned, and Defender's heuristic dislikes unsigned Python bundles.
 
 ### Better voice and better recognition
 
-The default install works immediately using your system voice and `whisper base.en`. Both are
-upgradeable, and the upgrades are worth it:
+`voice-tunnel setup` does all of this in one command. The pieces, if you want them individually:
 
 ```bash
-pip install voice-tunnel[all]      # or [piper] / [parakeet] individually
+pip install voice-tunnel[all]      # or [piper] / [parakeet]
 
 voice-tunnel download asr          # Parakeet — 8x faster than whisper, more accurate
 voice-tunnel download voice        # a neural voice instead of the robotic one
@@ -86,6 +128,10 @@ voice-tunnel download voiceprint   # learns your voice, so the wake phrase becom
 voice-tunnel download turn         # ends your turn when you SOUND finished, not on a timer
 voice-tunnel download --list       # what is available, what you already have
 ```
+
+Two independent things are involved and having one does not get you the other: the **extras**
+supply the engines, the **downloads** supply the models. `voice-tunnel doctor` says which of them
+this process is actually using, which is not always the best one present.
 
 Models are downloaded, never bundled — a Parakeet checkpoint is 631 MB and would make the package
 unusable on a slow connection.
@@ -115,10 +161,6 @@ voice-tunnel say   --session dev "All green." # speaks back
 voice-tunnel watch --session dev --since 7    # always resume from the cursor you were given
 ```
 
-`voice-tunnel describe` prints the full contract as JSON. **Point your agent at that** — it is
-written to be read by a machine, and it carries the rules that matter, including the one an agent
-gets wrong first: `watch` blocks, so an agent not sitting in it has left you talking to nobody.
-
 ### Saying its name
 
 The summons is a greeting plus a name: *"hey claude"*, *"hi codex"*, *"ok grok"*. **The greeting
@@ -138,8 +180,8 @@ to agree before a reply is cut off, so the television, someone else in the room,
 own voice coming back through your speakers all leave it talking.
 
 That last one is not a corner case. Without echo cancellation a reply leaks into the microphone on
-almost any device, and "the agent interrupts itself" is the default failure. Measured here: his
-voice scores 0.23 against a 0.15 threshold, the agent's own voice scores **0.000**.
+almost any device, and "the agent interrupts itself" is the default failure. Measured here: the
+owner's voice scores 0.23 against a 0.15 threshold, the agent's own voice scores **0.000**.
 
 Needs `voice-tunnel download voiceprint` and a voice it has learned. Without one it stays quiet
 rather than guessing, because a tunnel that stops whenever the room makes a noise is worse than
@@ -202,18 +244,6 @@ voice-tunnel timing                # where the time actually went, per exchange
 Precedence is **process env > settings file > built-in default**. `.env.example` documents every
 variable.
 
-## For agents
-
-```bash
-voice-tunnel describe
-```
-
-That is the product wedge, borrowed from [agent-mail][am]: an agent runs it, reads the JSON, and
-learns the whole contract without MCP setup, a daemon, or separate documentation. Every command
-also returns a `next` field telling the agent what to do at the moment it applies.
-
-[am]: https://github.com/JuanjoFuchs/agent-mail-cli
-
 ## Development
 
 ```bash
@@ -224,13 +254,15 @@ venv/Scripts/python -m pytest tests/ -q     # unit tests, no mic and no model
 venv/Scripts/python scripts/e2e.py          # the pipeline, through a real browser
 venv/Scripts/python scripts/layout.py       # page geometry, at five viewports
 venv/Scripts/python scripts/channel.py      # the orb, mute and the speaking signal
+venv/Scripts/python scripts/diagram.py      # regenerate the diagram above, both themes
 ```
 
 | Path | What |
 |---|---|
 | `voice_tunnel/` | store, asr, wake, tts, voiceprint, security, server, cli, config |
 | `voice_tunnel/web/index.html` | the phone client, self-contained, no build step |
-| `specs/` | 001 the tunnel · 002 packaging · 003 npm |
+| `docs/` | the README diagram, generated by `scripts/diagram.py` |
+| `specs/` | 001 the tunnel · 002 packaging · 003 npm · 004 turn detection |
 | `ai-docs/reference/` | security model, turn-log contract, browser constraints |
 
 ## License
