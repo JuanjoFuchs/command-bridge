@@ -105,9 +105,10 @@ DESCRIBE: dict[str, Any] = {
     "watchdog": {
         "why": "Nothing in this CLI can force an agent back into `watch` once it has stopped. A "
                "scheduled prompt in your harness can. Register one before your first watch.",
-        "how": "A recurring job, about once a minute, whose prompt is: 'if you are reading this "
-               "you are NOT in a blocking `voice-tunnel watch` — get the cursor from `status` "
-               "(turns_logged - 1) and re-arm, as the LAST tool call of the turn.'",
+        "how": "A recurring job, about once a minute. Use the ready-made text in `prompt` below "
+               "rather than paraphrasing it — every line of it was written after a live failure, "
+               "including the cursor rule, which is subtler than it looks: take the LOWER of "
+               "`last_turn_id` and `consumed_cursor`, never `turns_logged`.",
         # NAMED GENERICALLY, with per-harness recipes underneath. "Cron job" is Claude Code's
         # word for it; another harness calls the same thing a scheduled prompt, a reminder, or a
         # notification, and an instruction that only makes sense in one harness is an instruction
@@ -148,7 +149,11 @@ DESCRIBE: dict[str, Any] = {
         "prompt": None,     # filled in per-session by cmd_describe
     },
     "the_loop": [
-        "REGISTER A WATCHDOG FIRST — see `watchdog` above. Without it, nothing brings you back.",
+        "voice-tunnel doctor                         # <- BEFORE ANYTHING. Read `degraded` and",
+        "                                            #    `runtime`, not just `ok`.",
+        "voice-tunnel setup                          # only if `degraded` is non-empty; it is the",
+        "                                            #    one command that fixes every fallback.",
+        "REGISTER A WATCHDOG — see `watchdog` above. Without it, nothing brings you back.",
         "voice-tunnel serve --session <s>            # start it (long-running; run detached)",
         "voice-tunnel watch --session <s> --since -1 # <- IMMEDIATELY. BLOCKS until a turn lands.",
         "  -> drain: re-watch from the cursor until count == 0",
@@ -161,11 +166,36 @@ DESCRIBE: dict[str, Any] = {
         "describe": {"args": [], "returns": "this document"},
         "doctor": {
             "args": [],
-            "returns": {"ok": "bool", "checks": "[{name, ok, detail, remedy}]",
-                        "failed": "[name, ...]"},
-            "notes": "Preflight. Every failing check carries the command that fixes it. "
-                     "Run this FIRST when anything behaves oddly — it is cheaper than reading "
-                     "code and it exits 1 when something is actually wrong.",
+            "returns": {"ok": "bool — can it run at all",
+                        "checks": "[{name, ok, status, detail, remedy}] — status is "
+                                  "ok | degraded | failed",
+                        "failed": "[name, ...] — genuinely broken",
+                        "degraded": "[name, ...] — RUNS, BUT ON A FALLBACK. Read this even when "
+                                    "ok is true; it is the field that says you are about to hold "
+                                    "a conversation through a robotic system voice.",
+                        "runtime": "{version, executable, package, settings_file, models_dir, "
+                                   "session_dir, source_checkout} — WHICH installation is "
+                                   "answering. Compare it against the one you meant to use.",
+                        "next": "what to do about all of the above, in one line"},
+            "notes": "Preflight, and the FIRST thing to run. `ok: true` does not mean configured "
+                     "— check `degraded`. A machine can have a neural voice and a fast "
+                     "recognizer sitting on disk while this process uses neither, and that has "
+                     "happened: half a live session spent on fallbacks nobody chose. Every "
+                     "non-ok check carries a `remedy` you can run verbatim.",
+        },
+        "setup": {
+            "args": {"--engines-only": "pip install the extras, skip the downloads",
+                     "--models-only": "download the models, skip the pip install"},
+            "returns": {"ok": "bool", "steps": "[{step, ok, ran, detail}]",
+                        "failed": "[step, ...]", "next": "str"},
+            "notes": "ONE COMMAND TO MAKE A FRESH INSTALL FULLY CAPABLE. Installs "
+                     "`voice-tunnel[all]` into THIS interpreter and downloads all four assets: a "
+                     "neural voice, the fast recognizer, the voiceprint, and the turn model. "
+                     "Idempotent — anything already present is left alone, so it is safe to run "
+                     "when unsure. Two independent axes are involved and getting one right does "
+                     "not get the other: the PYTHON EXTRAS supply the engines, the DOWNLOADS "
+                     "supply the models, and having a model without its engine is a real state "
+                     "this has produced in practice.",
         },
         "config": {
             "args": {
@@ -1274,8 +1304,108 @@ def cmd_config(args) -> dict[str, Any]:
     raise ValueError(f"unknown config subcommand {args.config_cmd!r}")
 
 
-def _check(name: str, ok: bool, detail: str, remedy: str = "") -> dict[str, Any]:
-    return {"name": name, "ok": ok, "detail": detail, "remedy": (remedy if not ok else None)}
+def _check(name: str, ok: bool, detail: str, remedy: str = "",
+           degraded: bool = False) -> dict[str, Any]:
+    """One check, in one of THREE states — and the third one is the point.
+
+    `ok`/`failed` alone cannot say "this runs, but not the way this machine is provisioned", and
+    that gap cost a whole session on 2026-08-10: a fresh install answered `ok: true, failed: []`
+    while running SAPI and Whisper on a machine that owned a Piper voice, Parakeet, a voiceprint
+    and a turn model. The agent reading that JSON was right to proceed, and everything it did for
+    the next half hour was wasted.
+
+    DEGRADED means: this will work, and it is not what you want. It keeps `ok` true so anything
+    treating this as a go/no-go gate still passes, and it carries a REMEDY — which a passing
+    check used to discard. The old code stuffed fix commands into `detail` for exactly that
+    reason and left `remedy` null on every line, so a machine parsing the field it was told to
+    parse found nothing to do.
+    """
+    status = "failed" if not ok else ("degraded" if degraded else "ok")
+    return {
+        "name": name,
+        "ok": ok,
+        "status": status,
+        "detail": detail,
+        # Kept whenever there is something to do, which now includes a check that passed.
+        "remedy": (remedy or None) if status != "ok" else None,
+    }
+
+
+def cmd_setup(args) -> dict[str, Any]:
+    """Install the optional engines and download every model, in one command.
+
+    **This exists because `doctor` knew all four fixes and the user still had to assemble them.**
+    On 2026-08-10 an agent installed the package, read a clean bill of health, and ran a live
+    conversation on a robotic system voice for half an hour — while the neural voice, the fast
+    recognizer, the voiceprint and the turn model were each one command away. `doctor` even named
+    two of those commands, in prose, on checks it had marked as passing.
+
+    A list of four things to do is a list with four chances to do three of them. There are two
+    independent axes here and getting one right does not get the other: PYTHON EXTRAS
+    (`voice-tunnel[all]`) supply the engines, MODEL DOWNLOADS supply the assets, and the failure
+    of exactly that distinction is what produced `piper (spawning per call — resident load failed:
+    the piper python package is not importable)` in that session, where the model had been fetched
+    and the package had not.
+
+    Installs into THIS interpreter deliberately — the one already running — because the whole
+    class of bug being fixed is a second runtime nobody meant to use.
+    """
+    import subprocess
+
+    steps: list[dict[str, Any]] = []
+    want_engines = not getattr(args, "models_only", False)
+    want_models = not getattr(args, "engines_only", False)
+
+    if want_engines:
+        missing = [m for m in ("piper", "sherpa_onnx") if not config.have_module(m)]
+        if missing:
+            cmd = [sys.executable, "-m", "pip", "install", "voice-tunnel[all]"]
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            steps.append({
+                "step": "engines",
+                "ran": " ".join(cmd),
+                "ok": proc.returncode == 0,
+                "detail": (f"installed into {sys.executable}" if proc.returncode == 0
+                           else (proc.stderr or proc.stdout)[-400:]),
+            })
+        else:
+            steps.append({"step": "engines", "ok": True, "ran": None,
+                          "detail": "piper and sherpa-onnx are already importable"})
+
+    if want_models:
+        from . import download as _dl
+
+        # Each downloader is already idempotent — it reports `cached` and fetches nothing when
+        # the asset is present — so `setup` is safe to re-run, which matters for a command whose
+        # entire job is "make this machine right" and which people will run when unsure.
+        #
+        # Listed one per line rather than looped over a table: `download_voice` takes a NAME and
+        # the others take none, and a table hides that difference behind a call that reads as
+        # uniform. `config.piper_voice()` returns a PATH and would be the wrong argument.
+        fetches = [
+            ("voice", lambda: _dl.download_voice(config.DEFAULT_PIPER_VOICE)),
+            ("asr", lambda: _dl.download_asr()),
+            ("voiceprint", lambda: _dl.download_voiceprint()),
+            ("turn", lambda: _dl.download_turn()),
+        ]
+        for name, fetch in fetches:
+            try:
+                steps.append({"step": name, "ok": True, "detail": fetch()})
+            except Exception as exc:
+                # One asset failing must not abandon the rest: a flaky download of the turn model
+                # should still leave a working voice behind.
+                steps.append({"step": name, "ok": False, "detail": f"{type(exc).__name__}: {exc}"})
+
+    failed = [s["step"] for s in steps if not s["ok"]]
+    return {
+        "ok": not failed,
+        "steps": steps,
+        "failed": failed,
+        "runtime": {"executable": sys.executable, "models_dir": config.models_dir()},
+        "next": ("run `voice-tunnel doctor` to confirm, then `voice-tunnel serve --session <s>`"
+                 if not failed else
+                 f"these did not complete: {', '.join(failed)} — see the detail on each"),
+    }
 
 
 def cmd_doctor(_args) -> dict[str, Any]:
@@ -1365,9 +1495,18 @@ def cmd_doctor(_args) -> dict[str, Any]:
              "`voice-tunnel download voice` — the engine is here but no voice is installed"),
         ))
     elif backend == "sapi":
+        # SAPI IS THE ZERO-INSTALL FALLBACK, NOT A DESTINATION. It works, which is why this used
+        # to report a clean pass — and a clean pass is what let a live session run for half an
+        # hour on a robotic system voice while a configured neural one sat on the same disk.
         checks.append(_check(
-            "tts", os.name == "nt", "sapi (Windows System.Speech)",
-            "sapi is Windows-only: `voice-tunnel config set VOICE_TUNNEL_TTS piper` or `voice-tunnel config set VOICE_TUNNEL_TTS none`",
+            "tts", os.name == "nt",
+            "sapi (Windows System.Speech) — the zero-install fallback, not a neural voice",
+            ("`voice-tunnel setup` installs Piper and downloads a voice; or "
+             "`pip install voice-tunnel[piper]` then `voice-tunnel download voice`")
+            if os.name == "nt" else
+            ("sapi is Windows-only: `voice-tunnel config set VOICE_TUNNEL_TTS piper` or "
+             "`voice-tunnel config set VOICE_TUNNEL_TTS none`"),
+            degraded=(os.name == "nt"),
         ))
     else:
         checks.append(_check("tts", backend == "none", f"backend={backend}",
@@ -1391,13 +1530,20 @@ def cmd_doctor(_args) -> dict[str, Any]:
             detail = "VOICE_TUNNEL_ASR=parakeet but no model directory was found"
             remedy = ("run `voice-tunnel download asr`, or fall back with "
                       "`voice-tunnel config set VOICE_TUNNEL_ASR whisper`")
+        asr_degraded = False
     else:
-        asr_ok, remedy = True, ""
-        detail = f"whisper model={config.whisper_model()}"
+        # Same shape as SAPI: whisper runs everywhere and is ~8x slower than the model this
+        # project actually recommends. A pass here is true and unhelpful.
+        asr_ok, asr_degraded = True, True
+        detail = f"whisper model={config.whisper_model()} — the fallback; parakeet is ~8x faster"
+        remedy = ("`voice-tunnel setup` installs sherpa-onnx and downloads parakeet; or "
+                  "`pip install voice-tunnel[parakeet]` then `voice-tunnel download asr`")
         if config.parakeet_dir() and not config.have_module("sherpa_onnx"):
-            detail += " — a parakeet model is on disk but unusable without "
-            detail += "`pip install voice-tunnel[parakeet]` (8x faster when installed)"
-    checks.append(_check("asr", asr_ok, detail, remedy))
+            detail = ("a parakeet model is on disk but unusable without sherpa-onnx "
+                      "(~8x faster once installed)")
+            remedy = ("`pip install voice-tunnel[parakeet]`, then "
+                      "`voice-tunnel config set VOICE_TUNNEL_ASR parakeet`")
+    checks.append(_check("asr", asr_ok, detail, remedy, degraded=asr_degraded))
 
     # Not a failure: the voiceprint is additive. A match can grant attention but never withhold
     # it, so its absence costs nothing except having to say the wake phrase every time. Reported
@@ -1406,13 +1552,14 @@ def cmd_doctor(_args) -> dict[str, Any]:
     from . import download as _dl
     vp_file = os.path.join(config.models_dir(), _dl.VOICEPRINT_MODEL["file"])
     if not _dl._looks_like_a_model(vp_file):
-        # The command goes in `detail`, not `remedy`: `_check` nulls the remedy on a passing
-        # check, which is right for a pass/fail gate and drops exactly what this advisory exists
-        # to carry.
+        # The remedy now goes in `remedy`, where a parser looks. It used to live in `detail`
+        # because `_check` discarded remedies on passing checks — the workaround that made every
+        # `remedy` field in this command null.
         checks.append(_check(
             "voiceprint", True,
-            "not installed, so the wake phrase is always required — optional, fix with "
-            "`voice-tunnel download voiceprint`",
+            "not installed, so the wake phrase is always required every single turn",
+            "`voice-tunnel setup`, or `voice-tunnel download voiceprint` on its own",
+            degraded=True,
         ))
 
     # Also an advisory, and for the same reason as the voiceprint: without it the tunnel uses the
@@ -1421,14 +1568,19 @@ def cmd_doctor(_args) -> dict[str, Any]:
     from . import turndetect as _td
     if not config.turn_detect_enabled():
         detail = "disabled by VOICE_TUNNEL_TURN_DETECT=0 — using the fixed silence timer"
+        turn_remedy = ""
     elif not _td.installed():
-        detail = (f"not installed — turns end on a fixed {config.END_OF_UTTERANCE_MS} ms silence. "
-                  f"`voice-tunnel download turn` lets it end when you actually finish")
+        detail = (f"not installed — turns end on a fixed {config.END_OF_UTTERANCE_MS} ms "
+                  f"silence instead of when you actually sound finished")
+        turn_remedy = "`voice-tunnel setup`, or `voice-tunnel download turn` on its own"
     elif not config.have_module("transformers"):
-        detail = "model present but transformers is not — `pip install voice-tunnel[parakeet]`"
+        detail = "model present but transformers is not"
+        turn_remedy = "`pip install voice-tunnel[parakeet]`"
     else:
         detail = f"smart-turn ready (threshold {config.turn_threshold()})"
-    checks.append(_check("turn_detection", True, detail))
+        turn_remedy = ""
+    checks.append(_check("turn_detection", True, detail, turn_remedy,
+                         degraded=bool(turn_remedy)))
 
     # Where `voice-tunnel` SHOULD be found differs by install: a checkout has shims in bin/ that
     # nothing puts on PATH for you, while pip already installed a console script beside the
@@ -1454,7 +1606,39 @@ def cmd_doctor(_args) -> dict[str, Any]:
     ))
 
     failed = [c["name"] for c in checks if not c["ok"]]
-    return {"ok": not failed, "checks": checks, "failed": failed}
+    degraded = [c["name"] for c in checks if c["status"] == "degraded"]
+
+    # RUNTIME IDENTITY, reported unconditionally. Every fact here was available on 2026-08-10 and
+    # none of it was assembled in one place, so a session ran for half an hour against a second
+    # installation nobody meant to use. Which interpreter, which settings file, which models
+    # directory, and whether this is a checkout or an installed copy — those four answer "am I
+    # even the runtime you provisioned?", which no individual check can ask.
+    runtime = {
+        "version": __version__,
+        "executable": sys.executable,
+        "package": os.path.dirname(os.path.abspath(__file__)),
+        "settings_file": env_path,
+        "settings_file_exists": os.path.exists(env_path),
+        "models_dir": config.models_dir(),
+        "session_dir": config.session_dir(),
+        "source_checkout": config._in_source_checkout(),
+    }
+
+    out = {"ok": not failed, "checks": checks, "failed": failed,
+           "degraded": degraded, "runtime": runtime}
+    if failed:
+        out["next"] = "fix the failed checks above — each carries its own remedy"
+    elif degraded:
+        # The line that would have ended the incident in one command.
+        out["next"] = (
+            f"RUNS, BUT NOT AS CONFIGURED — {', '.join(degraded)} are on fallbacks. "
+            f"`voice-tunnel setup` installs the optional engines and downloads every model. "
+            f"If this machine already has a provisioned checkout elsewhere, run from THAT "
+            f"instead: this process is {sys.executable}"
+        )
+    else:
+        out["next"] = "fully configured — `voice-tunnel serve --session <s>`, then watch"
+    return out
 
 
 def cmd_timing(args) -> dict[str, Any]:
@@ -1493,6 +1677,13 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--session", default="dev",
                    help="substituted into the ready-to-schedule watchdog prompt")
     sub.add_parser("doctor", help="preflight: what is missing, and the command that fixes it")
+
+    st = sub.add_parser(
+        "setup", help="install the optional engines and download every model, in one command")
+    st.add_argument("--engines-only", action="store_true",
+                    help="pip install the extras, skip the model downloads")
+    st.add_argument("--models-only", action="store_true",
+                    help="download the models, skip the pip install")
 
     cf = sub.add_parser("config", help="persisted settings, so env vars are not per-call")
     cfs = cf.add_subparsers(dest="config_cmd", required=True)
@@ -1622,6 +1813,7 @@ def main(argv=None) -> int:
     handlers = {
         "describe": cmd_describe,
         "doctor": cmd_doctor,
+        "setup": cmd_setup,
         "config": cmd_config,
         "serve": cmd_serve,
         "watch": cmd_watch,

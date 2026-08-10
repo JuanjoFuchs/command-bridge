@@ -175,7 +175,15 @@ def test_reading_the_log_of_an_idle_session_is_success_not_failure(capsys, tmp_s
 # ------------------------------------------------------------------- doctor
 
 
-def test_doctor_gives_every_failing_check_a_remedy(capsys, tmp_sessions):
+def test_doctor_gives_every_actionable_check_a_remedy(capsys, tmp_sessions):
+    """Anything not fully OK carries the command that fixes it — including a DEGRADED check.
+
+    This used to assert `ok => remedy is None`, which encoded the binary model that caused the
+    2026-08-10 incident: a fresh install answered `ok: true, failed: []` while running on the
+    system voice and the slow recognizer, so the fixes had to be smuggled into `detail` and the
+    field a parser reads was null on every line. Passing-but-degraded is now a state, and it is
+    the one state that most needs a remedy attached.
+    """
     code, payload, _ = run(["doctor"], capsys)
 
     assert code in (cli.EXIT_OK, cli.EXIT_ERROR)
@@ -184,9 +192,44 @@ def test_doctor_gives_every_failing_check_a_remedy(capsys, tmp_sessions):
         "shim_on_path",
     }
     for check in payload["checks"]:
-        # The whole point of the command: a failure without a remedy is a failure the caller
-        # has to go read source code to act on.
-        assert check["remedy"] if not check["ok"] else check["remedy"] is None
+        assert check["status"] in {"ok", "degraded", "failed"}
+        if check["status"] == "ok":
+            assert check["remedy"] is None, f"{check['name']} is fine; nothing to suggest"
+        else:
+            # A failure or a fallback without a remedy is one the caller has to go read source
+            # code to act on.
+            assert check["remedy"], f"{check['name']} is {check['status']} with no remedy"
+
+
+def test_doctor_reports_which_runtime_answered(capsys, tmp_sessions):
+    """The four facts that identify an installation, in one place.
+
+    Every one of these was individually available on 2026-08-10 and none was assembled, so half a
+    session ran against a second install nobody meant to use. No single check can ask "am I even
+    the runtime you provisioned?" — only the set can.
+    """
+    _, payload, _ = run(["doctor"], capsys)
+    runtime = payload["runtime"]
+    for key in ("version", "executable", "settings_file", "models_dir", "source_checkout"):
+        assert key in runtime, f"runtime identity is missing {key}"
+    assert payload["next"], "doctor must always say what to do next"
+
+
+def test_a_degraded_runtime_is_not_reported_as_simply_fine(capsys, tmp_sessions, monkeypatch):
+    """`ok: true` must not be the whole story when the tunnel is on fallbacks.
+
+    SAPI and Whisper both work, which is why they used to pass silently. Working is not the same
+    as being the setup someone configured, and the gap between those two is where the incident
+    lived.
+    """
+    monkeypatch.setenv("VOICE_TUNNEL_TTS", "sapi")
+    monkeypatch.setenv("VOICE_TUNNEL_ASR", "whisper")
+    _, payload, _ = run(["doctor"], capsys)
+
+    assert "asr" in payload["degraded"], "whisper is a fallback and should say so"
+    assert payload["next"], "a degraded runtime must carry a next step"
+    if payload["degraded"]:
+        assert "setup" in payload["next"], "the one-command fix should be named"
 
 
 def test_doctor_fails_when_a_check_fails(capsys, tmp_sessions, monkeypatch):
