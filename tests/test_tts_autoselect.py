@@ -107,7 +107,10 @@ def test_the_sapi_remedy_names_the_setting_when_setup_is_already_done(
     _, payload, _ = run(["doctor"], capsys)
     tts = next(c for c in payload["checks"] if c["name"] == "tts")
 
-    assert tts["status"] == "degraded"
+    # Windows degrades to sapi; everywhere else sapi does not exist at all, so it fails outright.
+    # Either way it is not ok, and either way the remedy must name the setting.
+    assert tts["status"] == ("degraded" if os.name == "nt" else "failed")
+    assert tts["status"] != "ok"
     assert "VOICE_TUNNEL_TTS piper" in tts["remedy"], (
         "with piper and a voice installed, the fix is the setting — not another setup run"
     )
@@ -122,6 +125,33 @@ def test_the_sapi_remedy_still_says_setup_on_a_bare_install(clean, tmp_sessions,
     tts = next(c for c in payload["checks"] if c["name"] == "tts")
     if os.name == "nt":
         assert "setup" in tts["remedy"]
+
+
+def test_next_names_setup_when_setup_is_what_fixes_it(clean, tmp_sessions, capsys):
+    """The failed branch of `next` used to send you to solve one at a time what one command fixes.
+
+    Found the hard way: CI ran red for five consecutive pushes across four releases on exactly
+    this, and it could not reproduce on the development machine, where nothing fails and only the
+    degraded branch — which had always named `setup` — ever runs. A runner with nothing installed
+    takes the other branch, and on Linux there is no SAPI at all, so `tts` is a hard failure
+    sitting next to a pile of remedies that all say the same word.
+
+    The platform is patched rather than the test skipped, because the platform this is developed
+    on is the one platform where the bug is invisible.
+    """
+    from voice_tunnel import cli
+
+    clean.setattr(config, "piper_voice", lambda: "")
+    clean.setattr(config, "have_module", lambda _n: False)
+    clean.setattr(cli, "_windows", lambda: False)
+
+    _, payload, _ = run(["doctor"], capsys)
+    assert payload["failed"], "a bare posix install must report failures, not just fallbacks"
+    assert "voice-tunnel setup" in payload["next"], (
+        "when several remedies are the same command, say the command"
+    )
+    for name in payload["degraded"]:
+        assert name in payload["next"], "a fallback must not be hidden by a failure"
 
 
 def test_describe_does_not_promise_setup_makes_an_install_complete(capsys, tmp_sessions):

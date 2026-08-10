@@ -1334,6 +1334,19 @@ def cmd_config(args) -> dict[str, Any]:
     raise ValueError(f"unknown config subcommand {args.config_cmd!r}")
 
 
+def _windows() -> bool:
+    """One seam for the platform test, so the non-Windows branches can be exercised on Windows.
+
+    Worth a function for a specific reason: CI ran red for five consecutive pushes across four
+    releases on a Linux-only path, and it was invisible here because SAPI exists on this machine
+    and so nothing in `doctor` ever failed. The obvious workaround — monkeypatching `os.name` to
+    `posix` — holds until the test fails, at which point pytest's own reporting instantiates a
+    `PosixPath`, cannot, and takes the entire run down with an INTERNALERROR. So the one branch
+    that only breaks elsewhere was also the one branch no local test could cover.
+    """
+    return os.name == "nt"
+
+
 def _check(name: str, ok: bool, detail: str, remedy: str = "",
            degraded: bool = False) -> dict[str, Any]:
     """One check, in one of THREE states — and the third one is the point.
@@ -1545,7 +1558,7 @@ def cmd_doctor(_args) -> dict[str, Any]:
         # to report a clean pass — and a clean pass is what let a live session run for half an
         # hour on a robotic system voice while a configured neural one sat on the same disk.
         checks.append(_check(
-            "tts", os.name == "nt",
+            "tts", _windows(),
             "sapi (Windows System.Speech) — the zero-install fallback, not a neural voice",
             # THE REMEDY HAS TO KNOW WHAT IS ALREADY DONE. This used to print "run setup" whether
             # or not setup had already run, so after a successful setup it advised a no-op while
@@ -1553,13 +1566,14 @@ def cmd_doctor(_args) -> dict[str, Any]:
             # An auditor had to infer the fix by analogy with the ASR remedy.
             ("`voice-tunnel config set VOICE_TUNNEL_TTS piper` — Piper and a voice are already "
              "installed; an explicit setting is pinning this to sapi"
-             if (config.piper_voice() and config.have_module("piper")) else
+             if (config.piper_voice() and config.have_module("piper"))
+             else
              "`voice-tunnel setup` installs Piper and downloads a voice; or "
              "`pip install voice-tunnel[piper]` then `voice-tunnel download voice`")
-            if os.name == "nt" else
+            if _windows() else
             ("sapi is Windows-only: `voice-tunnel config set VOICE_TUNNEL_TTS piper` or "
              "`voice-tunnel config set VOICE_TUNNEL_TTS none`"),
-            degraded=(os.name == "nt"),
+            degraded=_windows(),
         ))
     else:
         checks.append(_check("tts", backend == "none", f"backend={backend}",
@@ -1729,8 +1743,19 @@ def cmd_doctor(_args) -> dict[str, Any]:
 
     out = {"ok": not failed, "checks": checks, "failed": failed,
            "degraded": degraded, "runtime": runtime}
+    # WHICH OF THESE ONE COMMAND WOULD FIX, read off the remedies themselves rather than assumed.
+    # A bare install produces several non-ok checks whose remedies are all the same word, and
+    # "each carries its own remedy" sent people to solve them one at a time — which is the state
+    # `setup` was introduced to end. Derived from the remedy strings so it cannot drift away from
+    # what those remedies actually say.
+    covered = [c["name"] for c in checks
+               if c["status"] != "ok" and "voice-tunnel setup" in (c["remedy"] or "")]
     if failed:
         out["next"] = "fix the failed checks above — each carries its own remedy"
+        if covered:
+            out["next"] += (f"; `voice-tunnel setup` covers {', '.join(covered)} in one command")
+        if degraded:
+            out["next"] += f". Also running on a fallback: {', '.join(degraded)}"
     elif degraded:
         # The line that would have ended the incident in one command.
         out["next"] = (

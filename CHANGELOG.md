@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.4 — 2026-08-10
+
+### Fixed
+
+- **`doctor`'s next step names `setup` when `setup` is what fixes it.** With any check failing,
+  the advice was "fix the failed checks above — each carries its own remedy", and on a bare
+  install several of those remedies are the same single command. It now says which checks one
+  `setup` covers — read off the remedy strings themselves, so it cannot drift from what they
+  say — and no longer drops the list of fallbacks just because something else failed.
+
+  This was red in CI for five consecutive pushes across four releases and could not reproduce on
+  the machine it was written on: SAPI exists on Windows, so nothing failed here and only the
+  already-correct degraded branch ever ran. The platform test now goes through one function that a
+  test can replace.
+
 ## 0.2.3 — 2026-08-10
 
 A third cold-start audit — fresh virtualenv, published wheel, no context but `voice-tunnel
