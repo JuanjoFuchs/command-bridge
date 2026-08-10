@@ -188,7 +188,13 @@ DESCRIBE: dict[str, Any] = {
                      "--models-only": "download the models, skip the pip install"},
             "returns": {"ok": "bool", "steps": "[{step, ok, ran, detail}]",
                         "failed": "[step, ...]", "next": "str"},
-            "notes": "ONE COMMAND TO MAKE A FRESH INSTALL FULLY CAPABLE. Installs "
+            # "Fully capable" was an overclaim until 0.2.3: TTS did not auto-select Piper the way
+            # ASR auto-selects Parakeet, so `setup` could succeed on every step and still leave
+            # synthesis on the system voice. The engines now both upgrade themselves, and the
+            # claim is qualified rather than absolute — `doctor` is the thing that answers it.
+            "notes": "Makes a fresh install capable in one command, then CONFIRM WITH `doctor` "
+                     "— an explicit VOICE_TUNNEL_TTS or VOICE_TUNNEL_ASR still wins over what is "
+                     "installed, and only `doctor` can tell you that is happening. Installs "
                      "`voice-tunnel[all]` into THIS interpreter and downloads all four assets: a "
                      "neural voice, the fast recognizer, the voiceprint, and the turn model. "
                      "Idempotent — anything already present is left alone, so it is safe to run "
@@ -465,10 +471,31 @@ def _request(session: str, path: str, payload: dict[str, Any] | None = None) -> 
         with urllib.request.urlopen(req, timeout=120) as resp:
             return json.loads(resp.read().decode() or "{}")
     except urllib.error.HTTPError as exc:
+        # NEVER DISCARD THE BODY. This used to read the response, try to parse it, and on any
+        # surprise return a bare `HTTP 500` — throwing away the one sentence that said what went
+        # wrong. On 2026-08-10 a blocking `say` failed with exactly that, and `SAPI produced no
+        # audio` — which the server had sent — was lost, turning a one-line diagnosis into a
+        # twenty-five-minute hunt through source code.
+        #
+        # An error response can only be read ONCE, so it is read here before anything can fail,
+        # and kept whatever shape it turns out to have.
+        body = ""
         try:
-            return {"error": json.loads(exc.read().decode()).get("error"), "status": exc.code}
+            body = exc.read().decode("utf-8", errors="replace").strip()
         except Exception:
-            return {"error": f"HTTP {exc.code}", "status": exc.code}
+            pass
+        try:
+            parsed = json.loads(body or "{}")
+            if isinstance(parsed, dict) and parsed.get("error"):
+                return {**parsed, "status": exc.code}
+        except Exception:
+            pass
+        out: dict[str, Any] = {"error": f"HTTP {exc.code}", "status": exc.code}
+        if body:
+            # Truncated, because an HTML error page from a proxy is not worth 40 KB of context —
+            # but the first 500 characters of one still say which proxy and why.
+            out["body"] = body[:500]
+        return out
     except OSError as exc:
         # A runtime file exists but nothing answers: the server died and left its note behind.
         # Distinct code from `no_server` because the remedy is the same but the diagnosis is not.
@@ -1520,7 +1547,14 @@ def cmd_doctor(_args) -> dict[str, Any]:
         checks.append(_check(
             "tts", os.name == "nt",
             "sapi (Windows System.Speech) — the zero-install fallback, not a neural voice",
-            ("`voice-tunnel setup` installs Piper and downloads a voice; or "
+            # THE REMEDY HAS TO KNOW WHAT IS ALREADY DONE. This used to print "run setup" whether
+            # or not setup had already run, so after a successful setup it advised a no-op while
+            # the real remaining gap — an explicit VOICE_TUNNEL_TTS pinning sapi — went unnamed.
+            # An auditor had to infer the fix by analogy with the ASR remedy.
+            ("`voice-tunnel config set VOICE_TUNNEL_TTS piper` — Piper and a voice are already "
+             "installed; an explicit setting is pinning this to sapi"
+             if (config.piper_voice() and config.have_module("piper")) else
+             "`voice-tunnel setup` installs Piper and downloads a voice; or "
              "`pip install voice-tunnel[piper]` then `voice-tunnel download voice`")
             if os.name == "nt" else
             ("sapi is Windows-only: `voice-tunnel config set VOICE_TUNNEL_TTS piper` or "
@@ -1630,8 +1664,32 @@ def cmd_doctor(_args) -> dict[str, Any]:
             f"the directory to PATH, or install with `pipx install voice-tunnel` which does it "
             f"for you"
         )
+    # A SHIM ON PATH IS NOT NECESSARILY *THIS* SHIM, and reporting a clean pass for somebody
+    # else's install is how this whole class of bug keeps happening. A cold-start audit
+    # configured an isolated copy end to end and this check reported `ok` the entire time —
+    # naming a console script belonging to a different installation, still carrying another
+    # agent's wake name. Typing bare `voice-tunnel` afterwards would silently have run that one.
+    #
+    # Compared by directory rather than by path equality: pip's console script and the
+    # interpreter that owns it live side by side, and on Windows the case and the .EXE suffix
+    # both vary.
+    mine = False
+    if on_path:
+        expected = (os.path.join(config.ROOT, "bin") if config._in_source_checkout()
+                    else os.path.dirname(sys.executable))
+        mine = os.path.normcase(os.path.dirname(os.path.abspath(on_path))) == \
+            os.path.normcase(os.path.abspath(expected))
+    if on_path and not mine:
+        detail = (f"{on_path} — WHICH IS A DIFFERENT INSTALLATION than the one answering "
+                  f"({sys.executable}). Bare `voice-tunnel` will not run this copy.")
+        remedy = ("call this copy by absolute path, or put its directory first on PATH; "
+                  "`voice-tunnel doctor` from the bare command will show which one you get")
+    elif on_path:
+        detail = on_path
+    else:
+        detail = "`voice-tunnel` is not on PATH"
     checks.append(_check(
-        "shim_on_path", bool(on_path), on_path or "`voice-tunnel` is not on PATH", remedy,
+        "shim_on_path", bool(on_path), detail, remedy, degraded=(bool(on_path) and not mine),
     ))
 
     failed = [c["name"] for c in checks if not c["ok"]]
@@ -1676,7 +1734,8 @@ def cmd_doctor(_args) -> dict[str, Any]:
     elif degraded:
         # The line that would have ended the incident in one command.
         out["next"] = (
-            f"RUNS, BUT NOT AS CONFIGURED — {', '.join(degraded)} are on fallbacks. "
+            f"RUNS, BUT NOT AS CONFIGURED — "
+            f"{', '.join(degraded)} {'is' if len(degraded) == 1 else 'are'} on a fallback. "
             f"`voice-tunnel setup` installs the optional engines and downloads every model. "
             f"If this machine already has a provisioned checkout elsewhere, run from THAT "
             f"instead: this process is {sys.executable}"

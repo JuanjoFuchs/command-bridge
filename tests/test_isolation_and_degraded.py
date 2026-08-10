@@ -98,6 +98,55 @@ def test_the_voiceprint_check_is_always_present(capsys, tmp_sessions):
     assert "voiceprint" in names, "voiceprint must report either way, present or missing"
 
 
+def test_a_shim_belonging_to_another_install_is_not_a_clean_pass(capsys, tmp_sessions,
+                                                                 tmp_path, monkeypatch):
+    """`voice-tunnel` being on PATH says nothing about *which* voice-tunnel is on PATH.
+
+    A cold-start audit built an isolated copy, configured it end to end, and this check reported
+    `ok` throughout — naming a console script from a different installation that still carried
+    another agent's wake name. Every subsequent bare `voice-tunnel` would have run that one, which
+    is the same class of mistake as the incident the isolation work exists to prevent.
+    """
+    from tests.test_cli_surface import run
+
+    stranger = tmp_path / "somebody-else" / "Scripts"
+    stranger.mkdir(parents=True)
+    shim = stranger / "voice-tunnel.exe"
+    shim.write_text("", encoding="utf-8")
+    monkeypatch.setattr(config.shutil, "which",
+                        lambda name: str(shim) if name == "voice-tunnel" else None)
+    monkeypatch.setattr(config.sys, "executable", str(tmp_path / "mine" / "Scripts" / "python.exe"))
+    monkeypatch.setattr(config, "_in_source_checkout", lambda: False)
+
+    _, payload, _ = run(["doctor"], capsys)
+    check = next(c for c in payload["checks"] if c["name"] == "shim_on_path")
+
+    assert check["status"] == "degraded", "a stranger's shim on PATH is not a pass"
+    assert "somebody-else" in check["detail"] and "DIFFERENT" in check["detail"].upper()
+    assert check["remedy"], "and it must say how to reach this copy instead"
+
+
+def test_this_install_s_own_shim_is_a_clean_pass(capsys, tmp_sessions, tmp_path, monkeypatch):
+    """The other side of it — the check must not cry wolf on a correct install.
+
+    Compared by directory, because pip's console script and the interpreter that owns it are
+    siblings and on Windows the case and the `.EXE` suffix both vary.
+    """
+    from tests.test_cli_surface import run
+
+    scripts = tmp_path / "mine" / "Scripts"
+    scripts.mkdir(parents=True)
+    monkeypatch.setattr(config.shutil, "which",
+                        lambda name: str(scripts / "VOICE-TUNNEL.EXE") if name == "voice-tunnel"
+                        else None)
+    monkeypatch.setattr(config.sys, "executable", str(scripts / "python.exe"))
+    monkeypatch.setattr(config, "_in_source_checkout", lambda: False)
+
+    _, payload, _ = run(["doctor"], capsys)
+    check = next(c for c in payload["checks"] if c["name"] == "shim_on_path")
+    assert check["status"] == "ok", f"false alarm on a correct install: {check['detail']}"
+
+
 def test_downloads_say_bytes_fetched_not_bytes(tmp_path, monkeypatch):
     """`bytes: 0` read as 'this file is empty'; it meant 'nothing was downloaded'."""
     monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))

@@ -672,7 +672,30 @@ def asr_beam_size() -> int:
 
 
 def tts_backend() -> str:
-    return _env("VOICE_TUNNEL_TTS", "sapi").lower()
+    """`piper` when both a voice and an engine to play it are present, else `sapi`.
+
+    THE SAME RULE `asr_engine` HAS USED ALL ALONG, and the asymmetry between them was a real
+    defect. ASR upgraded itself the moment Parakeet was downloadable; TTS returned a hardcoded
+    "sapi" no matter what was installed. So `voice-tunnel setup` could install Piper, download a
+    neural voice, report `ok: true` on every step — and leave synthesis on the robotic system
+    voice, with `describe` still calling setup "one command to make a fresh install fully
+    capable". Found by a cold-start audit that had to infer `config set VOICE_TUNNEL_TTS piper`
+    by analogy with the ASR remedy, because nothing in the tool ever named it.
+
+    Both halves are required for the same reason they are in `asr_engine`: selecting on the voice
+    file alone would flip an install with no `piper` package onto a backend that cannot load,
+    moving the failure from the download to the first spoken word.
+
+    An explicit VOICE_TUNNEL_TTS still wins — naming a backend earns you its error rather than a
+    silent substitution — and `sapi` remains the answer when nothing better is installed.
+    """
+    forced = _env("VOICE_TUNNEL_TTS").lower()
+    if forced:
+        return forced
+    usable = piper_voice() and (
+        (piper_inprocess() and have_module("piper")) or bool(piper_bin())
+    )
+    return "piper" if usable else "sapi"
 
 
 def extra_allow_cidrs() -> tuple[str, ...]:
@@ -716,14 +739,26 @@ def piper_voices() -> list:
 def piper_bin() -> str:
     """Path to the piper executable, or "" if it cannot be found.
 
-    Order: explicit env > the repo venv > PATH. The venv comes before PATH because piper is a
-    pip package here (`venv/Scripts/piper.exe`), and a globally-installed piper of a different
-    version would otherwise silently win over the one this checkout's requirements pinned.
+    Order: explicit env > THIS interpreter's own scripts dir > the repo venv > PATH.
+
+    The running interpreter comes first because `pip install voice-tunnel[piper]` puts
+    `piper.exe` beside it, and that is by definition the copy this process's packages were
+    installed with. It used to be missing from this list entirely, so a fully isolated
+    installation still resolved a `piper.exe` belonging to some other Python on PATH — a
+    cross-installation dependency inside a copy that had gone to the trouble of isolating
+    everything else. Harmless only while the in-process path is preferred, which is not a
+    guarantee worth resting on.
+
+    PATH stays last for the original reason: a globally-installed piper of a different version
+    should never silently beat the one installed alongside this package.
     """
     explicit = _env("VOICE_TUNNEL_PIPER_BIN")
     if explicit:
         return explicit
+    here = os.path.dirname(sys.executable)
     for candidate in (
+        os.path.join(here, "piper.exe"),                      # this interpreter, Windows
+        os.path.join(here, "piper"),                          # this interpreter, POSIX
         os.path.join(ROOT, "venv", "Scripts", "piper.exe"),   # Windows venv layout
         os.path.join(ROOT, "venv", "bin", "piper"),           # POSIX venv layout
     ):

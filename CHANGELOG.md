@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.2.3 — 2026-08-10
+
+A third cold-start audit — fresh virtualenv, published wheel, no context but `voice-tunnel
+describe` — reached a working install and ended up on the system voice anyway. Nothing had
+failed; the tool simply never used what it had just installed.
+
+### Fixed
+
+- **A complete Piper install now selects itself.** `tts_backend()` returned a hardcoded `sapi`
+  unless `VOICE_TUNNEL_TTS` was exported by hand, while `asr_engine()` had always upgraded itself
+  the moment its model appeared. So `setup` could install the engine, download a neural voice,
+  report success on every step, and leave synthesis robotic — with the only fix being a setting no
+  output ever named. An explicit `VOICE_TUNNEL_TTS` still wins.
+- **The `sapi` remedy reads what is already installed.** It advised "run setup" whether or not
+  setup had run, so after a successful one it recommended a no-op and the actual remaining gap
+  went unnamed. With Piper and a voice present it now names `config set VOICE_TUNNEL_TTS piper`.
+- **`piper.exe` beside the running interpreter wins over every other copy.** That is by
+  definition the one this process's packages were installed with; it was missing from the search
+  order entirely, so a fully isolated installation still resolved a binary belonging to some other
+  Python on PATH.
+- **`shim_on_path` no longer passes for somebody else's install.** `voice-tunnel` being on PATH
+  says nothing about *which* voice-tunnel is on PATH — the audit's isolated copy reported `ok` the
+  whole time while naming a console script from a different installation, still carrying another
+  agent's wake name. A mismatch is now `degraded` and says so in full.
+- **A failing `say` reports what the server said.** The client read the error body, failed to find
+  the JSON shape it expected, and discarded it — so `SAPI produced no audio` arrived as a bare
+  `HTTP 500`. An unparseable body is now kept (truncated), which is the only clue there is.
+
+### Added
+
+- **`status` reports `errors` per subsystem.** One `last_error` slot had twelve writers, so an
+  optional subsystem nobody had asked about could overwrite the failure being actively
+  investigated. Both views are exposed; `last_error` still means most-recent.
+
+### Removed
+
+- **`describe` no longer calls `setup` "one command to make a fresh install fully capable".**
+  It installs engines and downloads models; whether the result got *used* depended on a setting it
+  never touched, which made the claim false in exactly the case it was written for.
+
 ## 0.2.2 — 2026-08-10
 
 Three things a cold-start audit found while confirming 0.2.1's fix. Each is a variant of the same

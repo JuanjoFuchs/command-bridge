@@ -220,8 +220,34 @@ def test_the_piper_binary_is_found_in_the_repo_venv(tmp_path, monkeypatch):
     scripts.mkdir(parents=True)
     (scripts / "piper.exe").write_text("", encoding="utf-8")
     monkeypatch.setattr(config, "ROOT", str(fake_root))
+    # The running interpreter is searched first now, so point it somewhere empty to isolate the
+    # behaviour this test is actually about.
+    monkeypatch.setattr(config.sys, "executable", str(tmp_path / "nowhere" / "python.exe"))
 
     assert config.piper_bin() == str(scripts / "piper.exe")
+
+
+def test_this_interpreter_s_piper_beats_the_repo_venv(tmp_path, monkeypatch):
+    """`pip install voice-tunnel[piper]` puts piper.exe beside the interpreter that installed it.
+
+    That copy is by definition the one this process's packages were installed with, and it used
+    to lose to a checkout path and then to PATH. A cold-start audit built a fully isolated
+    installation and found it still resolving a `piper.exe` belonging to a different Python —
+    a cross-installation dependency inside a copy that had isolated everything else.
+    """
+    monkeypatch.delenv("VOICE_TUNNEL_PIPER_BIN", raising=False)
+    mine = tmp_path / "myenv" / "Scripts"
+    mine.mkdir(parents=True)
+    (mine / "piper.exe").write_text("", encoding="utf-8")
+
+    other = tmp_path / "repo" / "venv" / "Scripts"
+    other.mkdir(parents=True)
+    (other / "piper.exe").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(config, "ROOT", str(tmp_path / "repo"))
+    monkeypatch.setattr(config.sys, "executable", str(mine / "python.exe"))
+
+    assert config.piper_bin() == str(mine / "piper.exe")
 
 
 def test_an_explicit_piper_binary_wins_over_discovery(tmp_path, monkeypatch):

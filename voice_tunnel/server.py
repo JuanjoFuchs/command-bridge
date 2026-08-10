@@ -57,6 +57,19 @@ class TunnelState:
         self.samples_received = 0
         self.last_played: str | None = None
         self.last_error: str | None = None
+        """The most recent error from ANY subsystem. Kept for compatibility, and it is the field
+        that misleads: see `errors` below."""
+
+        self.errors: dict[str, str] = {}
+        """The most recent error PER SUBSYSTEM — tts, asr, voiceprint, transport, client, turn.
+
+        Twelve places write `last_error` and they share one slot, so the last one to fail wins.
+        On 2026-08-10 that meant a `voiceprint: No module named 'sherpa_onnx'` — an optional
+        subsystem nobody was asking about — sat in the field while the TTS failure being actively
+        diagnosed had already been overwritten. The person debugging was reading a true statement
+        about the wrong component.
+
+        Keyed by subsystem so an unrelated failure can never hide the one you are chasing."""
         self.client_sr: int = config.TARGET_SR
         self.consumed_cursor: int = -1
         self.agent_state: str = "idle"
@@ -210,6 +223,21 @@ class TunnelState:
             finally:
                 self._wav = None
 
+    def fail(self, subsystem: str, message: str) -> None:
+        """Record a failure against the subsystem it came from, and as the most recent overall.
+
+        Both, deliberately. `last_error` stays for anything already reading it, and `errors[...]`
+        is what survives a later failure elsewhere — which is the whole point. An optional
+        subsystem failing is not a reason to lose the error you were chasing.
+        """
+        text = str(message)[:300]
+        self.errors[subsystem] = text
+        self.last_error = text
+
+    def clear_error(self, subsystem: str) -> None:
+        """Drop a subsystem's error once it succeeds, so a stale one cannot be re-diagnosed."""
+        self.errors.pop(subsystem, None)
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "session": self.session,
@@ -236,6 +264,10 @@ class TunnelState:
             "speech_active": self.buffer.speech_active,
             "last_played": self.last_played,
             "last_error": self.last_error,
+            # Read THIS when diagnosing: `last_error` is whichever subsystem failed most
+            # recently, which is not the same question as "what is wrong with the thing I am
+            # debugging".
+            "errors": dict(self.errors),
             "verbose": self.verbose,
             "muted": self.muted,
             "capturing": self.capturing,
@@ -392,7 +424,10 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
             ),
         )
     except tts.TTSError as exc:
-        state.last_error = str(exc)
+        # `tts`, so that "SAPI produced no audio" survives a later voiceprint or capture error.
+        # It did not, on 2026-08-10, and the person debugging TTS spent twenty-five minutes
+        # reading an accurate message about an optional subsystem nobody had asked about.
+        state.fail("tts", str(exc))
         await _set_agent_state(state, "idle")
         raise
 
@@ -808,7 +843,7 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
                 state, {"type": "resumed", "delivered": delivered}
             )
     except Exception as exc:
-        state.last_error = f"flush undelivered failed: {exc}"
+        state.fail("transport", f"flush undelivered failed: {exc}")
 
     loop = asyncio.get_running_loop()
     try:
@@ -818,7 +853,7 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
             elif msg.type == WSMsgType.TEXT:
                 await _on_control(state, msg.data, ws)
             elif msg.type == WSMsgType.ERROR:
-                state.last_error = str(ws.exception())
+                state.fail("transport", str(ws.exception()))
                 break
     finally:
         state.clients.discard(ws)
@@ -830,7 +865,7 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
         try:
             await _flush(state, loop)
         except Exception as exc:
-            state.last_error = f"flush failed: {exc}"
+            state.fail("transport", f"flush failed: {exc}")
         state.close_capture()
     return ws
 
@@ -871,7 +906,7 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
             try:
                 await _flush(state, asyncio.get_running_loop())
             except Exception as exc:
-                state.last_error = f"flush on mute failed: {exc}"
+                state.fail("transport", f"flush on mute failed: {exc}")
         await _broadcast_json(state, {"type": "muted", "value": state.muted})
         # DELIBERATELY does not touch agent_state. It used to force "idle" while muted, which
         # made muting mid-thought overwrite what the agent was actually doing — the orb dropped
@@ -892,7 +927,12 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
             # listening again.
             delivered = await _flush_undelivered(state)
             if delivered:
-                state.last_error = None
+                # Clear only the TRANSPORT error this delivery disproves. Wiping `last_error`
+                # wholesale, as this used to, threw away an unrelated TTS or voiceprint failure
+                # that was still true — the mirror image of the bug where one subsystem's error
+                # buried another's.
+                state.clear_error("transport")
+                state.last_error = state.errors.get("tts") or None
         await _broadcast_json(state, {"type": "channel", "value": state.channel_open})
         # Same reason as mute above: closing the channel is HIS state, not the agent's, and
         # publishing it as agent_state destroys the agent's.
@@ -902,7 +942,7 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         # hold loop in `_speak`.
         state.user_speaking = bool(msg.get("value"))
     elif kind == "client_error":
-        state.last_error = f"client: {str(msg.get('message'))[:300]}"
+        state.fail("client", str(msg.get("message")))
 
 
 async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
@@ -938,7 +978,7 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
             None, state.embedder.embed, state.barge_buf[-need:]
         )
     except Exception as exc:                       # identity is a bonus; never break ingest
-        state.last_error = f"barge-in: {exc}"
+        state.fail("voiceprint", f"barge-in: {exc}")
         state.barge_buf = None
         return
     if emb is None:
@@ -970,7 +1010,7 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
     try:
         state.capture(samples)
     except Exception as exc:  # never let diagnostics break the session
-        state.last_error = f"capture: {exc}"
+        state.fail("capture", str(exc))
 
     await _maybe_barge(state, samples)
 
@@ -1009,7 +1049,7 @@ def _maybe_partial(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
                 state.partial_text = text
                 await _broadcast_json(state, {"type": "partial", "text": text})
         except Exception as exc:  # a preview failing must never break the session
-            state.last_error = f"partial: {exc}"
+            state.fail("asr", f"partial: {exc}")
         finally:
             state.partial_busy = False
 
@@ -1063,7 +1103,7 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
                     rec = voiceprint.enroll(config.owner_name(), emb)
                     state.voice_samples = int(rec.get("count", 0))
         except Exception as exc:      # identity is a bonus; never break a turn over it
-            state.last_error = f"voiceprint: {exc}"
+            state.fail("voiceprint", str(exc))
 
     addressed, reason = voiceprint.should_address(
         wake_said, speaker, similarity, owner=config.owner_name(),
