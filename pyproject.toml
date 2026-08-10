@@ -62,6 +62,9 @@ dev = [
     "build>=1.0.0",
     "playwright>=1.40",
     "pytest>=8.0",
+    # Reads .github/workflows/release.yml, so the gate keeping a red suite off PyPI is asserted
+    # rather than trusted. Without this the test skips, and a skipped gate is not a gate.
+    "pyyaml>=6.0",
     "ruff>=0.1.0",
     "twine>=4.0.0",
 ]

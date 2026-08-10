@@ -9,7 +9,30 @@ permissions:
   contents: read
 
 jobs:
+  # A TAG MUST NOT OUTRANK A RED SUITE. CI stayed red for five consecutive pushes across four
+  # releases and every one of them published anyway, because CI triggers on `push: branches` and
+  # this workflow triggers on `push: tags` — two independent runs, neither aware of the other, and
+  # nothing at all between a failing test and PyPI, which has no unpublish.
+  #
+  # Deliberately not a `workflow_run` dependency: that fires on completion of a BRANCH run, and a
+  # tag can be pushed at a commit whose branch run is still queued, or pushed on its own. Re-running
+  # the suite here costs about ninety seconds and cannot be raced.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: python -m ruff check voice_tunnel/ tests/ scripts/
+      - name: Test
+        run: python -m pytest tests/ -q
+
   build-packages:
+    needs: test
     runs-on: ubuntu-latest
     environment: release
     permissions:
