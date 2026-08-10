@@ -217,6 +217,18 @@ class TunnelState:
             "clients": len(self.clients),
             "frames_received": self.frames_received,
             "audio_seconds": round(self.samples_received / float(config.TARGET_SR), 2),
+            # THE CURSOR TO WATCH FROM. Read from the LOG, not from this process.
+            #
+            # `turns_logged` below counts turns THIS SERVER has written since it started, and a
+            # watchdog took it for the cursor: 26 against a real last id of 367, which would have
+            # replayed three hundred old turns as if they had just been spoken. The two are only
+            # equal on a server that has never restarted, which is the case every author tests in
+            # and no long-running session is ever in.
+            #
+            # Named for what it is and published beside its impostor, because the trap was never
+            # that the number was hard to find — it was that a plausible wrong one was closer to
+            # hand.
+            "last_turn_id": store.last_turn_id(self.session),
             "turns_logged": self.turns_logged,
             "consumed_cursor": self.consumed_cursor,
             "pending_turns": max(0, self.turns_logged - 1 - self.consumed_cursor),

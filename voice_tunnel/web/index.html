@@ -832,7 +832,16 @@
 
   function setMuted(next) {
     muted = Boolean(next);
-    localStorage.setItem("voice-tunnel.muted", muted ? "1" : "0");
+    // sessionStorage, NOT localStorage — mute is SESSION state, not a device preference.
+    // JJ, 2026-08-11. It survives a reload, which matters because he refreshes constantly
+    // mid-conversation and re-muting every time would be its own annoyance; it does NOT survive
+    // closing the tab. He shut the laptop on a Saturday and opened it Monday still muted, on a
+    // page that otherwise looked live — deaf, with no event to explain why.
+    //
+    // The distinction that decides it: a PREFERENCE describes how you always want the tool
+    // (verbose, speech rate, voice) and should outlive everything. STATE describes what is true
+    // right now (muted, channel open) and outliving its moment is what makes it a trap.
+    sessionStorage.setItem("voice-tunnel.muted", muted ? "1" : "0");
     // The server is told so `voice-tunnel status` can say "he has himself muted" — otherwise a silent
     // tunnel and a muted one look identical from the agent's side, and the agent goes hunting
     // for a broken microphone that is working perfectly.
@@ -999,10 +1008,15 @@
   $mute.addEventListener("click", () => setMuted(!muted));
   $verbose.addEventListener("click", () => setVerbose(!verbose));
 
-  // Mute restores from THIS device; verbose does not restore at all — it arrives from the server
-  // on connect. Reading it from localStorage here is what used to let a stale phone value
-  // overwrite what he had just set on the laptop.
-  setMuted(localStorage.getItem("voice-tunnel.muted") === "1");
+  // Restores within this browser SESSION only. Verbose does not restore at all — it arrives
+  // from the server on connect, because it is one preference he holds rather than one per
+  // browser, and reading it from storage is what used to let a stale phone value overwrite what
+  // he had just set on the laptop.
+  //
+  // Any value left in localStorage by an older build is cleared, not read: it is precisely the
+  // stale mute this change exists to stop honouring.
+  localStorage.removeItem("voice-tunnel.muted");
+  setMuted(sessionStorage.getItem("voice-tunnel.muted") === "1");
 
   // Live level -> CSS variable, smoothed and painted once per frame rather than per audio
   // callback. Writing a style on every 4096-sample block (~12/s) is wasteful and jittery;

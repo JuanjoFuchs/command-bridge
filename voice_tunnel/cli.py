@@ -142,6 +142,10 @@ DESCRIBE: dict[str, Any] = {
                    "fires, you enter a watch, and the job cannot fire again until that watch "
                    "returns. The spacing you want is already there.",
         "rule": "Prose BEFORE the watch, never after. End every turn on the blocking call.",
+        # The text itself, not a description of it. An agent registering the job needs something
+        # to paste; a paraphrase is something to re-derive, and re-deriving is how the earlier
+        # copies acquired their bugs.
+        "prompt": None,     # filled in per-session by cmd_describe
     },
     "the_loop": [
         "REGISTER A WATCHDOG FIRST — see `watchdog` above. Without it, nothing brings you back.",
@@ -449,8 +453,15 @@ def _request(session: str, path: str, payload: dict[str, Any] | None = None) -> 
 # -------------------------------------------------------------------- commands
 
 
-def cmd_describe(_args) -> dict[str, Any]:
-    return DESCRIBE
+def cmd_describe(args) -> dict[str, Any]:
+    # The watchdog prompt goes out with the session already substituted, so it can be scheduled
+    # verbatim. A template with a placeholder still in it is one more thing to get wrong at the
+    # moment the agent is least able to check.
+    out = dict(DESCRIBE)
+    session = getattr(args, "session", None) or "dev"
+    out["watchdog"] = {**DESCRIBE["watchdog"],
+                       "prompt": WATCHDOG_PROMPT.format(session=session)}
+    return out
 
 
 def cmd_serve(args) -> None:
@@ -476,6 +487,53 @@ def cmd_serve(args) -> None:
         token=token,
         gate_enabled=not args.no_wake_gate,
     )
+
+
+WATCHDOG_PROMPT = """Voice tunnel watchdog. Do this without commentary and without asking.
+
+STEP 0 - CHECK BEFORE ACTING. Run `voice-tunnel status --session {session}`.
+  * It ERRORS -> the server is down. Say so in one line and STOP. Do not restart it unasked.
+  * `watch_open` is TRUE -> a watch is already running. Do NOTHING: no output, no second watch.
+    Two watches on one log race for the same turns and one cursor silently falls behind.
+  * `watch_open` is ABSENT (missing, not false) -> the server predates the field. ABSENT IS NOT
+    FALSE and it is not true either: check your own background tasks for a running watch, stop
+    silently if there is one, and otherwise continue.
+  * `watch_open` is FALSE -> continue.
+
+STEP 1 - CURSOR. Take `last_turn_id` from that same status output. NEVER use `turns_logged`:
+that counts turns the server has written since IT started, so after a restart it is far too low
+and replays the whole log as if it had just been spoken.
+
+STEP 2 - RE-ARM, as the LAST tool call of your turn:
+    voice-tunnel watch --session {session} --since <last_turn_id>
+Omit --timeout so the wait backs off on its own. Run it in the FOREGROUND and let it block:
+detaching frees your harness, an idle harness is exactly what wakes this job, and it will then
+fire every interval and start a duplicate each time.
+
+STEP 3 - IF TURNS COME BACK: re-watch until count is 0 (one thought arrives as several turns),
+then reply with `voice-tunnel say --session {session} --now "..."`, then watch again.
+
+THE ORDER IS THE BUG THIS EXISTS TO FIX: any prose goes BEFORE the watch call, never after. A
+turn that ends on prose is a turn that ended without listening.
+
+Keep text to one short line. He is on a phone, not reading your terminal.
+"""
+"""The watchdog prompt, verbatim and ready to schedule.
+
+It lives here rather than in a doc because it is a THING TO EXECUTE, not a thing to read: the
+agent registering the job needs the text, not a description of the text. `describe` returns it
+with the session substituted.
+
+Every line of it was written after a live failure. The step-0 check exists because four
+concurrent watches accumulated in one afternoon; the absent-is-not-false clause because a server
+that predated `watch_open` reported nothing and a watchdog read that as permission; the cursor
+warning because `turns_logged` was 26 against a real 367; the foreground rule because detaching
+is what summons this job in the first place; and the ordering rule because five separate turns
+ended on prose with nobody listening.
+
+An earlier copy of this lived only in a session-scoped cron job and was lost when the machine
+shut down, taking three rounds of hard-won corrections with it. That is why it is in the package.
+"""
 
 
 def _next_action(turns, live: dict[str, Any] | None,
@@ -1426,7 +1484,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--human", action="store_true", help="pretty output for people")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("describe", help="the live contract (read this first)")
+    d = sub.add_parser("describe", help="the live contract (read this first)")
+    d.add_argument("--session", default="dev",
+                   help="substituted into the ready-to-schedule watchdog prompt")
     sub.add_parser("doctor", help="preflight: what is missing, and the command that fixes it")
 
     cf = sub.add_parser("config", help="persisted settings, so env vars are not per-call")

@@ -124,6 +124,21 @@ def turns_since(
     return turns, new_cursor
 
 
+def last_turn_id(session: str, base: str | None = None) -> int:
+    """The id of the last turn in the LOG, or -1 for an empty one.
+
+    This is the cursor a fresh watcher should start from, and it is deliberately read off disk
+    rather than from any server counter. A running server's `turns_logged` counts what IT has
+    written since starting, so the two agree only on a server that has never restarted — true in
+    every author's test and in no long-lived session. Confusing them replays the entire log.
+
+    -1 is the correct empty answer, not 0: `watch --since -1` means "from the beginning", so an
+    empty log and a request for everything are the same request.
+    """
+    turns = read_turns(session, base)
+    return max((int(t.get("id", -1)) for t in turns), default=-1)
+
+
 def watch(
     session: str,
     cursor: int,
