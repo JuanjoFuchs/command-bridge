@@ -19,6 +19,16 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # `environment: release` is not decoration — npm's trusted publisher matches on it, and the
+    # OIDC token carries it as a claim. It was configured on npmjs as `release` while this job
+    # declared none, so every automated npm publish this project ever attempted failed with a
+    # 404: npm reports "not found" rather than "forbidden" for a package you cannot publish to,
+    # so it does not leak whether the name exists, and the error names neither the real cause
+    # nor the field that is wrong.
+    #
+    # Declared here rather than relaxed on npmjs because an environment is worth having: it is
+    # the place to require a manual approval before anything reaches a public registry.
+    environment: release
     permissions:
       contents: read
       id-token: write
