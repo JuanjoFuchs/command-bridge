@@ -62,13 +62,17 @@ jobs:
       # then a NORMAL Trusted Publisher added to the now-existing project, then this line and the
       # PYPI_API_TOKEN secret both deleted.
       #
-      # `password` falls back to OIDC when the secret is absent, so removing the secret alone is
-      # enough to move to token-free publishing — but delete the line too, so nobody has to infer
-      # which mechanism is live from an empty variable.
+      # NO `password` HERE, and its absence is load-bearing. This step used to read
+      # `password: ${{ secrets.PYPI_API_TOKEN }}` with a comment claiming that deleting the SECRET
+      # was enough to fall back to OIDC. That is wrong, and 0.2.0 failed on it: a missing secret
+      # renders as an EMPTY STRING, the action sees a password input and authenticates with it,
+      # and PyPI answers 403 invalid authentication. An empty password is not an absent one.
+      #
+      # Trusted Publishing needs three things and this workflow has all of them: `id-token: write`
+      # on the job, `environment: release` matching what is registered on PyPI, and no password
+      # input at all.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
 
   build-windows-bundle:
     # WINDOWS ONLY, and --onedir not --onefile. Both choices are measured in spec 002: a onefile
