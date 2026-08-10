@@ -1236,7 +1236,7 @@ def cmd_download(args) -> dict[str, Any]:
     elif args.what == "voice":
         result["use_it_with"] = "voice-tunnel config set VOICE_TUNNEL_TTS piper"
     elif args.what == "turn" and not config.have_module("transformers"):
-        result["also_needed"] = ("`pip install voice-tunnel[parakeet]` — the model is here but "
+        result["also_needed"] = ("`pip install voice-tunnel[turn]` — the model is here but "
                                  "onnxruntime and transformers are not, so it cannot load")
     elif args.what in ("asr", "voiceprint") and not config.have_module("sherpa_onnx"):
         result["also_needed"] = ("`pip install voice-tunnel[parakeet]` — the model is downloaded "
@@ -1357,7 +1357,8 @@ def cmd_setup(args) -> dict[str, Any]:
     want_models = not getattr(args, "engines_only", False)
 
     if want_engines:
-        missing = [m for m in ("piper", "sherpa_onnx") if not config.have_module(m)]
+        missing = [m for m in ("piper", "sherpa_onnx", "onnxruntime", "transformers")
+                   if not config.have_module(m)]
         if missing:
             cmd = [sys.executable, "-m", "pip", "install", "voice-tunnel[all]"]
             proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -1370,7 +1371,8 @@ def cmd_setup(args) -> dict[str, Any]:
             })
         else:
             steps.append({"step": "engines", "ok": True, "ran": None,
-                          "detail": "piper and sherpa-onnx are already importable"})
+                          "detail": "piper, sherpa-onnx, onnxruntime and transformers are all "
+                                    "already importable"})
 
     if want_models:
         from . import download as _dl
@@ -1574,8 +1576,8 @@ def cmd_doctor(_args) -> dict[str, Any]:
                   f"silence instead of when you actually sound finished")
         turn_remedy = "`voice-tunnel setup`, or `voice-tunnel download turn` on its own"
     elif not config.have_module("transformers"):
-        detail = "model present but transformers is not"
-        turn_remedy = "`pip install voice-tunnel[parakeet]`"
+        detail = "model present but transformers is not, so it cannot load"
+        turn_remedy = "`pip install voice-tunnel[turn]`, or `voice-tunnel setup`"
     else:
         detail = f"smart-turn ready (threshold {config.turn_threshold()})"
         turn_remedy = ""

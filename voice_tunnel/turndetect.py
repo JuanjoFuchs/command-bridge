@@ -96,8 +96,12 @@ class TurnDetector:
             import onnxruntime as ort
             from transformers import WhisperFeatureExtractor
         except ImportError as exc:
+            # `[turn]`, NOT `[parakeet]`. This said parakeet until 0.2.1 and was simply false:
+            # that extra installs sherpa-onnx and neither of the two packages imported above, so
+            # anyone following it stayed exactly as broken and reasonably concluded the feature
+            # was unsupported on their machine.
             self.unavailable_reason = (
-                f"turn detection needs `pip install voice-tunnel[parakeet]` ({exc})"
+                f"turn detection needs `pip install voice-tunnel[turn]` ({exc})"
             )
             return None
         try:

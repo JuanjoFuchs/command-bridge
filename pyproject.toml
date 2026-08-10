@@ -46,7 +46,18 @@ piper = ["piper-tts>=1.6"]
 # NVIDIA Parakeet TDT via sherpa-onnx: RTF 0.077 against whisper small.en's 0.88 on the same
 # utterance, from a more accurate model. Also carries the speaker embeddings the voiceprint uses.
 parakeet = ["sherpa-onnx>=1.10"]
-all = ["piper-tts>=1.6", "sherpa-onnx>=1.10"]
+# Smart-turn: end a turn when the sentence SOUNDS finished instead of on a silence timer. Needs
+# `onnxruntime` to run the 8 MB model and `transformers` for its log-mel feature extractor (numpy
+# only — no torch).
+#
+# THIS EXTRA DID NOT EXIST UNTIL 0.2.1 AND THE FEATURE COULD NOT WORK WITHOUT IT. Neither package
+# was declared anywhere, so turn detection was unreachable from any clean install of 0.2.0 —
+# while `doctor` cheerfully advised `pip install voice-tunnel[parakeet]`, which installs neither.
+# Found by handing a fresh agent nothing but `voice-tunnel describe`: it followed that remedy
+# verbatim, checked the installed metadata, and reported that the fix could not possibly work.
+# It had never worked outside a checkout that happened to carry both packages already.
+turn = ["onnxruntime>=1.17", "transformers>=4.40"]
+all = ["piper-tts>=1.6", "sherpa-onnx>=1.10", "onnxruntime>=1.17", "transformers>=4.40"]
 dev = [
     "build>=1.0.0",
     "playwright>=1.40",
