@@ -32,7 +32,11 @@ from __future__ import annotations
 import pathlib
 import sys
 
-W, H = 920, 262
+# 880 is deliberate. GitHub's README column is ~830-880px and scales an image down to fit, so
+# authoring wider than the column shrinks every label by the same ratio — at 920 the 12px
+# captions landed near 10.9px. AntV's own layout guidance puts an infographic canvas at
+# "around 800px" for the same reason. Author at the size it will be read at.
+W, H = 880, 262
 
 # `card` and `bg` differ so the panels read as objects on a ground. `faint` is deliberately
 # lighter than `dim` but still has to clear the contrast check below — it carries real words.
@@ -46,9 +50,9 @@ THEMES = {
 FONT = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 MONO = "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace"
 
-YOU = (0, 196)          # x, width
-TUN = (250, 400)
-AGT = (704, 216)
+YOU = (0, 188)          # x, width
+TUN = (240, 380)
+AGT = (674, 206)
 PANEL_Y, PANEL_H = 14, 202
 WARM_Y, COOL_Y = 112, 180
 
@@ -143,8 +147,8 @@ def build(theme: str) -> tuple[str, list[str]]:
                  f'fill="{t["card"]}" stroke="{t["edge"]}" stroke-width="1"/>')
     for (x, w), label, sub in panels:
         o.append(text(x + w / 2, PANEL_Y + 32, label, t, size=17, weight="600"))
-        o.append(text(x + w / 2, PANEL_Y + 52, sub, t, size=12, fill="faint"))
-        for s, size in ((label, 17), (sub, 12)):
+        o.append(text(x + w / 2, PANEL_Y + 52, sub, t, size=13, fill="faint"))
+        for s, size in ((label, 17), (sub, 13)):
             if not fits(s, size, w - 16):
                 warnings.append(f"{theme}: {s!r} may overflow a {w}px panel")
 
