@@ -500,9 +500,14 @@ STEP 0 - CHECK BEFORE ACTING. Run `voice-tunnel status --session {session}`.
     silently if there is one, and otherwise continue.
   * `watch_open` is FALSE -> continue.
 
-STEP 1 - CURSOR. Take `last_turn_id` from that same status output. NEVER use `turns_logged`:
-that counts turns the server has written since IT started, so after a restart it is far too low
-and replays the whole log as if it had just been spoken.
+STEP 1 - CURSOR. From that same status output, take the LOWER of `consumed_cursor` and
+`last_turn_id`. They are usually equal; when they are not, `consumed_cursor` is smaller because
+turns arrived while you were busy and nobody has read them. Starting from `last_turn_id` would
+skip exactly those - the ones he said while waiting on you, which are the ones he most wants
+answered.
+
+NEVER use `turns_logged`: that counts turns the server has written since IT started, so after a
+restart it is far too low and replays the whole log as if it had just been spoken.
 
 STEP 2 - RE-ARM, as the LAST tool call of your turn:
     voice-tunnel watch --session {session} --since <last_turn_id>
