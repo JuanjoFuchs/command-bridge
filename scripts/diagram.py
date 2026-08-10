@@ -41,10 +41,10 @@ W, H = 880, 262
 # `card` and `bg` differ so the panels read as objects on a ground. `faint` is deliberately
 # lighter than `dim` but still has to clear the contrast check below — it carries real words.
 THEMES = {
-    "light": dict(bg="#ffffff", card="#fbfbfa", edge="#0f172a26", fg="#101519",
-                  dim="#55606d", faint="#697078", warm="#8f5006", cool="#2f51ab"),
-    "dark": dict(bg="#0d1117", card="#161b22", edge="#ffffff1f", fg="#e7eaf1",
-                 dim="#9aa4b5", faint="#8d95a3", warm="#ffb35e", cool="#8fb4ff"),
+    "light": {"bg": "#ffffff", "card": "#fbfbfa", "edge": "#0f172a26", "fg": "#101519",
+              "dim": "#55606d", "faint": "#697078", "warm": "#8f5006", "cool": "#2f51ab"},
+    "dark": {"bg": "#0d1117", "card": "#161b22", "edge": "#ffffff1f", "fg": "#e7eaf1",
+             "dim": "#9aa4b5", "faint": "#8d95a3", "warm": "#ffb35e", "cool": "#8fb4ff"},
 }
 
 FONT = "system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
