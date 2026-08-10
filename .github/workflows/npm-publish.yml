@@ -35,10 +35,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # NO `registry-url`, and its absence is the whole fix — the same shape of bug as the one
+      # that broke PyPI in this very release, one layer over.
+      #
+      # `registry-url` makes setup-node write an .npmrc containing
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`. With no NODE_AUTH_TOKEN set that
+      # expands to an EMPTY token, npm sees credentials configured and authenticates with them,
+      # and OIDC is never attempted. npm then answers 404 rather than 403, so the message names
+      # neither the cause nor the field.
+      #
+      # AN EMPTY CREDENTIAL IS NOT AN ABSENT ONE. Trusted publishing needs npm to find no auth
+      # configured at all, which means not writing the file in the first place. The registry
+      # defaults to registry.npmjs.org regardless, so nothing is lost by omitting it.
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
 
       # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0. Node 24 satisfies the
       # runtime, but the npm bundled with a given Node image drifts, and the failure mode of
