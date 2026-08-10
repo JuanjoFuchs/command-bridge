@@ -121,9 +121,43 @@ def test_a_shim_belonging_to_another_install_is_not_a_clean_pass(capsys, tmp_ses
     _, payload, _ = run(["doctor"], capsys)
     check = next(c for c in payload["checks"] if c["name"] == "shim_on_path")
 
-    assert check["status"] == "degraded", "a stranger's shim on PATH is not a pass"
+    assert check["status"] == "info", "a stranger's shim is worth saying, and is not a fallback"
     assert "somebody-else" in check["detail"] and "DIFFERENT" in check["detail"].upper()
     assert check["remedy"], "and it must say how to reach this copy instead"
+    assert "shim_on_path" in payload["advisory"]
+    assert "shim_on_path" not in payload["degraded"], (
+        "an unclearable warning in `degraded` is how that list stops being read"
+    )
+
+
+def test_an_advisory_alone_does_not_make_the_runtime_sound_broken(capsys, tmp_sessions,
+                                                                  tmp_path, monkeypatch):
+    """THE REGRESSION, and it is about `next` rather than the check.
+
+    An audit reached a state where `shim_on_path` was the only non-ok item and watched `doctor`
+    answer, every time: "RUNS, BUT NOT AS CONFIGURED — shim_on_path is on a fallback.
+    `voice-tunnel setup` installs the optional engines and downloads every model." `setup` does
+    not touch PATH. It had already run. The correct advice was sitting in that check's own
+    `remedy` one level down, and the top-level line — the one thing an agent reads first — was a
+    hardcoded template that ignored the diagnosis and produced a loop.
+    """
+    from tests.test_cli_surface import run
+
+    stranger = tmp_path / "elsewhere" / "Scripts"
+    stranger.mkdir(parents=True)
+    (stranger / "voice-tunnel.exe").write_text("", encoding="utf-8")
+    monkeypatch.setattr(config.shutil, "which",
+                        lambda name: str(stranger / "voice-tunnel.exe")
+                        if name == "voice-tunnel" else None)
+    monkeypatch.setattr(config, "_in_source_checkout", lambda: False)
+
+    _, payload, _ = run(["doctor"], capsys)
+    if payload["degraded"] or payload["failed"]:
+        pytest.skip("this machine has real gaps; the advisory-only state cannot be isolated here")
+
+    assert "setup" not in payload["next"], (
+        "nothing here is fixed by setup — do not prescribe it"
+    )
 
 
 def test_this_install_s_own_shim_is_a_clean_pass(capsys, tmp_sessions, tmp_path, monkeypatch):

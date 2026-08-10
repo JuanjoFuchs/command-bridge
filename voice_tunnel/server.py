@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import threading
 import time
 import wave
@@ -371,6 +372,33 @@ async def handle_status(request: web.Request) -> web.Response:
     if not ok:
         return web.json_response({"error": reason}, status=403)
     return web.json_response(state.snapshot())
+
+
+async def handle_shutdown(request: web.Request) -> web.Response:
+    """Stop the server on request.
+
+    Behind the same auth as everything else — this is the one route whose entire purpose is to
+    end the process, so an unauthenticated caller must not reach it.
+
+    Graceful rather than a signal because the turn log is the only durable artifact a conversation
+    leaves behind. The response is sent BEFORE the loop is asked to stop, or the caller sees a
+    dropped connection and cannot distinguish a clean shutdown from a crash.
+
+    Exists because the CLI could start a detached server and never stop one. An audit that
+    followed `describe` into a background `serve` had to save the OS handle itself to get back
+    out, and in a new session that handle is simply gone.
+    """
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+
+    async def _later() -> None:
+        await asyncio.sleep(0.15)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    asyncio.ensure_future(_later())
+    return web.json_response({"stopping": True, "session": state.session})
 
 
 async def handle_say(request: web.Request) -> web.Response:
@@ -1158,6 +1186,7 @@ def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web
             web.get("/health", handle_health),
             web.get("/status", handle_status),
             web.post("/say", handle_say),
+            web.post("/shutdown", handle_shutdown),
             web.post("/consumed", handle_consumed),
             web.post("/watching", handle_watching),
             web.post("/cue", handle_cue),

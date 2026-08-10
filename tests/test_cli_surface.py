@@ -192,10 +192,13 @@ def test_doctor_gives_every_actionable_check_a_remedy(capsys, tmp_sessions):
         "shim_on_path",
     }
     for check in payload["checks"]:
-        assert check["status"] in {"ok", "degraded", "failed"}
+        assert check["status"] in {"ok", "info", "degraded", "failed"}
         if check["status"] == "ok":
             assert check["remedy"] is None, f"{check['name']} is fine; nothing to suggest"
         else:
+            # `info` included deliberately. It means "nothing is wrong", not "nothing to say" —
+            # it exists for facts worth surfacing that the reader may still want to act on, and a
+            # note with no suggested action is the kind of line people learn to skip.
             # A failure or a fallback without a remedy is one the caller has to go read source
             # code to act on.
             assert check["remedy"], f"{check['name']} is {check['status']} with no remedy"

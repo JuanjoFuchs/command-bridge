@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.5 — 2026-08-10
+
+A fourth cold-start audit, and the first run against a locally built wheel rather than a published
+one. It reached the best available configuration in five commands — and then spent the rest of the
+session being told to fix something `setup` cannot fix.
+
+### Added
+
+- **`voice-tunnel stop --session <s>`.** The tool could start a detached server and had no way to
+  end one. `describe` tells you to run `serve` in the background and never said how it stops, so
+  the only exit was the OS handle of whatever launched it — gone entirely in a new session. It
+  asks the server to shut down first, so the turn log is flushed, and falls back to the pid.
+- **`status` reports `pid`** (and `runtime_file`). The pid has been written at serve time since
+  the beginning and surfaced nowhere, so an auditor had to save its own.
+- **`doctor` reports `advisory`** — a fourth check state for things worth knowing that are not
+  faults. `degraded` is only useful while it can be emptied.
+
+### Fixed
+
+- **`doctor`'s `next` is assembled from the checks' own remedies.** It was a template that named
+  `voice-tunnel setup` for anything non-ok. An audit reached a state where the only remaining item
+  was `shim_on_path` — a PATH observation `setup` does not touch — and was told, repeatedly and
+  verbatim, to run the one command that could not possibly help, while the correct advice sat one
+  level down in that check's own `remedy`. Advice that ignores the diagnosis is a loop.
+- **`shim_on_path` is advisory, not degraded.** It reports what a *bare* `voice-tunnel` resolves
+  to, which is permanently different for anyone calling this copy by absolute path — as its own
+  remedy recommends. So it could never be cleared, `degraded` was never empty, and the field this
+  release series exists to make trustworthy quietly became noise.
+- **`wake` read mode returns the shape `describe` documents**, and no longer reports an unsaved
+  default as `persisted` — a fresh install claimed a saved wake name while `config path` said the
+  settings file did not exist.
+- **`describe.invocation` resolves the runtime instead of reciting a checkout.** It described
+  `bin/`, `<repo>/.env` and a shim, none of which exist in a pip install, so an agent on an
+  installed copy went looking for a repository that was not there.
+- **`--help` builds the cue list from the cue vocabulary.** It listed three; `describe` documented
+  four; nothing said which was stale.
+- **`voices` no longer says "not yet loaded".** Every CLI call is a fresh process that will never
+  load a voice, so it was tautologically true and read as a warning — reported after Piper had
+  demonstrably synthesized seconds earlier in the server.
+- **The voiceprint check says how many samples it has and how many it takes.** "Enrolment happens
+  automatically" with no denominator left an auditor unable to tell one turn from twenty. It is
+  one.
+
 ## 0.2.4 — 2026-08-10
 
 ### Fixed

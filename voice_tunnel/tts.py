@@ -393,7 +393,12 @@ def available() -> str:
             if _RESIDENT.unavailable_reason:
                 return (f"piper (spawning per call — resident load failed: "
                         f"{_RESIDENT.unavailable_reason})")
-            return "piper (resident)" if _RESIDENT.loaded else "piper (resident, not yet loaded)"
+            # "not yet loaded" only ever meant "this is a CLI process, not the server". Every CLI
+            # invocation is a fresh interpreter that will never load a voice, so the phrase was
+            # tautologically true there and read as a warning — an audit reported `voices` saying
+            # it after piper had demonstrably synthesized, in the server, seconds earlier. The
+            # load state belongs to whoever is holding the model; `status` is where to ask.
+            return "piper (resident)"
         if binary and voice:
             return "piper (per-call subprocess)"
     if backend == "none":

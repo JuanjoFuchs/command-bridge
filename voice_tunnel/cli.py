@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
 import time
 import urllib.error
@@ -173,6 +174,9 @@ DESCRIBE: dict[str, Any] = {
                         "degraded": "[name, ...] — RUNS, BUT ON A FALLBACK. Read this even when "
                                     "ok is true; it is the field that says you are about to hold "
                                     "a conversation through a robotic system voice.",
+                        "advisory": "[name, ...] — worth knowing, nothing to fix. Kept out of "
+                                    "`degraded` so that list stays clearable and therefore worth "
+                                    "reading.",
                         "runtime": "{version, executable, package, settings_file, models_dir, "
                                    "session_dir, source_checkout} — WHICH installation is "
                                    "answering. Compare it against the one you meant to use.",
@@ -304,7 +308,16 @@ DESCRIBE: dict[str, Any] = {
         },
         "status": {
             "args": {"--session": "session id"},
-            "returns": "live server state, or {running:false} if nothing is serving",
+            "returns": "live server state (including `pid`), or {running:false} if nothing is "
+                       "serving",
+        },
+        "stop": {
+            "args": {"--session": "session id"},
+            "returns": {"stopped": "bool", "how": "graceful | signal | already_gone",
+                        "pid": "int"},
+            "notes": "The other half of a detached `serve`. Asks the server to shut down so the "
+                     "turn log is flushed, and falls back to a signal on the recorded pid. Safe "
+                     "to call when nothing is running.",
         },
         "turns": {
             "args": {"--session": "session id", "--limit": "tail N (default all)"},
@@ -521,6 +534,34 @@ def cmd_describe(args) -> dict[str, Any]:
     session = getattr(args, "session", None) or "dev"
     out["watchdog"] = {**DESCRIBE["watchdog"],
                        "prompt": WATCHDOG_PROMPT.format(session=session)}
+
+    # INVOCATION IS RESOLVED, NOT RECITED. The static text describes a source checkout — bin/,
+    # <repo>/.env, the shim that finds the venv — and most installations have none of that. An
+    # audit on a pip install read `if_not_found: "put <repo>/bin on PATH"` and went looking for a
+    # repository that did not exist. That is the same failure as the incident this whole series
+    # started with: a document written from the maintainer's machine, describing a layout the
+    # reader does not have. `sys.executable` and `config.env_file_path()` know the truth, so the
+    # answer is computed rather than remembered.
+    if config._in_source_checkout():
+        out["invocation"] = dict(INVOCATION)
+    else:
+        scripts = os.path.dirname(sys.executable)
+        out["invocation"] = {
+            "run_it": f"{os.path.join(scripts, 'voice-tunnel')}   # this installed copy, by "
+                      f"absolute path — always unambiguous",
+            "no_env_vars_needed": INVOCATION["no_env_vars_needed"],
+            "no_python_dash_c": (
+                "Never invoke this as `python -c \"import sys; sys.path.insert(...)\"`. "
+                f"`{sys.executable} -m voice_tunnel <command>` is the equivalent that works."
+            ),
+            "if_not_found": (
+                f"This is an installed package, not a checkout — there is no repo and no bin/. "
+                f"The console script is in {scripts}; put that on PATH, call it by absolute "
+                f"path, or run `{sys.executable} -m voice_tunnel <command>`."
+            ),
+            "settings_file": config.env_file_path(),
+            "first_call": INVOCATION["first_call"],
+        }
     return out
 
 
@@ -1079,13 +1120,31 @@ def cmd_wake(args) -> dict[str, Any]:
     name = getattr(args, "name", None)
 
     if name is None:
+        # THE SAME SHAPE AS THE WRITE, because `describe` documents one shape for this command and
+        # a caller that parses the response cannot know which branch produced it. Reading used to
+        # return `{persisted, live, note, phrases}` with no `wake` key at all, and `persisted`
+        # meant something different in each branch — a cold-start audit reported it as the command
+        # contradicting its own documentation.
+        #
+        # AND `persisted` NOW MEANS PERSISTED. It used to report the *effective* name, so a fresh
+        # install with no settings file answered `persisted: {"name": "assistant"}` while
+        # `config path` said that file did not exist. A default presented as a saved value is how
+        # somebody concludes a setting is already applied and stops looking.
+        row = next((r for r in config.effective() if r["key"] == "VOICE_TUNNEL_WAKE_NAME"), None)
+        source = row["source"] if row else "default"
         live = _request(args.session, "/status")
-        persisted = {"name": config.wake_name(), "file": config.env_file_path()}
-        if live.get("running") is False:
-            return {"persisted": persisted, "live": None, "note": live.get("error"),
-                    "phrases": list(config.wake_phrases())}
-        return {"persisted": persisted,
-                "live": {"name": live.get("wake"), "phrases": live.get("wake_phrases")}}
+        running = live.get("running") is not False and not live.get("error")
+        return {
+            "wake": config.wake_name(),
+            "phrases": list(config.wake_phrases()),
+            "source": source,
+            "persisted": ({"name": config.wake_name(), "file": config.env_file_path()}
+                          if source == "file" else None),
+            "applied_live": running,
+            "live": ({"name": live.get("wake"), "phrases": live.get("wake_phrases")}
+                     if running else None),
+            "note": None if running else live.get("error"),
+        }
 
     name = name.strip().lower()
     # Validate before writing. A name with whitespace would build a phrase the matcher can never
@@ -1275,7 +1334,62 @@ def cmd_download(args) -> dict[str, Any]:
 
 
 def cmd_status(args) -> dict[str, Any]:
-    return _request(args.session, "/status")
+    out = _request(args.session, "/status")
+    # THE PID, which has been in the runtime file since the beginning and reported nowhere. An
+    # audit that started a detached server had to keep its own handle from `Start-Process` to
+    # shut it down again, because thirty-odd status fields did not include the one that says
+    # which process this is.
+    rt = read_runtime(args.session)
+    if isinstance(out, dict) and rt and out.get("running") is not False:
+        out.setdefault("pid", rt.get("pid"))
+        out.setdefault("runtime_file", runtime_path(args.session))
+    return out
+
+
+def cmd_stop(args) -> dict[str, Any]:
+    """Stop a detached server.
+
+    `describe` told people to start one detached and never how to end it, so the only way out was
+    to have kept the OS handle from whatever launched it — which nothing in this tool provides,
+    and which is gone entirely in a new session. An audit killed it by PID it had saved itself and
+    reported the gap; a tool that can start a background process owes you the other half.
+
+    Asks the server to shut itself down, then falls back to a signal. The ordering matters: an
+    orderly shutdown flushes the turn log, and the log is the one artifact of a conversation.
+    """
+    rt = read_runtime(args.session)
+    if not rt:
+        return {"stopped": False, "reason": "no_runtime_file",
+                "detail": f"no server has been started for session `{args.session}`"}
+
+    asked = _request(args.session, "/shutdown", {})
+    if not asked.get("error"):
+        _clear_runtime(args.session)
+        return {"stopped": True, "how": "graceful", "pid": rt.get("pid"),
+                "session": args.session}
+
+    pid = rt.get("pid")
+    if not pid:
+        return {"stopped": False, "reason": "unreachable_and_no_pid",
+                "detail": asked.get("error")}
+    try:
+        os.kill(int(pid), signal.SIGTERM)
+    except ProcessLookupError:
+        _clear_runtime(args.session)
+        return {"stopped": True, "how": "already_gone", "pid": pid, "session": args.session}
+    except (OSError, ValueError) as exc:
+        return {"stopped": False, "reason": "signal_failed", "pid": pid, "detail": str(exc)}
+    _clear_runtime(args.session)
+    return {"stopped": True, "how": "signal", "pid": pid, "session": args.session}
+
+
+def _clear_runtime(session: str) -> None:
+    """A runtime file outliving its server is how `status` reports a host and port for something
+    that is gone — the state this CLI already has a remedial error for."""
+    try:
+        os.remove(runtime_path(session))
+    except OSError:
+        pass
 
 
 def cmd_config(args) -> dict[str, Any]:
@@ -1348,8 +1462,8 @@ def _windows() -> bool:
 
 
 def _check(name: str, ok: bool, detail: str, remedy: str = "",
-           degraded: bool = False) -> dict[str, Any]:
-    """One check, in one of THREE states — and the third one is the point.
+           degraded: bool = False, advisory: bool = False) -> dict[str, Any]:
+    """One check, in one of FOUR states — and the middle two are the point.
 
     `ok`/`failed` alone cannot say "this runs, but not the way this machine is provisioned", and
     that gap cost a whole session on 2026-08-10: a fresh install answered `ok: true, failed: []`
@@ -1362,8 +1476,18 @@ def _check(name: str, ok: bool, detail: str, remedy: str = "",
     check used to discard. The old code stuffed fix commands into `detail` for exactly that
     reason and left `remedy` null on every line, so a machine parsing the field it was told to
     parse found nothing to do.
+
+    INFO means: worth knowing, nothing is wrong. It exists because `degraded` started collecting
+    things nobody could act on. `shim_on_path` reported degraded whenever the bare command
+    resolved elsewhere — which is permanently true, and correct, for anyone calling this copy by
+    absolute path as its own remedy advises. An audit followed that remedy on every one of fifteen
+    invocations and watched the check stay degraded, keeping `degraded` non-empty forever. A
+    warning that cannot be cleared trains people to stop reading the field, which is precisely the
+    field this release series exists to make trustworthy.
     """
-    status = "failed" if not ok else ("degraded" if degraded else "ok")
+    status = ("failed" if not ok else
+              "info" if advisory else
+              "degraded" if degraded else "ok")
     return {
         "name": name,
         "ok": ok,
@@ -1632,10 +1756,21 @@ def cmd_doctor(_args) -> dict[str, Any]:
         vp_remedy = "`pip install voice-tunnel[parakeet]`, or `voice-tunnel setup`"
     else:
         from . import voiceprint as _vp
-        enrolled = len(_vp.known())
-        vp_detail = (f"ready — {enrolled} voice(s) enrolled" if enrolled else
-                     "ready, but no voice is enrolled yet; enrolment happens automatically from "
-                     "wake-confirmed turns, so the phrase is still required until then")
+        # HOW MANY SAMPLES, AND HOW MANY IT TAKES. "Enrolment happens automatically" left an
+        # auditor unable to tell whether it was one turn away or twenty — a progress report with
+        # no denominator. The denominator is one: the first wake-confirmed turn creates the
+        # centroid and the phrase becomes optional from the next turn on; everything after that
+        # sharpens a gate that already works.
+        voices = _vp.known()
+        samples = sum(v.get("count", 0) for v in voices)
+        vp_detail = (
+            f"ready — {len(voices)} voice(s) enrolled from {samples} sample(s); the wake phrase "
+            f"is now optional inside the attention window"
+            if voices else
+            "ready, but nothing is enrolled yet, so the wake phrase is required on every turn. "
+            "ONE wake-confirmed turn is enough to enrol — say it once and the next turn can go "
+            "without. Later turns only sharpen it."
+        )
         vp_remedy = ""
     checks.append(_check("voiceprint", True, vp_detail, vp_remedy, degraded=bool(vp_remedy)))
 
@@ -1693,17 +1828,26 @@ def cmd_doctor(_args) -> dict[str, Any]:
                     else os.path.dirname(sys.executable))
         mine = os.path.normcase(os.path.dirname(os.path.abspath(on_path))) == \
             os.path.normcase(os.path.abspath(expected))
-    if on_path and not mine:
-        detail = (f"{on_path} — WHICH IS A DIFFERENT INSTALLATION than the one answering "
-                  f"({sys.executable}). Bare `voice-tunnel` will not run this copy.")
-        remedy = ("call this copy by absolute path, or put its directory first on PATH; "
-                  "`voice-tunnel doctor` from the bare command will show which one you get")
+    # ADVISORY WHEN THEY DIVERGE, not degraded. Nothing about this runtime is impaired: you are
+    # already talking to the copy you meant to, by the absolute path this check's own remedy
+    # recommends. An audit followed that advice on every one of fifteen invocations and watched
+    # the check stay `degraded` regardless — because it reports what a BARE `voice-tunnel` would
+    # resolve to, which absolute-path callers have already opted out of. An unclearable warning
+    # keeps `degraded` permanently non-empty and teaches people to ignore the one field that is
+    # supposed to mean something.
+    foreign = bool(on_path) and not mine
+    if foreign:
+        detail = (f"you are running {sys.executable}; a DIFFERENT installation answers to the "
+                  f"bare `voice-tunnel` on PATH ({on_path}). Nothing is wrong with this copy — "
+                  f"it matters only if something later invokes the bare command.")
+        remedy = ("keep calling this copy by absolute path (you already are), or put its "
+                  "directory first on PATH if anything else will type the bare command")
     elif on_path:
         detail = on_path
     else:
         detail = "`voice-tunnel` is not on PATH"
     checks.append(_check(
-        "shim_on_path", bool(on_path), detail, remedy, degraded=(bool(on_path) and not mine),
+        "shim_on_path", bool(on_path), detail, remedy, advisory=foreign,
     ))
 
     failed = [c["name"] for c in checks if not c["ok"]]
@@ -1741,32 +1885,41 @@ def cmd_doctor(_args) -> dict[str, Any]:
         "isolate_with": "VOICE_TUNNEL_HOME=<dir> scopes settings, models and sessions together",
     }
 
+    advisories = [c["name"] for c in checks if c["status"] == "info"]
     out = {"ok": not failed, "checks": checks, "failed": failed,
-           "degraded": degraded, "runtime": runtime}
-    # WHICH OF THESE ONE COMMAND WOULD FIX, read off the remedies themselves rather than assumed.
-    # A bare install produces several non-ok checks whose remedies are all the same word, and
-    # "each carries its own remedy" sent people to solve them one at a time — which is the state
-    # `setup` was introduced to end. Derived from the remedy strings so it cannot drift away from
-    # what those remedies actually say.
-    covered = [c["name"] for c in checks
-               if c["status"] != "ok" and "voice-tunnel setup" in (c["remedy"] or "")]
+           "degraded": degraded, "advisory": advisories, "runtime": runtime}
+
+    # `next` IS ASSEMBLED FROM THE CHECKS' OWN REMEDIES. It used to be a template that named
+    # `voice-tunnel setup` for anything non-ok, and an audit reached a state where the only
+    # remaining item was `shim_on_path` — whose remedy is about PATH, which setup does not touch.
+    # The tool spent that round telling a competent agent to run, verbatim and repeatedly, the one
+    # command that could not possibly help, while the correct fix sat in the check's own `remedy`
+    # field one level down. Advice that ignores the diagnosis is worse than no advice: it is a
+    # loop, and it costs whoever follows it their trust in the rest of the output.
+    #
+    # A bare install still collapses to one line, because several remedies really are the same
+    # command — read off the strings rather than assumed, so it cannot drift from what they say.
+    actionable = [c for c in checks if c["status"] in ("failed", "degraded")]
+    covered = [c["name"] for c in actionable if "voice-tunnel setup" in (c["remedy"] or "")]
+    rest = [c for c in actionable if c["name"] not in covered]
+
+    parts = []
     if failed:
-        out["next"] = "fix the failed checks above — each carries its own remedy"
-        if covered:
-            out["next"] += (f"; `voice-tunnel setup` covers {', '.join(covered)} in one command")
-        if degraded:
-            out["next"] += f". Also running on a fallback: {', '.join(degraded)}"
-    elif degraded:
-        # The line that would have ended the incident in one command.
-        out["next"] = (
-            f"RUNS, BUT NOT AS CONFIGURED — "
-            f"{', '.join(degraded)} {'is' if len(degraded) == 1 else 'are'} on a fallback. "
-            f"`voice-tunnel setup` installs the optional engines and downloads every model. "
-            f"If this machine already has a provisioned checkout elsewhere, run from THAT "
-            f"instead: this process is {sys.executable}"
-        )
-    else:
-        out["next"] = "fully configured — `voice-tunnel serve --session <s>`, then watch"
+        parts.append(f"FAILED: {', '.join(failed)}")
+    if degraded:
+        parts.append(f"RUNS, BUT NOT AS CONFIGURED — {', '.join(degraded)} "
+                     f"{'is' if len(degraded) == 1 else 'are'} on a fallback")
+    if covered:
+        parts.append(f"`voice-tunnel setup` covers {', '.join(covered)} in one command")
+    for c in rest:
+        if c["remedy"]:
+            parts.append(f"{c['name']}: {c['remedy']}")
+    if not parts:
+        parts.append("fully configured — `voice-tunnel serve --session <s>`, then watch")
+    elif covered:
+        parts.append(f"If this machine already has a provisioned checkout elsewhere, run from "
+                     f"THAT instead: this process is {sys.executable}")
+    out["next"] = ". ".join(parts)
     return out
 
 
@@ -1864,7 +2017,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("voices", help="list installed piper voices")
 
-    cu = sub.add_parser("cue", help="play a short non-speech cue (heard|thinking|speaking)")
+    # Built from the vocabulary rather than typed out. `--help` said three cues and `describe`
+    # documented four, and an agent has no way to know which one is stale.
+    from . import cues as _cues
+
+    cu = sub.add_parser("cue",
+                        help=f"play a short non-speech cue ({'|'.join(_cues.names())})")
     cu.add_argument("--session", default="dev")
     cu.add_argument("name")
 
@@ -1920,6 +2078,9 @@ def build_parser() -> argparse.ArgumentParser:
     t = sub.add_parser("status", help="live server state")
     t.add_argument("--session", default="dev")
 
+    x = sub.add_parser("stop", help="stop a detached server")
+    x.add_argument("--session", default="dev")
+
     g = sub.add_parser("turns", help="read the turn log from disk")
     g.add_argument("--session", default="dev")
     g.add_argument("--limit", type=int, default=0)
@@ -1948,6 +2109,7 @@ def main(argv=None) -> int:
         "watch": cmd_watch,
         "say": cmd_say,
         "status": cmd_status,
+        "stop": cmd_stop,
         "turns": cmd_turns,
         "voices": cmd_voices,
         "consumed": cmd_consumed,
