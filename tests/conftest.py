@@ -32,6 +32,27 @@ def hermetic_settings(tmp_path, monkeypatch):
     config._LOAD_REPORT = {}
 
 
+@pytest.fixture(autouse=True)
+def no_live_tunnel(monkeypatch):
+    """Cut every test off from whatever forwarder happens to be running on this machine.
+
+    `status.phone.ready` now asks ngrok's local agent API whether anything is fronting the port,
+    which is the fix for a verdict that could never be true — and it is also a second version of
+    the leak `hermetic_settings` closes one fixture above. The suite writes runtime files on the
+    DEFAULT port, so on a developer machine with a live tunnel `_phone_reachability("127.0.0.1")`
+    correctly answered `ready: true` and failed a test asserting loopback is not phone-ready. The
+    test was right and the environment was wrong: a result that depends on whether the author
+    happens to be mid-conversation is not a test.
+
+    Off by default, so "no tunnel" is what every test gets unless it says otherwise; the ones
+    about detection patch `_ngrok_fronts` or set VOICE_TUNNEL_PUBLIC_URL themselves.
+    """
+    from voice_tunnel import cli
+
+    monkeypatch.setattr(cli, "_ngrok_fronts", lambda port: None)
+    monkeypatch.delenv("VOICE_TUNNEL_PUBLIC_URL", raising=False)
+
+
 @pytest.fixture()
 def tmp_sessions(tmp_path, monkeypatch):
     """Isolate turn logs per test so nothing leaks between them or into the repo."""

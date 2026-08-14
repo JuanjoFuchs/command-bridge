@@ -53,9 +53,10 @@ voice-tunnel` is the same tool with one fewer wrapper, and [WinGet](#winget-wind
 needs nothing installed at all.
 
 **The one thing your agent cannot do for you:** a phone needs HTTPS to reach a microphone at all,
-so a plain LAN address gives *no microphone* rather than a broken one. If the URL you get back
-looks like `http://192.168.…`, run `tailscale serve --bg 8765` and use the address it prints. Your
-agent will tell you when this applies.
+so a plain LAN address gives *no microphone* rather than a broken one. Front the port with a
+tunnel — `ngrok http 8765` is the smallest, and `voice-tunnel status` detects it — and use the
+https address it prints. Your agent will tell you when this applies, and `status.phone.exposure`
+tells you what it costs.
 
 Everything runs on your machine. **No GPU. No account. No speech API.**
 
@@ -175,13 +176,26 @@ voice-tunnel serve --wake claude          # or codex, grok, whatever is driving
 ```
 
 Your phone needs HTTPS to reach a microphone at all — that is a browser rule, and a plain LAN
-address like `http://192.168.1.20:8765` gives **no microphone**, not a broken one. The simplest
-fix:
+address like `http://192.168.1.20:8765` gives **no microphone**, not a broken one. Front the port
+with an https tunnel. The smallest is ngrok, which `voice-tunnel status` detects on its own:
 
 ```bash
-tailscale serve --bg 8765
-voice-tunnel config set VOICE_TUNNEL_ALLOW_CIDRS 100.64.0.0/10
+ngrok http 8765
 ```
+
+`tailscale serve --bg 8765` works too and needs `voice-tunnel config set
+VOICE_TUNNEL_ALLOW_CIDRS 100.64.0.0/10` — but it takes over the device's DNS through MagicDNS,
+system-wide, which can break a corporate VPN on the same machine. Anything else (cloudflared, a
+reverse proxy) is invisible to this tool, so tell it: `voice-tunnel config set
+VOICE_TUNNEL_PUBLIC_URL <https url>`.
+
+> **Read this before you open a tunnel.** A forwarder connects from `127.0.0.1`, so everything it
+> relays arrives as a loopback peer and passes `VOICE_TUNNEL_ALLOW_CIDRS` unconditionally. While
+> a tunnel is up that allowlist filters *nothing*, and the token in the URL is the only gate on a
+> live microphone — so treat that URL as a credential, set `VOICE_TUNNEL_TOKEN` yourself rather
+> than letting it be regenerated each restart, and take the tunnel down when you are done.
+> `voice-tunnel status` reports all of this under `phone.exposure`; `voice-tunnel doctor` warns
+> when the only gate is a token nobody chose.
 
 Then, from the agent's side, this is the whole loop:
 

@@ -13,9 +13,12 @@ the user talking to a tool nobody is reading, and from their side that is indist
 from a crash.
 
 **Never end a turn without either sitting in a blocking `watch` or saying out loud that you
-stopped listening.** And when `watch` returns, **drain the cursor** — one thought routinely
-arrives as several turns, so re-watch until it comes back empty before you reply. Answering the
-first fragment answers the wrong question.
+stopped listening.** And when `watch` returns, **run `voice-tunnel drain --session <s> --since
+<cursor>` before you reply** — one thought routinely arrives as several turns, and an empty watch
+only means he had not started the next sentence yet. `drain` re-watches on collapsing short
+ceilings and checks the speech signals `watch` never returns, so `finished: true` is the answer to
+"may I speak", not a guess. This paragraph used to ask an agent to remember all of that; he was
+interrupted four times in one session on 2026-08-14, which is the argument for a command.
 
 ## The one rule that governs every change
 

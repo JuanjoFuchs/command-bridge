@@ -205,6 +205,29 @@ class TunnelState:
         # answer by listening — is the audio quiet, clipped, or fine and the model just wrong?
         self._wav: wave.Wave_write | None = None
 
+    def pending_turns(self, last_turn_id: int | None = None) -> int:
+        """How many turns he has said that nobody has read — from the LOG, never from a counter.
+
+        This was `turns_logged - 1 - consumed_cursor`, and `turns_logged` is the field this file's
+        own snapshot calls its impostor and the watchdog prompt says never to use: it counts what
+        THIS process has written since it started, so on any server that has been restarted it is
+        far below the real last id. Live on 2026-08-14, mid-conversation: `last_turn_id` 209,
+        `turns_logged` 133, so the arithmetic clamped to zero and `pending_turns` read 0 no matter
+        how far behind the reader actually was.
+
+        THE FIELD IS WORSE THAN MISSING WHEN IT LIES. The obvious way to mechanise "drain until
+        there is nothing left" is to loop until pending is zero, and a field that is already zero
+        turns that loop into a single pass — the exact "he must have finished" mistake the drain
+        discipline exists to stop. It also drives the page's own "read to here — N more below"
+        divider, so the person on the phone was being told he was caught up while he was not.
+
+        `last_turn_id` is passed in by callers that have already paid for the disk read, so
+        publishing both in one snapshot costs one read rather than two.
+        """
+        if last_turn_id is None:
+            last_turn_id = store.last_turn_id(self.session)
+        return max(0, last_turn_id - self.consumed_cursor)
+
     def capture(self, samples) -> None:
         """Append to the failsafe WAV, opening it on first audio."""
         if self._wav is None:
@@ -240,6 +263,10 @@ class TunnelState:
         self.errors.pop(subsystem, None)
 
     def snapshot(self) -> dict[str, Any]:
+        # ONE disk read, two fields. `last_turn_id` and `pending_turns` are the same question
+        # asked twice, and reading the log twice per status call is how a hot path acquires a
+        # cost nobody chose.
+        last_id = store.last_turn_id(self.session)
         return {
             "session": self.session,
             "uptime_s": round(time.time() - self.started_at, 1),
@@ -264,10 +291,14 @@ class TunnelState:
             # Named for what it is and published beside its impostor, because the trap was never
             # that the number was hard to find — it was that a plausible wrong one was closer to
             # hand.
-            "last_turn_id": store.last_turn_id(self.session),
+            "last_turn_id": last_id,
             "turns_logged": self.turns_logged,
             "consumed_cursor": self.consumed_cursor,
-            "pending_turns": max(0, self.turns_logged - 1 - self.consumed_cursor),
+            # COMPUTED FROM THE LOG, like `last_turn_id` and for the same reason. It used to be
+            # `turns_logged - 1 - consumed_cursor`, which read 0 on every restarted server no
+            # matter how far behind the reader was — a field whose obvious use ("drain until it
+            # is zero") was a one-pass no-op. See `pending_turns`.
+            "pending_turns": self.pending_turns(last_id),
             "agent_state": self.agent_state,
             "speech_active": self.buffer.speech_active,
             "last_played": self.last_played,
@@ -832,7 +863,7 @@ async def handle_consumed(request: web.Request) -> web.Response:
     agent_state = str((body or {}).get("state") or "thinking")
     await _broadcast_json(
         state,
-        {"type": "consumed", "cursor": cursor, "pending": max(0, state.turns_logged - 1 - cursor)},
+        {"type": "consumed", "cursor": cursor, "pending": state.pending_turns()},
     )
     await _set_agent_state(state, agent_state)
     if agent_state == "thinking":
@@ -1177,7 +1208,8 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         {
             "type": "consumed",
             "cursor": state.consumed_cursor,
-            "pending": max(0, state.turns_logged - 1 - state.consumed_cursor),
+            # The turn was just appended, so its id IS the log's last — no second read.
+            "pending": state.pending_turns(int(turn.get("id", -1))),
         },
     )
     await _push_cue(state, "heard")

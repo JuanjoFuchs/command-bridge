@@ -737,6 +737,26 @@ def trusted_proxies() -> tuple[str, ...]:
     return tuple(c.strip() for c in raw.split(",") if c.strip())
 
 
+def public_url() -> str:
+    """The https URL a phone actually opens, when something outside this tool is forwarding to it.
+
+    A WAY TO ASSERT WHAT CANNOT BE DETECTED. `status.phone.ready` is derived from the bind host,
+    and every working way to reach a phone — ngrok, `tailscale serve`, cloudflared, any reverse
+    proxy — forwards from LOOPBACK. So the field was false on a tunnel that had been working for
+    hours, and the remedy beside it told the owner to go and do the thing he had already done.
+    A remedy that survives being followed is a remedy people stop reading.
+
+    ngrok is detected directly from its local agent API, so it needs no setting. Everything else
+    is invisible from in here: the forwarder is a separate process with no common interface, and
+    guessing from an open socket would be a different claim than the one being made. Setting this
+    says "I have fronted this port, and here is the URL" — which is the one fact the tool cannot
+    learn and the operator always knows.
+
+    It changes no behaviour beyond the verdict. Nothing binds to it and nothing routes through it.
+    """
+    return _env("VOICE_TUNNEL_PUBLIC_URL").strip()
+
+
 # ------------------------------------------------------------------------ piper
 #
 # Resolution lives here rather than in tts.py because AGENTS.md convention 5 says tunables live
@@ -1159,6 +1179,12 @@ SETTINGS: tuple = (
              lambda: ",".join(extra_allow_cidrs())),
     _setting("VOICE_TUNNEL_TRUSTED_PROXIES", "leave empty unless a real proxy fronts this",
              lambda: ",".join(trusted_proxies())),
+    _setting("VOICE_TUNNEL_PUBLIC_URL",
+             "the https URL a phone opens, when something you started is forwarding to this port "
+             "(tailscale serve, cloudflared, any reverse proxy). ngrok is detected on its own. "
+             "Setting it makes `status.phone.ready` true and stops the remedy repeating advice "
+             "you have already followed",
+             public_url),
     _setting("VOICE_TUNNEL_DIR", "where turn logs live", session_dir),
     _setting("VOICE_TUNNEL_MODELS_DIR", "where downloaded models live", models_dir),
     _setting("VOICE_TUNNEL_TTS", "sapi | piper | none", tts_backend),
