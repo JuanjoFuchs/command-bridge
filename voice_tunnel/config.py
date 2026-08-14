@@ -486,6 +486,33 @@ def sentence_pause() -> float:
             pass
     return SENTENCE_SILENCE_S
 
+CONSONANT_BOOST = 0.0
+"""How hard to lift consonants so they survive fast speech. 0 disables, 1 is the maximum.
+
+**Defaults to OFF because it failed its own listening test**, and the reason is worth keeping:
+companding raises everything quiet, and a TTS model's noise floor is quiet. Lifting consonants
+lifted the hiss with them. JJ, 2026-08-14, at strength 0.6: *"the voice sounds weird... as if it's
+coming through an old speaker that has white noise in it"* — and the consonants he was still
+missing did not come back. The idea addresses a real measured problem (see `tts._articulate`) and
+may be salvageable with a band-limited or gated version that only lifts 2-8 kHz during transients,
+but the naive broadband form is a net loss and must not be switched on by default again.
+
+The problem it was aimed at is still open: intelligibility and pace are in direct conflict here.
+At 1.25x JJ could hear every word and called it too slow; at 1.6x he liked the pace and could not
+hear "the first consonant of each word". The working setting is the slower one."""
+
+
+def consonant_boost() -> float:
+    """Persisted consonant-boost strength, clamped to [0, 1]. Tuned by ear, so it must persist."""
+    raw = _env("VOICE_TUNNEL_CONSONANT_BOOST")
+    if raw:
+        try:
+            return max(0.0, min(1.0, float(raw)))
+        except ValueError:
+            pass
+    return CONSONANT_BOOST
+
+
 TTS_SR = 22050
 """Output rate for synthesized audio. SAPI and Piper both produce this comfortably."""
 
@@ -734,6 +761,68 @@ def piper_voices() -> list:
         if f.endswith(".onnx") and os.path.isfile(os.path.join(d, f + ".json")):
             names.append(f[:-5])
     return sorted(names)
+
+
+DEFAULT_KOKORO_VOICE = "bm_daniel"
+"""Which Kokoro voice speaks when nothing names one.
+
+Daniel is one of the two the owner picked when he auditioned all six (the other was `bf_emma`).
+Same role `DEFAULT_PIPER_VOICE` plays: it is what lets `VOICE_TUNNEL_TTS=kokoro` be the only
+setting a Kokoro session needs."""
+
+KOKORO_SR = 24000
+"""Kokoro synthesizes at 24 kHz, NOT the 22.05 kHz `TTS_SR` that SAPI and Piper share.
+
+Not a constant to "fix" by resampling: every backend already returns its own rate alongside the
+audio and every caller threads that rate through, so the honest thing is to carry 24 kHz to the
+sink rather than degrade it on the way out."""
+
+
+def kokoro_model() -> str:
+    """Path to the Kokoro `.onnx`, or "" if it is not on disk.
+
+    Kokoro is ONE model plus ONE voice pack, a different shape from Piper's one-file-per-voice.
+    So there is no directory scan here: the voices live inside `kokoro_voices_bin()` and only the
+    loaded model can enumerate them.
+    """
+    explicit = _env("VOICE_TUNNEL_KOKORO_MODEL")
+    if explicit:
+        return explicit
+    path = os.path.join(models_dir(), "kokoro-v1.0.onnx")
+    return path if os.path.isfile(path) else ""
+
+
+def kokoro_voices_bin() -> str:
+    """Path to the Kokoro voice pack (`voices-v1.0.bin`), or "" if absent.
+
+    Required as well as the model: the `.onnx` alone synthesizes nothing, because a voice is a
+    style vector looked up in this file. Model-without-pack is a real state — the same
+    engine-without-model trap `download` already warns about — so both are checked separately.
+    """
+    explicit = _env("VOICE_TUNNEL_KOKORO_VOICES")
+    if explicit:
+        return explicit
+    path = os.path.join(models_dir(), "voices-v1.0.bin")
+    return path if os.path.isfile(path) else ""
+
+
+def kokoro_voice() -> str:
+    """The default Kokoro voice NAME — not a path, unlike `piper_voice()`.
+
+    The asymmetry is the format's, not a design choice: a Piper voice IS a file, a Kokoro voice
+    is a key inside one.
+    """
+    return _env("VOICE_TUNNEL_KOKORO_VOICE") or DEFAULT_KOKORO_VOICE
+
+
+def kokoro_lang_for(voice: str) -> str:
+    """Kokoro needs a language for phonemization, and it is derivable from the voice name.
+
+    Kokoro names voices `<accent><gender>_<name>`: a leading `b` is British, `a` American.
+    Phonemizing a British voice with `en-us` rules makes the accent audibly slip, so this is
+    derived rather than left as one more setting to get wrong.
+    """
+    return "en-gb" if voice.startswith("b") else "en-us"
 
 
 def piper_bin() -> str:
