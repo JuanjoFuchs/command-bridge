@@ -713,16 +713,25 @@
     const t = document.createElement("span");
     t.textContent = text;
     d.appendChild(s); d.appendChild(t);
-    // A reply is PROOF the turns above it were read, so it belongs ABOVE the read boundary.
-    // Appending every row at the end put claude's answer below "claude has read to here", which
-    // reads as an answer to something he hasn't been shown yet — and left the unread marker
-    // stranded mid-log instead of at the bottom where the waiting turns are. Live from the
-    // car 2026-07-31: "whatever responses you generate ... should show on top of that. I have
-    // noticed that they show below that."
+    // A reply is PROOF the turns above it were read, and that guarantee is still enforced — but
+    // by MOVING THE BOUNDARY DOWN TO THE REPLY, never by moving the reply up to the boundary.
+    // Live on the move 2026-07-31: "whatever responses you generate ... should show on top of
+    // that. I have noticed that they show below that."
+    //
+    // It used to insert the reply above `$divider`, which was correct only while the consumed
+    // cursor was current at the instant of speaking. Once the agent began draining CONCURRENTLY
+    // with its own work (2026-08-14, because draining first cost ~14s of dead air before any
+    // thinking started), the cursor lags by the last turn or two — so the divider sits a few rows
+    // up and every reply landed ABOVE the newest things he said. JJ, same day: "that turn in text
+    // came above the two previous turns that you have spoken and above what I had spoken as
+    // well. I think the order in how it's displaying in the UI is broken."
+    //
+    // Appending and then dragging the divider down keeps chronology unconditionally, and keeps
+    // the original promise, because speaking IS the proof — it does not depend on a cursor
+    // having caught up first.
+    $log.appendChild(d);
     if (cls === "claude" && $divider && $divider.parentNode === $log) {
-      $log.insertBefore(d, $divider);
-    } else {
-      $log.appendChild(d);
+      $log.insertBefore($divider, d);
     }
     revealRow(d);
   }
