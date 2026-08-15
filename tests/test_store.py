@@ -71,3 +71,50 @@ def test_addressed_flag_round_trips(tmp_sessions):
     store.append_turn("s", "to you", 1, 2, addressed=True)
     turns = store.read_turns("s")
     assert [t["addressed"] for t in turns] == [False, True]
+
+
+# ------------------------------------------------------- turns that were not for you (2026-08-15)
+
+
+def test_unaddressed_turns_are_consumed_but_not_returned(tmp_sessions):
+    """Reported live on the move, family talking around him: *"we need a better way to ignore what
+    isn't classified as me, and it doesn't waste turns resolving the watch."*
+
+    Both halves matter. Not returned, so the agent does not wake for someone else's sentence —
+    and CONSUMED, so the same sentence is not re-read on the next call and does not wake it then.
+    """
+    store.append_turn("s", "hey claude, do the thing", 0, 1, True)
+    store.append_turn("s", "pass the water", 1, 2, False)
+    store.append_turn("s", "what's for lunch", 2, 3, False)
+
+    turns, cursor = store.turns_since("s", -1, addressed_only=True)
+
+    assert [t["text"] for t in turns] == ["hey claude, do the thing"]
+    assert cursor == 2, "the cursor must clear the unaddressed turns, not stall behind them"
+
+    again, cursor = store.turns_since("s", cursor, addressed_only=True)
+    assert again == [], "consumed means consumed — they must not come back"
+
+
+def test_all_turns_still_sees_everything(tmp_sessions):
+    """The filter is a default, not a deletion: an audit of what the gate rejected must remain
+    possible, and `--all-turns` is that audit."""
+    store.append_turn("s", "mine", 0, 1, True)
+    store.append_turn("s", "someone else", 1, 2, False)
+
+    turns, _ = store.turns_since("s", -1, addressed_only=False)
+    assert [t["text"] for t in turns] == ["mine", "someone else"]
+
+
+def test_a_watch_does_not_end_on_a_turn_that_was_not_for_you(tmp_sessions):
+    """The wall-clock version of the bug: the watch RETURNED, which is what burned his turns.
+
+    A room talking must look identical to silence from the agent's side — an empty heartbeat
+    after the full timeout, with the cursor advanced past what it consumed.
+    """
+    store.append_turn("s", "someone else entirely", 0, 1, False)
+
+    turns, cursor = store.watch("s", -1, timeout=0.3, poll=0.05, addressed_only=True)
+
+    assert turns == [], "an unaddressed turn must not end the wait"
+    assert cursor == 0, "but it must still be marked read"

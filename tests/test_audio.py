@@ -312,3 +312,86 @@ def test_the_floor_follows_the_room_back_down():
     for _ in range(int(config.NOISE_WINDOW_S * 10) + 5):
         b.feed(_noise(int(sr * 0.1), 0.001))
     assert b._noise_floor < noisy / 3, "the estimate must follow the room when it goes quiet"
+
+
+# ------------------------------------------------------------------ de-esser (2026-08-15)
+
+def _pcm(samples):
+    import numpy as np
+    return (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+
+
+def _rms(pcm):
+    import numpy as np
+    x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    return float(np.sqrt((x ** 2).mean()))
+
+
+def test_the_deesser_attenuates_a_sibilant_burst():
+    """A high-frequency burst is what an 's' looks like to the detector: nearly all of its energy
+    sits above the 4 kHz split. It must come out quieter.
+
+    Reported 2026-08-15 on the move: *"whenever you pronounce an S, it sounds very high and it
+    makes someone nearby headache."*
+    """
+    import numpy as np
+    from voice_tunnel import tts
+
+    rate = 22050
+    t = np.arange(rate // 2) / rate
+    sibilant = _pcm(0.5 * np.sin(2 * np.pi * 7000 * t))
+
+    out = tts._deess(sibilant, rate)
+
+    assert _rms(out) < _rms(sibilant) * 0.85, "sibilance must actually come down"
+
+
+def test_the_deesser_leaves_a_vowel_alone():
+    """THE CONSTRAINT THAT MAKES THIS DIFFERENT FROM A TREBLE CUT. `_articulate` exists because
+    the owner could not hear consonant attacks at speed; a filter that dulls everything would
+    undo that. Below the detector's threshold the gain is exactly 1.0, so a low tone must come
+    back bit-identical."""
+    import numpy as np
+    from voice_tunnel import tts
+
+    rate = 22050
+    t = np.arange(rate // 2) / rate
+    vowel = _pcm(0.5 * np.sin(2 * np.pi * 220 * t))
+
+    assert tts._deess(vowel, rate) == vowel
+
+
+def test_deess_zero_is_a_true_bypass():
+    """0 must return the input object untouched, not a re-quantized copy — otherwise 'off' still
+    costs a float32 round trip on every clip."""
+    import numpy as np
+    from voice_tunnel import config, tts
+
+    rate = 22050
+    t = np.arange(1000) / rate
+    pcm = _pcm(0.5 * np.sin(2 * np.pi * 7000 * t))
+
+    original = config.DEESS
+    try:
+        config.DEESS = 0.0
+        assert tts._deess(pcm, rate) is pcm
+    finally:
+        config.DEESS = original
+
+
+def test_a_midrange_tone_is_not_treated_as_sibilance():
+    """The regression the FIRST detector shipped with, pinned so it cannot come back.
+
+    A one-pole difference `x[n] - a*x[n-1]` was used as the high-band detector and its
+    coefficient is a LOW-pass pole — it passed a 1 kHz tone at most of full amplitude, so
+    ordinary voiced speech scored above the sibilance threshold and got attenuated. The fix was
+    a framed FFT, where the split is a bin index and cannot be off by a filter design.
+    """
+    import numpy as np
+    from voice_tunnel import tts
+
+    rate = 22050
+    t = np.arange(rate // 2) / rate
+    midrange = _pcm(0.5 * np.sin(2 * np.pi * 1000 * t))
+
+    assert tts._deess(midrange, rate) == midrange

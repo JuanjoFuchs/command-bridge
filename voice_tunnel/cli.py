@@ -158,7 +158,7 @@ def _backoff_ladder_text(base: float = WATCH_BASE_S) -> str:
     return " -> ".join(_human_seconds(v) for v in _backoff_ladder(base))
 
 
-# The ladder `drain` walks: eight seconds, then four, then two. It is the OPPOSITE shape to the
+# The ladder `drain` walks: five seconds, then three, then two. It is the OPPOSITE shape to the
 # backoff above, and deliberately so, because it answers the opposite question.
 #
 # `watch` is waiting for a conversation to START, so every empty round is evidence that nothing
@@ -171,9 +171,14 @@ def _backoff_ladder_text(base: float = WATCH_BASE_S) -> str:
 # interruptions happened: on 2026-08-14 he was cut across four times, twice while the previous
 # interruption was still being fixed.
 #
+# The first rung started at eight seconds and was cut to five the same afternoon, because
+# smart-turn already decides whether an utterance SOUNDED finished before it becomes a turn —
+# so the opening rung is insurance against the pause between sentences, not the pause inside
+# one, and eight seconds was pricing the risk the turn detector had already absorbed.
+#
 # Three rungs rather than a formula because the shape is empirical, and a caller who has watched
 # a slower or faster speaker can pass their own with `--waits`.
-DRAIN_WAITS_S = (8.0, 4.0, 2.0)
+DRAIN_WAITS_S = (5.0, 3.0, 2.0)
 
 # A hard ceiling, so the command written to stop an agent interrupting can never itself become
 # the hang that stops it answering. Two minutes is longer than any single thought this tunnel has
@@ -305,10 +310,20 @@ DESCRIBE: dict[str, Any] = {
                                    "the long ceiling. What makes that safe is STEP 0 of the "
                                    "watchdog prompt: it reads `status.watch_open` and does "
                                    "nothing when a watch is already running, so the detached "
-                                   "watch and the scheduled job stop being two watchers. NEVER "
-                                   "detach merely to free yourself while you do something else — "
-                                   "that is the case `do_not_detach` is about, and it is the one "
-                                   "that produced four concurrent watches.",
+                                   "watch and the scheduled job stop being two watchers. There "
+                                   "is a SECOND legitimate case, added 2026-08-14 at the owner's "
+                                   "direction: heads-down in long real work, background ONE watch "
+                                   "so its completion pokes you the moment he starts talking — "
+                                   "he separated it himself: 'whenever you're doing something, "
+                                   "maybe the watch shouldn't be blocking… so that as soon as I "
+                                   "finish speaking, you get a notification while you were doing "
+                                   "other stuff.' What keeps that safe is the same refusal: "
+                                   "`watch` will not start when one is already open. What is "
+                                   "STILL wrong is detaching merely to free the turn and then "
+                                   "not reading the result — a backgrounded watch you never "
+                                   "read is the four-concurrent-watches case wearing a work "
+                                   "hat, and a backgrounded DRAIN is worse: the drain gates "
+                                   "your own mouth, so it must be foreground and LAST.",
         "check_first": "Your job's first step must be `status`: if `watch_open` is true, do "
                        "nothing at all. If the key is ABSENT the server predates it — absent is "
                        "not false, so check your own background tasks before starting anything.",
@@ -475,6 +490,14 @@ DESCRIBE: dict[str, Any] = {
                            "refusal exists because concurrent watches race for the same turns "
                            "and one cursor silently falls behind; override only when you know "
                            "the other watch is dead.",
+                "--all-turns": "ALSO return turns the wake gate judged were not for you. OFF BY "
+                               "DEFAULT: an unaddressed turn advances the cursor but does not "
+                               "end the wait, so other people in the room cannot burn your "
+                               "turns. Reported on the move, 2026-08-15, with other people talking "
+                               "around him — every one of those turns already carried "
+                               "`addressed: false` and nothing was reading it. Pass this only "
+                               "to audit what the gate rejected; `--no-wake-gate` on `serve` is "
+                               "the right switch for a genuinely single-speaker room.",
             },
             "returns": {"turns": "[turn, ...]", "cursor": "int — resume from this",
                         "verbose": "bool — ON means NARRATE CONTINUOUSLY and unprompted; OFF "
@@ -505,13 +528,21 @@ DESCRIBE: dict[str, Any] = {
                                  "to stop you interrupting can never become a hang. Reaching it "
                                  "returns `finished: false` — the ceiling ended the drain, "
                                  "silence did not.",
+                "--all-turns": "also collect turns the wake gate judged were not for you. OFF BY "
+                               "DEFAULT, and here the default matters more than on `watch`: an "
+                               "unaddressed turn RESTARTS the ladder, so a room talking around "
+                               "him would hold the drain open until the ceiling and he would "
+                               "never get an answer.",
                 "--force": "start even if another watch is already open on this session. Same "
                            "refusal and same reason as `watch --force`: a drain IS a run of "
                            "watches, so it races a concurrent watcher for the same turns.",
             },
             "returns": {
                 "turns": "[turn, ...] — EVERYTHING he said across the whole drain, already "
-                         "marked read; the turns from every round, not just the last",
+                         "marked read; the turns from every round, not just the last. Turns the "
+                         "wake gate judged were not for you are consumed but not returned "
+                         "(`--all-turns` includes them), so a room talking around him cannot "
+                         "restart the ladder and keep him waiting",
                 "cursor": "int — resume from this",
                 "count": "int",
                 "finished": "bool — THE FIELD TO BRANCH ON. True means he is genuinely done and "
@@ -536,7 +567,13 @@ DESCRIBE: dict[str, Any] = {
                      "ran out), `control` (a button moved, handed through the way `watch` does), "
                      "`no_server`, `watch_open`. Written after 2026-08-14, when he was "
                      "interrupted four times, twice while the previous interruption was being "
-                     "fixed.",
+                     "fixed. FOREGROUND ONLY, and LAST — after the work, immediately before the "
+                     "say it gates. A backgrounded drain was tried the same afternoon and is "
+                     "worse than none: the agent spoke in the same turn without reading the "
+                     "result, so it protected nothing while looking like it did. And run it "
+                     "AFTER composing, not before starting — run first, it spends its whole "
+                     "wait as dead air before any work begins, which he named the most annoying "
+                     "failure of a four-hour session.",
         },
         "wake": {
             "args": {"--session": "session id",
@@ -561,7 +598,13 @@ DESCRIBE: dict[str, Any] = {
             "notes": "ONE switch, TWO behaviours that agree with each other — separate controls "
                      "would let him set a contradiction (narrate everything, listen to nothing). "
                      "ON = conversational: narrate before acting via `say --now`, and return to "
-                     "`watch` between steps rather than disappearing into the work. "
+                     "`watch` between steps rather than disappearing into the work. ON IS NOT "
+                     "PERMISSION TO INTERRUPT: narrate when he hands back, never across a "
+                     "thought — check the speech signals (`drain`, or `status.user_speaking` + "
+                     "`speech_active`) before any narration, exactly as before a reply. A "
+                     "status update landed mid-thought on 2026-08-14 and cost him the idea he "
+                     "was assembling: 'you interrupted me and I lost my chain of thought.' The "
+                     "update costs nothing to hold and costs him a thought to receive. "
                      "**OFF = SILENCE IS THE DEFAULT: stay quiet until he asks.** Do not narrate, "
                      "do not volunteer progress, do not fill a pause — speak when he has asked "
                      "you something, and otherwise stay in `watch`. The one exception is the "
@@ -586,7 +629,12 @@ DESCRIBE: dict[str, Any] = {
         },
         "say": {
             "args": {"--session": "session id", "text": "positional; what to speak",
-                     "--now": "interrupt whatever is playing instead of queueing behind it",
+                     "--now": "FIRE-AND-FORGET: return immediately while the clip synthesizes "
+                              "and plays in the background. It does NOT interrupt playback — "
+                              "only his voiceprint barge-in can do that — and the immediate "
+                              "response carries no real held_for/delivered, so those fields "
+                              "cannot be trusted on a --now call; `voice-tunnel timing` has "
+                              "the true numbers afterwards",
                      "--voice": "piper voice NAME for this one line (see `voice-tunnel voices`)"},
             "returns": {
                 "queued": "bool — the clip was synthesized and handed to the transport",
@@ -1330,7 +1378,14 @@ def _next_action(turns, live: dict[str, Any] | None,
                 if live.get("verbose") else
                 "stay quiet unless he asked you something; if he gave you an order, confirm it in "
                 "one line and warn if it will take a while, then work without narrating")
-        return f"run {watch} until count is 0, then {mode}"
+        # THE DRAIN GOES IN THE `next`, NOT IN A MANUAL. Within an hour of `drain` shipping, the
+        # agent that specified it was hand-rolling watch rungs from memory — the rule survived in
+        # prose and died at the moment of use. So the one moment that matters (turns just landed,
+        # a reply is coming) carries the rule itself: work first, drain last, foreground, then say.
+        drain = (f"`voice-tunnel drain --session {session} --since <cursor> --waits 5,3,2` in the "
+                 "FOREGROUND (never backgrounded — an unread drain protects nothing)")
+        return (f"do the work his turn asks for FIRST, then run {drain} immediately before any "
+                f"say — if it returns turns, fold them in and drain again; then {mode}")
     return f"run {watch}"
 
 
@@ -1455,7 +1510,8 @@ def cmd_watch(args) -> dict[str, Any]:
     while True:
         remaining = deadline - time.monotonic()
         turns, cursor = store.watch(
-            args.session, cursor, timeout=max(0.0, min(1.0, remaining)))
+            args.session, cursor, timeout=max(0.0, min(1.0, remaining)),
+            addressed_only=not getattr(args, "all_turns", False))
         if turns or remaining <= 1.0:
             break
         if baseline is not None:
@@ -1787,6 +1843,10 @@ def cmd_drain(args) -> dict[str, Any]:
                 # this passes one: the ladder is the schedule, and the backoff must not multiply
                 # a rung of it into minutes.
                 timeout=max(0.1, min(waits[step], remaining)),
+                # Threaded through rather than defaulted: an unaddressed turn restarting the
+                # ladder is the drain's version of the same bug — a room talking around him
+                # would keep the drain alive forever and he would never get an answer.
+                all_turns=bool(getattr(args, "all_turns", False)),
             ))
             rounds += 1
             if got.get("error"):
@@ -1906,7 +1966,18 @@ def cmd_say(args) -> dict[str, Any]:
         # The cursor is not knowable from here — `say` never read the log — so this is the one
         # place the agent must supply it, and the placeholder says so rather than pretending.
         held = float(result.get("held_for") or 0)
-        if not result.get("delivered", True):
+        if result.get("async"):
+            # A --now call returns before the hold-loop runs, so held_for/delivered do not
+            # exist yet and the branches below would always take the innocuous one. Say so
+            # instead of pretending the check happened — the caller's protection on this path
+            # is the drain it ran BEFORE speaking, not a hold report it never received.
+            result["next"] = (
+                f"run `voice-tunnel watch --session {args.session} --since <cursor>` now — "
+                f"this was fire-and-forget, so no held_for/delivered came back; if you did not "
+                f"drain immediately before this say, `voice-tunnel timing` will show whether "
+                f"the server had to hold it"
+            )
+        elif not result.get("delivered", True):
             # NOBODY HEARD IT outranks everything else: there is no stale reply to worry about
             # when there was no listener.
             result["next"] = (
@@ -3093,6 +3164,10 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--timeout", type=float, default=None)
     w.add_argument("--force", action="store_true",
                    help="start even if another watch is already open on this session")
+    w.add_argument("--all-turns", action="store_true",
+                   help="also return turns the wake gate judged were NOT for you (someone else "
+                        "in the room). Off by default: those turns still advance the cursor, "
+                        "they just stop ending the wait")
 
     dr = sub.add_parser(
         "drain", help="block until he has FINISHED speaking, then hand over every turn")
@@ -3109,6 +3184,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="hard ceiling; returns finished:false rather than waiting forever")
     dr.add_argument("--force", action="store_true",
                     help="start even if another watch is already open on this session")
+    dr.add_argument("--all-turns", action="store_true",
+                    help="also collect turns the wake gate judged were NOT for you; off by "
+                         "default, so a room talking around him cannot restart the ladder")
 
     y = sub.add_parser("say", help="speak text to the connected client")
     y.add_argument("--session", default="dev")

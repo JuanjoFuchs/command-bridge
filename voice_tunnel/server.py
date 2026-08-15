@@ -72,7 +72,10 @@ class TunnelState:
 
         Keyed by subsystem so an unrelated failure can never hide the one you are chasing."""
         self.client_sr: int = config.TARGET_SR
-        self.consumed_cursor: int = -1
+        self.consumed_cursor: int = store.read_consumed_cursor(session)
+        """Seeded from disk, not from -1: the turn log survives a restart, so the read position
+        must too, or a bounced server reports the whole log as pending (the 307-of-306 bug,
+        2026-08-14). -1 still means "never consumed" — a fresh session has no file."""
         self.agent_state: str = "idle"
         self.cues_enabled: bool = config.cues_enabled()
         self.speech_speed: float = config.speech_speed()
@@ -857,6 +860,9 @@ async def handle_consumed(request: web.Request) -> web.Response:
     except (TypeError, ValueError):
         return web.json_response({"error": "cursor must be an int"}, status=400)
     state.consumed_cursor = cursor
+    # Persisted beside the log so a server restart resumes from the real read position instead
+    # of reporting every turn ever logged as pending. Best-effort: see write_consumed_cursor.
+    store.write_consumed_cursor(state.session, cursor)
     # The agent has the turn in hand. Everything from here to `say_requested` is IT thinking —
     # the stage that dominated every measurement and was invisible until it had a name.
     timing.stamp(state.session, "consumed", cursor=cursor)

@@ -110,17 +110,34 @@ def append_turn(
 
 
 def turns_since(
-    session: str, cursor: int, base: str | None = None
+    session: str,
+    cursor: int,
+    base: str | None = None,
+    addressed_only: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     """Every turn with `id > cursor`, plus the new cursor.
 
     Returning *all* of them is the contract, not an optimization: the agent reasons for an
     unbounded time between calls and the log keeps growing meanwhile. Returning only the
     newest would silently drop everything said while it was thinking.
+
+    `addressed_only` drops turns the wake gate already judged were not for you — someone else in
+    the room, or speech with no wake phrase outside the attention window. **The cursor still
+    advances past them**, which is the whole point: they are marked read and never come back,
+    so the agent neither wakes for them nor re-reads them on the next call.
+
+    Reported live 2026-08-15, on the move: *"other people nearby are talking, and I
+    think you're picking up what they are saying. We need a better way to ignore what isn't
+    classified as me, so it doesn't waste turns resolving the watch."* Every one of those turns
+    already carried `addressed: false` and a `reason` explaining why — the gate was right and
+    nothing downstream was reading its answer.
     """
     turns = [t for t in read_turns(session, base) if int(t.get("id", -1)) > cursor]
     turns.sort(key=lambda t: int(t.get("id", -1)))
+    # Cursor from the FULL slice, before filtering: skipped turns are consumed, not deferred.
     new_cursor = int(turns[-1]["id"]) if turns else cursor
+    if addressed_only:
+        turns = [t for t in turns if t.get("addressed")]
     return turns, new_cursor
 
 
@@ -145,19 +162,26 @@ def watch(
     timeout: float = 30.0,
     poll: float = 0.1,
     base: str | None = None,
+    addressed_only: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     """Block until at least one turn with `id > cursor` exists, or `timeout` elapses.
 
     On timeout returns `([], cursor)` — an empty result is a heartbeat, not an error, so a
     caller can distinguish "nothing said" from "the tunnel died".
+
+    With `addressed_only`, unaddressed turns advance the cursor without ending the wait: the
+    room can talk for an hour and the watch keeps blocking, which is what "don't waste turns"
+    means. Returning `new_cursor` on the timeout path (rather than the old `cursor`) is what
+    stops those consumed turns being re-read on the next call.
     """
     deadline = time.monotonic() + timeout
+    latest = cursor
     while True:
-        turns, new_cursor = turns_since(session, cursor, base)
+        turns, latest = turns_since(session, latest, base, addressed_only=addressed_only)
         if turns:
-            return turns, new_cursor
+            return turns, latest
         if time.monotonic() >= deadline:
-            return [], cursor
+            return [], latest
         time.sleep(poll)
 
 
@@ -168,3 +192,44 @@ def list_sessions(base: str | None = None) -> list[str]:
     return sorted(
         f[:-6] for f in os.listdir(base) if f.endswith(".jsonl")
     )
+
+
+def _consumed_path(session: str, base: str | None = None) -> str:
+    validate_session(session)
+    base = base or config.session_dir()
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, f"{session}.consumed.json")
+
+
+def read_consumed_cursor(session: str, base: str | None = None) -> int:
+    """The last cursor an agent reported as read, surviving server restarts.
+
+    The turn LOG survives a restart but the in-memory `consumed_cursor` used to reset to -1,
+    so a server bounced mid-conversation reported every turn ever logged as pending — 307
+    pending against a log of 306 was the live sighting (2026-08-14). The log and the read
+    position are the same kind of fact; persisting one without the other is what made the
+    status lie.
+
+    -1 when nothing was ever consumed, matching `last_turn_id`'s empty answer, so a genuinely
+    fresh session still reads as "behind by everything" — which for a fresh session is true.
+    """
+    path = _consumed_path(session, base)
+    if not os.path.exists(path):
+        return -1
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return int(json.load(fh).get("cursor", -1))
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return -1
+
+
+def write_consumed_cursor(session: str, cursor: int, base: str | None = None) -> None:
+    """Persist the read position beside the log it describes. Best-effort by design: a disk
+    error here must never break the consume call itself — the cost is only that a future
+    restart over-reports pending, which is the bug this softens, not a new one."""
+    path = _consumed_path(session, base)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"cursor": int(cursor)}, fh)
+    except OSError:
+        pass

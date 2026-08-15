@@ -74,6 +74,44 @@ def test_a_reader_that_has_read_nothing_is_behind_by_everything(state):
     assert state.pending_turns() == 3
 
 
+def test_a_restart_does_not_forget_how_far_the_agent_had_read(monkeypatch, tmp_path):
+    """THE SECOND HALF OF THE RESTART BUG. The log survives a restart but the read position
+    used to live only in process memory, so a server bounced mid-conversation reported the
+    entire history as pending — 307 pending against a log of 306, live on 2026-08-14, from a
+    cursor reset to -1 over a log that had already been read to 305.
+
+    The log and the read position are the same kind of fact. Persisting one without the other
+    is what made `pending_turns` honest on paper and a liar after every restart."""
+    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    say("t", 306)                                  # ids 0..305, all read...
+    store.write_consumed_cursor("t", 305)          # ...and the agent said so
+
+    restarted = server.TunnelState("t", token=None)  # the process bounces
+
+    assert restarted.consumed_cursor == 305, (
+        "a restarted server must resume from the persisted read position, not from -1"
+    )
+    assert restarted.pending_turns() == 0, (
+        "306 read turns must not come back as 306 pending ones"
+    )
+
+
+def test_a_genuinely_fresh_session_still_starts_at_minus_one(state):
+    """The fix must not break the fresh case the old default was right about: no consumed
+    file means no reader yet, and -1 is the honest 'behind by everything'."""
+    assert store.read_consumed_cursor("t") == -1
+    assert state.consumed_cursor == -1
+
+
+def test_a_corrupt_consumed_file_degrades_to_fresh_not_to_a_crash(monkeypatch, tmp_path):
+    """Best-effort persistence cuts both ways: a truncated or hand-mangled file must cost at
+    most an over-reported backlog — the bug this softens — never a server that will not start."""
+    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    with open(store._consumed_path("t"), "w", encoding="utf-8") as fh:
+        fh.write("{not json")
+    assert store.read_consumed_cursor("t") == -1
+
+
 def test_the_snapshot_publishes_the_honest_number(state):
     say("t", 210)
     state.turns_logged = 0

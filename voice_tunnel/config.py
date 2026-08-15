@@ -513,6 +513,35 @@ def consonant_boost() -> float:
     return CONSONANT_BOOST
 
 
+DEESS = 0.6
+"""How hard to tame sibilance — the piercing 's'. 0 disables, 1 is the maximum.
+
+**Defaults ON, unlike CONSONANT_BOOST above, and the asymmetry is deliberate.** That one lifted
+the whole quiet part of the signal including the model's noise floor, so it made everything worse
+to fix one thing. This one attenuates a single band and only while that band is dominant, so on
+every frame that is not an 's' the gain is exactly 1.0 — a listener who does not have the problem
+hears nothing change.
+
+Reported 2026-08-15, on the move: *"whenever you pronounce an S, it sounds very high and it makes
+someone nearby headache."* The complaint came from someone who was not even the user, which is worth
+recording: this tool gets played out loud in rooms with other people in them, and fatigue for a
+bystander is a real failure even when the operator is comfortable.
+
+0.6 rather than 1.0 because full strength starts to lisp. Tuned by ear like everything else in
+this file, so it persists."""
+
+
+def deess() -> float:
+    """Persisted de-esser strength, clamped to [0, 1]."""
+    raw = _env("VOICE_TUNNEL_DEESS")
+    if raw:
+        try:
+            return max(0.0, min(1.0, float(raw)))
+        except ValueError:
+            pass
+    return DEESS
+
+
 TTS_SR = 22050
 """Output rate for synthesized audio. SAPI and Piper both produce this comfortably."""
 
@@ -1202,6 +1231,10 @@ SETTINGS: tuple = (
              f"seconds of silence between sentences (0-{PAUSE_MAX}); the pause IS the "
              f"punctuation in speech. Set it live with `voice-tunnel rate --pause`",
              lambda: str(sentence_pause())),
+    _setting("VOICE_TUNNEL_DEESS",
+             "0-1 — tame the piercing 's'. Only attenuates frames where the high band dominates, "
+             "so vowels and consonant attacks are untouched. 0 disables",
+             lambda: str(deess())),
     _setting("VOICE_TUNNEL_ASR", "parakeet | whisper (auto-selects parakeet when its model is present)",
              asr_engine),
     _setting("VOICE_TUNNEL_PARAKEET_DIR", "sherpa-onnx Parakeet model dir", parakeet_dir),

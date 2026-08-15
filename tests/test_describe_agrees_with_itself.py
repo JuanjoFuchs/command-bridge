@@ -134,12 +134,22 @@ def test_the_next_action_for_a_quiet_session_tells_you_to_stay_quiet():
 def test_describe_resolves_its_own_argument_about_detaching():
     """It contradicted ITSELF: `watchdog.do_not_detach` said never, `watch --timeout` said run
     long waits detached deliberately. Both are right about different situations and neither said
-    which, so an agent reading the whole document had to pick one and guess."""
+    which, so an agent reading the whole document had to pick one and guess.
+
+    The blanket NEVER was then narrowed on 2026-08-14 at the owner's direction — heads-down in
+    long work, backgrounding ONE watch is sanctioned, because its completion pokes the agent the
+    moment he starts talking. What the exception must still name is the actual failure: detaching
+    and then not READING the result, and the drain, which gates the agent's own mouth and is
+    never legitimately backgrounded."""
     exception = cli.DESCRIBE["watchdog"]["detaching_the_exception"]
 
     assert "watch_open" in exception, "name the mechanism that makes it safe"
-    assert "NEVER detach merely to free yourself" in exception, (
-        "and name the case the blanket rule is actually about"
+    assert "heads-down" in exception, "name the sanctioned second case, or the guide contradicts us"
+    assert "not reading the result" in exception, (
+        "name the real failure — an unread background watch, not backgrounding itself"
+    )
+    assert "DRAIN" in exception and "foreground" in exception, (
+        "and say the drain is the thing that must never be detached"
     )
 
 
