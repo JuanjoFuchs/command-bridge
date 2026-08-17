@@ -395,3 +395,47 @@ def test_a_midrange_tone_is_not_treated_as_sibilance():
     midrange = _pcm(0.5 * np.sin(2 * np.pi * 1000 * t))
 
     assert tts._deess(midrange, rate) == midrange
+
+
+def test_the_deesser_cuts_the_band_and_not_the_level():
+    """THE BUG THE FIRST WORKING VERSION HAD, and it passed every test above.
+
+    That version detected sibilant frames correctly and multiplied the whole frame by a gain. It
+    removed 33% of the high-band energy and the owner heard no difference at all: *"I didn't feel
+    a difference. Can you go harder?"* Ducking a frame makes an 's' quieter while leaving its
+    spectrum exactly as harsh, and the peak normalizer downstream returns part of the level.
+
+    So the assertion is a RATIO between bands, not a level: the sibilant band must come down
+    while the band below it stays where it was. A frame-gain implementation moves both together
+    and fails this, however loud the reduction looks in aggregate.
+    """
+    import numpy as np
+    from voice_tunnel import config, tts
+
+    rate = 22050
+    t = np.arange(rate // 3) / rate
+    # A sibilant with some voicing bleeding into it, which is what an 's' inside a word looks
+    # like. The mix is deliberately high-dominant: an EQUAL mix scores 0.506 against the 0.55
+    # threshold and is correctly left alone — half vowel is not an 's', and a de-esser that
+    # fired on it would be the treble cut this one exists not to be.
+    mixed = _pcm(0.15 * np.sin(2 * np.pi * 300 * t) + 0.5 * np.sin(2 * np.pi * 7500 * t))
+
+    def band(pcm, lo, hi):
+        x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        n = (x.size // 512) * 512
+        spec = np.abs(np.fft.rfft(x[:n].reshape(-1, 512), axis=1))
+        bins = spec.shape[1] - 1
+        return float(spec[:, int(lo / (rate / 2) * bins):int(hi / (rate / 2) * bins)].sum())
+
+    original = config.DEESS
+    try:
+        config.DEESS = 1.0
+        out = tts._deess(mixed, rate)
+    finally:
+        config.DEESS = original
+
+    low_kept = band(out, 100, 2000) / band(mixed, 100, 2000)
+    high_cut = band(out, 4500, 11000) / band(mixed, 4500, 11000)
+
+    assert low_kept > 0.9, f"the voice under 2 kHz must survive, kept {low_kept:.1%}"
+    assert high_cut < 0.6, f"the sibilant band must actually come down, kept {high_cut:.1%}"

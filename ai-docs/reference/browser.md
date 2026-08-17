@@ -1,6 +1,6 @@
 ---
 title: Browser and Android constraints
-description: Secure-context rules, why a LAN IP can never work, the foreground-only mic ceiling on Android, wake lock, and the Bluetooth playback padding.
+description: Secure-context rules, why a LAN IP can never work, the foreground-only mic ceiling on Android, wake lock, the Bluetooth playback padding, and why the page cannot choose an output device on Android.
 applies_to: voice_tunnel/web/index.html, voice_tunnel/server.py
 read_before: touching the web client, changing how the phone reaches the server, or debugging "no mic"
 ---
@@ -68,6 +68,55 @@ Nearly every session here is Bluetooth (earbuds, headset audio), so:
 
 Without this the wake acknowledgement and the first syllable of every reply get eaten, and it
 presents as "the TTS is broken" — a bug that costs a week if you don't know to look here.
+
+## The page cannot choose an output device on Android. It can only be honest about it.
+
+**Reported live 2026-08-15:** *"whenever you restart the server, the client is still up. For some
+reason, it stops using my Bluetooth device and starts outputting through the earpiece. And
+however, the drop-down didn't change. It still says Bluetooth."*
+
+**The routing half is the platform, not us.** `HTMLMediaElement.setSinkId` is unsupported in
+Chrome on Android — MDN records it as *"not available due to a limitation in Android"*
+([crbug 41276355](https://crbug.com/41276355)), and Firefox Android carries the same note against
+its own bug. `AudioContext.setSinkId` is listed as supported there only by BCD's *mirroring* rule,
+which is what the data says when nobody has tested the mobile entry, so treat it as unverified
+rather than as a yes. Android owns output routing; a page does not get a vote.
+
+**Why the EARPIECE specifically, and not the loudspeaker.** Android engages hardware echo
+cancellation by opening the capture on the `VOICE_COMMUNICATION` source, which puts the whole
+audio session into communication mode. That mode's fallback output, when no headset route is
+currently up, is the earpiece — the receiver you hold to your ear on a call. So "it came out of
+the earpiece" is a *signature*, not a detail: it means the session was in communication mode and
+the Bluetooth route was not established at the moment the output stream was (re)opened. We ask for
+`echoCancellation: true` and must keep doing so — without it the agent transcribes itself — so
+this mode is not something to switch off.
+
+**What the client does about it, and what it deliberately does not.** It does not fake a fix. The
+page feature-detects *both* halves — is `setSinkId` on the prototype at all, and does
+`enumerateDevices()` return any `audiooutput` entries — and renders the output picker only where
+both hold. A control that cannot move audio is not shown, because offering one is the same defect
+as the reported one, built on purpose.
+
+Where selection *is* possible it goes through one function, `applySink`, which is re-run on every
+reconnect, on `devicechange`, and before each clip. A socket coming back means time passed with
+the page not looking, and the route is no longer something it can assume survived.
+
+**THE RULE, which outlives the platform question: a picker shows what is IN USE, never what was
+requested.** The reported drop-down was the *microphone*, it had not moved, and it was telling the
+truth about the only thing it has ever controlled — it just made no claim about direction, so it
+got read as the routing control. Two things follow. Paint the input list from the live track's own
+`getSettings()`, never from the snapshot taken at `start()`, which cannot change and therefore
+cannot report a device that moved. Paint the output list from the sink the `AudioContext` reports
+back, never from the id last requested. And note that **re-selecting the option already selected
+fires no `change` event at all** — so a stale `<select>` can never be repaired by the user tapping
+it, which is why it has to repair itself.
+
+**The diagnostic that settles it on a real phone**, because nothing in this repo can:
+`window.__voiceTunnel.sink` carries `supported` (did the platform ever offer a choice), `why`
+(which half of the detect failed), `wanted` versus `inUse` (was the choice kept), and `devices`.
+Without it, "the platform can't", "it was never applied" and "it was applied and lost" are three
+different bugs that look identical from outside — which is how the first guess at this one named a
+`setSinkId` call the page did not contain.
 
 ## Use AudioWorklet — ScriptProcessorNode dies in a background tab
 

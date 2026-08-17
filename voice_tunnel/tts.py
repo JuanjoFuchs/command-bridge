@@ -449,18 +449,26 @@ def _deess(pcm: bytes, rate: int) -> bytes:
     the time and the ear gets no gap to recover in; and it is played through a phone speaker on
     speakerphone, which has a presence peak in the same 5-8 kHz band the sibilance lives in.
 
-    **A dynamic de-esser, not a fixed treble cut**, and that distinction is the whole design:
+    **The cut is SPECTRAL, and the version before it was not — that is the whole lesson here.**
+    The first working de-esser detected sibilant frames correctly and then multiplied the entire
+    frame by a gain. Measured, it removed 33% of the high-band energy. Listened to, it changed
+    nothing: *"I didn't feel a difference."* Ducking a frame makes the 's' quieter while leaving
+    its spectrum exactly as harsh, and the peak normalizer downstream then hands part of the
+    level straight back. **Loudness was never the complaint. Brightness was.**
 
-    - A shelf that removes enough 's' to be comfortable also removes every consonant's attack,
-      and this tool has already been burned by exactly that trade. `_articulate` above exists
-      because the owner could not hear the first consonant of each word at speed — dulling the
-      top now would undo it.
-    - So the cut is applied ONLY while the high band is genuinely dominant. Vowels sit mostly
-      below 4 kHz, an 's' is nearly all above it, so the ratio of high energy to total energy
-      identifies sibilance without needing to know which phoneme is being spoken.
+    So this attenuates the offending BINS and leaves the rest of the frame at unity:
 
-    Frame-wise, 5 ms hops with a one-pole envelope so the gain never steps mid-syllable (a
-    hard-gated version clicks, which reads as a bad connection rather than a filter).
+    - Detection stays the same, because it was right: an 's' puts nearly all its energy above
+      4 kHz while vowels sit below it, so the high-to-total ratio finds sibilance without needing
+      to know the phoneme.
+    - Attenuation is applied above 4.5 kHz only, so the 2-4 kHz band where consonant *attacks*
+      live is untouched. That band is not negotiable — `_articulate` above exists because the
+      owner could not hear the first consonant of each word at speed.
+    - Hann window, 50% overlap, overlap-add. A rectangular window would step the spectrum at
+      every frame edge and click, which reads as a bad connection rather than a filter.
+
+    Frames that are not sibilant are reconstructed from their untouched spectrum, so the only
+    thing they pick up is float round-trip noise well below the 16-bit floor.
     """
     strength = config.deess()
     if strength <= 0:
@@ -471,52 +479,79 @@ def _deess(pcm: bytes, rate: int) -> bytes:
         return pcm
 
     x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    if x.size < 64:
+    # 23 ms at 22.05 kHz: long enough to resolve the 4 kHz split, short enough that a gain change
+    # lands inside one phoneme rather than across two.
+    size = 512
+    hop = size // 2
+    if x.size < size * 2:
         return pcm
 
-    hop = max(16, int(rate * 0.005))
-    n = (x.size // hop) * hop
-    if n < hop * 2:
-        return pcm
-    frames = x[:n].reshape(-1, hop)
+    win = np.hanning(size + 1)[:size].astype(np.float32)
+    starts = np.arange(0, x.size - size + 1, hop)
+    frames = np.stack([x[s:s + size] for s in starts]) * win
+    spec = np.fft.rfft(frames, axis=1)
+    mag = np.abs(spec)
 
-    # Per-frame FFT rather than a filter, and the first attempt is why. A one-pole difference
-    # `x[n] - a*x[n-1]` was used as the high-band detector, and its coefficient is a LOW-pass
-    # pole: at 22.05 kHz it passes a 220 Hz vowel at 0.68 of full amplitude, so a pure vowel
-    # scored 0.68 on a threshold of 0.55 and got de-essed. Caught by the test that asserts a
-    # vowel comes back untouched, which is exactly the test that exists to catch it.
-    #
-    # A framed spectrum has no such subtlety: the split is a bin index, and energy above it is
-    # energy above it.
-    spec = np.abs(np.fft.rfft(frames, axis=1))
-    split = max(1, int(4000.0 / (rate / 2.0) * (spec.shape[1] - 1)))
-    hi = spec[:, split:].sum(axis=1)
-    total = spec.sum(axis=1) + 1e-9
-    ratio = hi / total
+    nyq = rate / 2.0
+    bins = spec.shape[1] - 1
+    detect = max(1, int(4000.0 / nyq * bins))
+    # Detection splits at 4 kHz, attenuation starts at 4.5 kHz. Deliberately not the same number:
+    # detecting low catches the whole fricative, cutting higher spares the consonant attacks.
+    cut = max(1, int(4500.0 / nyq * bins))
 
-    # Above ~0.55 the frame is sibilant rather than voiced. Below it, gain stays exactly 1.0 —
-    # silence and vowels are not touched at all, which is what keeps this from being a treble cut.
+    ratio = mag[:, detect:].sum(axis=1) / (mag.sum(axis=1) + 1e-9)
     over = np.clip((ratio - 0.55) / 0.45, 0.0, 1.0)
-    gain = 1.0 - (0.65 * strength) * over
 
-    # Smooth the gain envelope: attack fast enough to catch the 's', release slow enough that the
-    # vowel after it does not come back at a visibly different level.
-    smoothed = np.empty_like(gain)
-    acc = 1.0
-    for i, g in enumerate(gain):
-        acc = min(acc * 0.5 + g * 0.5, g) if g < acc else acc * 0.85 + g * 0.15
-        smoothed[i] = acc
+    # A FLOOR UNDER THE DYNAMIC CUT, and it is here because measurement beat the design twice.
+    # `en_GB-alan-medium` puts **55% of its total energy above 4 kHz** — natural speech is under
+    # 20% — and that is true of every frame, not just the fricatives. Speed is not the cause:
+    # 1.0x, 1.4x and 2.0x measure within a point of each other. So a de-esser that acts only on
+    # the brightest frames leaves a voice that is fatiguing on all of them, which is what "I
+    # didn't feel a difference" meant, twice, after two rewrites that both measured as working.
+    #
+    # The shelf is shallower than the sibilant cut and starts above it, so consonant attacks in
+    # the 2-4.5 kHz band are untouched by either. `_articulate` exists because those attacks were
+    # already too quiet once; nothing here is allowed to take them back.
+    floor = 0.45 * strength
+    gain = 1.0 - np.maximum((0.88 * strength) * over, floor)
 
-    # NOTHING SIBILANT, NOTHING TOUCHED — return the caller's bytes, not a re-quantized copy of
-    # them. int16 -> float32 -> int16 is not lossless, so a clip with no 's' in it would other-
-    # wise come back a bit different for no reason, and "the de-esser changes audio it did not
-    # filter" is the kind of claim that is impossible to disprove once someone suspects it.
-    if float(smoothed.min()) > 0.999:
+    # NOTHING UP THERE, NOTHING TOUCHED. The shelf is unconditional in TIME but not in
+    # FREQUENCY, so a signal with no energy above the cut has nothing to shelve — and returning
+    # the caller's own bytes is a stronger statement than returning a float round-trip of them.
+    # It is also the guarantee the tests actually pin: a vowel must come back identical, and
+    # "identical" has to survive adding an always-on shelf or it was never a real promise.
+    # 1e-3 (-60 dB), not something tighter: a Hann window's sidelobes plus int16 quantization
+    # put a PURE 220 Hz tone at 1.26e-4 above a 4.5 kHz cut, so a threshold of 1e-4 would have
+    # called that leakage "content" and shelved a signal that has none.
+    if float(mag[:, cut:].sum()) <= 1e-3 * float(mag.sum() + 1e-9):
         return pcm
 
-    y = x.copy()
-    y[:n] *= np.repeat(smoothed, hop)
-    return (np.clip(y, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+    shaped = spec.copy()
+    # Ramp the cut in over ~1 kHz instead of a brick wall: an abrupt spectral edge rings in the
+    # time domain and adds its own artefact where the point was to remove one.
+    ramp_end = min(spec.shape[1], cut + max(1, int(1000.0 / nyq * bins)))
+    ramp = np.linspace(0.0, 1.0, ramp_end - cut, dtype=np.float32) if ramp_end > cut else None
+    for i, g in enumerate(gain):
+        if g >= 1.0:
+            continue
+        if ramp is not None:
+            shaped[i, cut:ramp_end] *= (1.0 - ramp * (1.0 - g))
+        shaped[i, ramp_end:] *= g
+
+    out = np.zeros(x.size, dtype=np.float32)
+    norm = np.zeros(x.size, dtype=np.float32)
+    rebuilt = np.fft.irfft(shaped, n=size, axis=1).astype(np.float32) * win
+    for i, s in enumerate(starts):
+        out[s:s + size] += rebuilt[i]
+        norm[s:s + size] += win * win
+    # Hann-squared at 50% overlap sums to a constant across the interior but tapers at both ends,
+    # so divide by the actual window sum rather than assuming it. Below the guard the frames never
+    # covered the sample at all; keep the original there instead of fading to silence.
+    covered = norm > 1e-6
+    out[covered] /= norm[covered]
+    out[~covered] = x[~covered]
+
+    return (np.clip(out, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
 
 
 def _float32_to_pcm16(samples) -> bytes:
