@@ -8,6 +8,9 @@ The property that makes this safe is that the timeout governs ONLY how long the 
 to return empty. Detection latency is unchanged — turns at `store.watch`'s 0.1 s poll, controls at
 the 1 s status check — so a longer ceiling costs nothing and saves a turn.
 """
+import time
+import types
+
 import voice_tunnel.cli as cli
 
 
@@ -68,3 +71,145 @@ def test_a_missing_or_corrupt_file_reads_as_zero(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.config, "session_dir", lambda: str(tmp_path))
     (tmp_path / "s.watch.json").write_text("{not json", encoding="utf-8")
     assert cli._empty_streak("s") == 0
+
+
+# ------------------------------------------------------- nobody connected is not "quiet"
+#
+# Measured 2026-08-15: staying reachable across a six-hour absence cost ~35 re-armed watches, one
+# per ceiling, every one of them a guaranteed-empty result. The ladder bounds waiting on A PERSON
+# WHO MIGHT SPEAK; a page that is not open cannot produce a turn at all, so there is nothing for
+# the rungs to pace.
+
+
+def test_a_disconnected_watch_does_not_ladder():
+    """The same empty streak that would be waiting 30 s connected waits hours with nobody there."""
+    quiet = cli._watch_ceiling(30.0, 0, reachable=True, unattended=False, explicit=False)
+    gone = cli._watch_ceiling(30.0, 0, reachable=False, unattended=True, explicit=False)
+
+    assert quiet == 30.0
+    assert gone == cli.WATCH_DISCONNECTED_MAX_S
+    assert gone > cli.WATCH_BACKOFF_MAX_S, "otherwise nothing changed and the ~35 wakes remain"
+
+
+def test_the_disconnected_wait_is_flat_rather_than_growing():
+    """There is no evidence to accumulate. Every rung would be the same guaranteed-empty result,
+    so the ceiling does not depend on how many of them have already been spent."""
+    waits = {cli._watch_ceiling(30.0, s, reachable=False, unattended=True, explicit=False)
+             for s in range(6)}
+
+    assert waits == {cli.WATCH_DISCONNECTED_MAX_S}
+
+
+def test_there_is_still_a_hard_ceiling():
+    """A wait with no ceiling is indistinguishable from a hang, can never report
+    `listening: false`, and would hold a socket for an abandoned session until the machine
+    restarted. Eight hours is the longest absence after which this session is still the right
+    thing to be waiting on — a working day, or a night — so a six-hour absence costs ONE watch."""
+    assert cli.WATCH_DISCONNECTED_MAX_S == 28800.0
+    assert cli._watch_ceiling(30.0, 99, reachable=False, unattended=True,
+                              explicit=False) == 28800.0
+
+
+def test_an_explicit_timeout_still_wins_over_the_long_wait():
+    """A caller that names a number knows something the tool does not — usually its harness's
+    maximum tool timeout. Silently handing it eight hours is the same defect as silently handing
+    it nine minutes when it asked for eight, which broke the caller twice in ten minutes."""
+    assert cli._watch_ceiling(45.0, 3, reachable=False, unattended=True, explicit=True) == 45.0
+
+
+def test_the_ceiling_is_overridable_without_editing_the_code(monkeypatch):
+    monkeypatch.setenv("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", "600")
+    assert cli._watch_ceiling(30.0, 0, reachable=False, unattended=True, explicit=False) == 600.0
+    monkeypatch.setenv("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", "not a number")
+    assert cli._disconnected_ceiling() == cli.WATCH_DISCONNECTED_MAX_S
+
+
+def test_describe_states_the_long_wait_where_an_agent_reads_it():
+    """`describe` is the tie-break, so a behaviour it does not mention is one that does not exist
+    as far as the next agent is concerned — and the ladder it DOES publish would then be a
+    confident, wrong answer to "how long will this block"."""
+    published = cli._human_seconds(cli.WATCH_DISCONNECTED_MAX_S)
+    assert published == "8h"
+
+    notes = cli.DESCRIBE["commands"]["watch"]["notes"]
+    timeout = cli.DESCRIBE["commands"]["watch"]["args"]["--timeout"]
+    backoff = cli.DESCRIBE["watchdog"]["backoff"]
+
+    for text in (notes, timeout, backoff):
+        assert published in text, (
+            f"this copy does not publish the disconnected ceiling: {text[:90]}"
+        )
+    assert "DETACH" in notes.upper(), (
+        "the ceiling exceeds every harness tool timeout on purpose; say so where it is stated, or "
+        "the next agent shortens it with --timeout and re-creates the ~35 wakes"
+    )
+
+
+# ------------------------------------------------ and the escapes, which are what make it safe
+
+
+def _run(monkeypatch, tmp_path, first, later, ceiling):
+    """Drive `cmd_watch` against a scripted `/status`: `first` answers the two setup reads, `later`
+    every poll inside the loop. The disconnected ceiling is shrunk to seconds — the branch under
+    test is which ceiling gets chosen, not how long eight hours is."""
+    monkeypatch.setattr(cli.config, "session_dir", lambda: str(tmp_path))
+    monkeypatch.setenv("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", str(ceiling))
+    calls = {"n": 0}
+
+    def request(session, path, payload=None):
+        if path != "/status":
+            return {}
+        calls["n"] += 1
+        return first if calls["n"] <= 2 else later
+
+    monkeypatch.setattr(cli, "_request", request)
+    # Honours its own timeout, so the loop advances in real time instead of spinning. A stub that
+    # returned instantly would busy-wait the whole ceiling and time nothing.
+    def watch(session, cursor, timeout=0.0, addressed_only=True):
+        time.sleep(min(timeout, 1.0))
+        return [], cursor
+
+    monkeypatch.setattr(cli.store, "watch", watch)
+    return cli.cmd_watch(types.SimpleNamespace(
+        session="s", since=6, timeout=None, force=False, all_turns=False))
+
+
+def test_cmd_watch_picks_the_long_ceiling_when_nobody_is_connected(monkeypatch, tmp_path):
+    """The whole point, at the call site rather than in the arithmetic: an empty streak of zero
+    would wait 30 s if a page were open, and this session's page is not."""
+    gone = {"clients": 0, "channel_open": True, "capturing": True, "muted": False}
+
+    result = _run(monkeypatch, tmp_path, gone, gone, 0.5)
+
+    assert result["waited"] == 0.5, "it laddered instead of holding — 30.0 means the old path ran"
+    assert result["next_wait"] == 0.5, "and the next one must not quietly drop back to the ladder"
+
+
+def test_a_page_reconnecting_still_ends_the_wait_immediately(monkeypatch, tmp_path):
+    """THE PATH THAT MUST NOT REGRESS. Holding for hours is only acceptable because this returns
+    within a second of him coming back; without it the long wait becomes the very unreachability
+    it was meant to stop paying for."""
+    gone = {"clients": 0, "channel_open": True, "capturing": True, "muted": False}
+    back = {**gone, "clients": 1}
+
+    started = time.monotonic()
+    result = _run(monkeypatch, tmp_path, gone, back, 20.0)
+
+    assert result["event"] == "control"
+    assert result["changed"] == {"clients": True}
+    assert time.monotonic() - started < 5.0, "it waited out the ceiling instead of waking on him"
+
+
+def test_a_server_that_dies_mid_wait_ends_it_rather_than_holding_for_hours(monkeypatch, tmp_path):
+    """The wait is held open only because the server promised to report a page arriving. When the
+    server stops answering that promise is gone, and without this the agent would learn eight
+    hours later. Under the old ceiling the same mistake cost nine minutes, which is why it was
+    survivable and why it is not any more."""
+    gone = {"clients": 0, "channel_open": True, "capturing": True, "muted": False}
+
+    started = time.monotonic()
+    result = _run(monkeypatch, tmp_path, gone, None, 20.0)
+
+    assert time.monotonic() - started < 5.0, "it blocked on a dead server"
+    assert result["listening"] is False
+    assert "serve" in result["hint"], "say what to do about it, not merely that it happened"

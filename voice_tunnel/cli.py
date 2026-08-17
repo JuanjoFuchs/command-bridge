@@ -115,6 +115,49 @@ separate constant so raising it stays a one-line change."""
 WATCH_BASE_S = 30.0
 """Where the backoff starts when `--timeout` is omitted. The first rung of the ladder below."""
 
+WATCH_DISCONNECTED_MAX_S = 28800.0
+"""EIGHT HOURS, and the ladder is skipped entirely, whenever NOBODY IS CONNECTED.
+
+Measured 2026-08-15: staying reachable across a six-hour absence cost ~35 re-armed watches, one
+per ceiling, and every single one of them was a guaranteed-empty result. He asked the question
+that produced the number — "how much time or how many turns it would burn while I was in silence
+and away" — and the answer is the argument.
+
+**The backoff is the wrong instrument for this state.** The ladder bounds waiting on A PERSON WHO
+MIGHT SPEAK: each empty rung is weak evidence that nothing is imminent, so the wait grows. With
+`clients == 0` there is no such evidence to gather. No turn can arrive from a page that is not
+open, so the ceiling is not pacing a guess — it is scheduling a wake that CANNOT return anything.
+
+**Why a ceiling at all, rather than blocking forever.** A call with no ceiling is
+indistinguishable from a hang, it can never report `listening: false`, and a session genuinely
+abandoned would sit on a socket until the machine restarted. Eight hours is the longest single
+absence after which the same session is still the right thing to be waiting on — a working day, or
+a night's sleep — so it costs the measured six-hour absence exactly ONE watch instead of ~35, and
+still proves the watch is alive once a day.
+
+**Nothing is lost by waiting**, which is what makes it safe: a page connecting is a control change,
+so the watch returns within a second of him coming back (the `changed: {clients: true}` path, which
+already worked and is untouched); anything the agent says meanwhile is queued rather than
+discarded; and a server that dies during the wait now ends it immediately rather than being
+noticed eight hours later.
+
+**This ceiling exceeds every harness tool timeout, deliberately.** `WATCH_BACKOFF_MAX_S` is 540 s
+because a FOREGROUND call has to fit inside a 10-minute limit; a watch nobody can speak into is the
+one case where there is nothing to keep in the foreground for, so detach it (see
+`watchdog.detaching_the_exception`). An agent that cannot detach pins `--timeout`, which is honoured
+exactly and is the documented opt-out.
+
+Raise or lower with VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S."""
+
+
+def _disconnected_ceiling() -> float:
+    """`WATCH_DISCONNECTED_MAX_S`, with its env override applied. One reader, so one behaviour."""
+    try:
+        return float(os.environ.get("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S")
+                     or WATCH_DISCONNECTED_MAX_S)
+    except ValueError:
+        return WATCH_DISCONNECTED_MAX_S
+
 
 def _backoff_ceiling(base: float, streak: int, reachable: bool) -> float:
     """The wait an empty-streak of `streak` earns. `min(cap, base * 2**streak)`, and nothing else.
@@ -156,6 +199,31 @@ def _backoff_ladder(base: float = WATCH_BASE_S, reachable: bool = True) -> list[
 def _backoff_ladder_text(base: float = WATCH_BASE_S) -> str:
     """`30s -> 60s -> 2min -> 4min -> 8min -> 9min`, for the contract to state rather than imply."""
     return " -> ".join(_human_seconds(v) for v in _backoff_ladder(base))
+
+
+def _watch_ceiling(base: float, streak: int, *, reachable: bool, unattended: bool,
+                   explicit: bool) -> float:
+    """How long ONE watch is willing to wait before returning empty. The whole decision, once.
+
+    THREE STATES, and they are not degrees of the same thing:
+
+    * `explicit` — the caller named a number, so it gets that number. A caller who names one knows
+      something the tool does not (usually its harness's maximum tool timeout), and silently
+      exceeding it converts a blocking watch into a backgrounded one. Checked FIRST so neither
+      branch below can override it.
+    * `unattended` — nobody is connected, so no turn can arrive and the ladder has nothing to pace.
+      See `WATCH_DISCONNECTED_MAX_S`.
+    * otherwise — connected and quiet, which is the case the ladder was actually designed for.
+
+    Both `waited` and `next_wait` are read from this function rather than each recomputing the
+    arithmetic beside itself. Three hand-written copies of the last such number drifted three
+    different ways; the lesson stuck.
+    """
+    if explicit:
+        return base
+    if unattended:
+        return _disconnected_ceiling()
+    return _backoff_ceiling(base, streak, reachable)
 
 
 # The ladder `drain` walks: five seconds, then three, then two. It is the OPPOSITE shape to the
@@ -341,7 +409,10 @@ DESCRIBE: dict[str, Any] = {
                     f"{_human_seconds(WATCH_BACKOFF_MAX_S)} and reset by any turn or button — "
                     "and the two run in SERIES: the job fires, you enter a watch, and the job "
                     "cannot fire again until that watch returns. The spacing you want is already "
-                    "there."),
+                    "there. And when NOBODY IS CONNECTED the watch does not ladder at all: it "
+                    f"holds for up to {_human_seconds(WATCH_DISCONNECTED_MAX_S)}, because a wake "
+                    "while no page is open is a turn spent proving that a disconnected phone is "
+                    "still disconnected."),
         "rule": "Prose BEFORE the watch, never after. End every turn on the blocking call.",
         # The text itself, not a description of it. An agent registering the job needs something
         # to paste; a paraphrase is something to re-derive, and re-deriving is how the earlier
@@ -478,8 +549,12 @@ DESCRIBE: dict[str, Any] = {
                              f"{_backoff_ladder_text()}. (Stated rather than implied because "
                              f"'30s doubling to 9min' was read as '30 -> 60 -> 9min', which skips "
                              f"three rungs.) "
+                             "THAT LADDER IS ONLY FOR CONNECTED-BUT-QUIET. With NO PAGE CONNECTED "
+                             f"the wait is a flat {_human_seconds(WATCH_DISCONNECTED_MAX_S)} — see "
+                             "`notes` — because a wake in that state can never return anything. "
                              "PASS IT only to impose a hard ceiling, honoured exactly. NOTE: "
-                             "pinning it DISABLES the backoff, which is easy to do by accident "
+                             "pinning it DISABLES the backoff AND the long disconnected wait, "
+                             "which is easy to do by accident "
                              "when trying to stay inside a harness tool timeout. If long waits "
                              "get backgrounded by your harness, do NOT shorten them — detach "
                              "deliberately and keep the long ceiling. That is the one case where "
@@ -511,8 +586,17 @@ DESCRIBE: dict[str, Any] = {
                      "IT ALSO RETURNS WHEN A CONTROL MOVES (mute, channel, orb tap, verbose, a "
                      "page connecting or dropping), so muted and disconnected are reasons to KEEP "
                      "watching, never to stop — the watch is the only thing that can see them "
-                     "end. **If `verbose` is true, narrate everything as it happens, unprompted; "
-                     "if false, stay quiet until he asks.**",
+                     "end. WITH NOBODY CONNECTED THE WAIT IS FLAT, NOT LADDERED: no page open "
+                     "means no turn can arrive, so the backoff has nothing to pace and this call "
+                     f"holds for up to {_human_seconds(WATCH_DISCONNECTED_MAX_S)} instead of "
+                     f"topping out at {_human_seconds(WATCH_BACKOFF_MAX_S)}. Measured "
+                     "2026-08-15: a six-hour absence cost ~35 re-armed watches, every one of them "
+                     "a guaranteed-empty result. It still returns within a second of a page "
+                     "reconnecting (that is a control change), a reply written meanwhile is queued "
+                     "rather than lost, and a server that dies ends the wait immediately. That "
+                     "ceiling is longer than any harness tool timeout ON PURPOSE — DETACH this one "
+                     "rather than shortening it with `--timeout`. **If `verbose` is true, narrate "
+                     "everything as it happens, unprompted; if false, stay quiet until he asks.**",
         },
         "drain": {
             "args": {
@@ -713,7 +797,14 @@ DESCRIBE: dict[str, Any] = {
                 "muted / capturing / channel_open / clients": "the controls he presses. Each is a "
                                                               "reason to KEEP watching, never to "
                                                               "stop — the watch is the only thing "
-                                                              "that can see them end.",
+                                                              "that can see them end. `capturing` "
+                                                              "means THE MICROPHONE IS HELD, and "
+                                                              "since 2026-08-16 switching the orb "
+                                                              "off releases it — so a closed "
+                                                              "channel reports both false, and "
+                                                              "`capturing: false` on its own is "
+                                                              "the one that means he never "
+                                                              "started.",
                 "...": "plus the rest of the live server state, or {running:false} if nothing is "
                        "serving",
             },
@@ -1350,7 +1441,10 @@ def _next_action(turns, live: dict[str, Any] | None,
         return f"say you stopped listening, then run `voice-tunnel serve --session {session}`"
     if not live.get("clients"):
         return (f"say in text that nobody is connected, then run {watch} — "
-                "it returns the moment a page reconnects")
+                "it returns the moment a page reconnects, and holds for up to "
+                f"{_human_seconds(_disconnected_ceiling())} rather than backing off, so this is "
+                "ONE call and not a re-armed series. Detach it if your harness caps blocking "
+                "calls; do NOT shorten it with --timeout")
     # A CLOSED channel is a decision, not a fault, so it outranks the mic and mute branches: both
     # of those would be true as well, and telling him his microphone is off when he deliberately
     # ended the conversation is answering a question he did not ask. Anything said now is queued
@@ -1502,8 +1596,15 @@ def cmd_watch(args) -> dict[str, Any]:
     # if he chose to. When he could not, the wait doubles again, because the next event is a
     # deliberate act of his and there is nothing to miss until he makes it.
     reachable = bool(baseline and baseline.get("clients") and baseline.get("channel_open"))
+    # NOBODY IS CONNECTED, which is a different state from quiet and gets a different ceiling.
+    # `reachable` already folds this in with a closed channel, and it must not: a closed channel
+    # still has a page behind it that can reopen in a second, while a page that is not open cannot
+    # produce a turn at all. Requires a live baseline — with no server answering, `baseline` is
+    # None, the control-change path is disabled, and a long wait would have no way to end early.
+    unattended = baseline is not None and not baseline.get("clients")
     streak = _empty_streak(args.session)
-    waited_ceiling = base if explicit else _backoff_ceiling(base, streak, reachable)
+    waited_ceiling = _watch_ceiling(base, streak, reachable=reachable,
+                                    unattended=unattended, explicit=explicit)
     deadline = time.monotonic() + waited_ceiling
     turns: list[dict[str, Any]] = []
     cursor = args.since
@@ -1516,6 +1617,14 @@ def cmd_watch(args) -> dict[str, Any]:
             break
         if baseline is not None:
             now = _controls(_request(args.session, "/status"))
+            # THE ESCAPE THAT MAKES AN EIGHT-HOUR WAIT SAFE. A watch nobody can speak into is held
+            # open only because the server will tell us when a page arrives; if the server itself
+            # stops answering, that promise is gone and there is nothing left to wait for. Ending
+            # here drops through to the empty path below, which reports `listening: false` and the
+            # remedy. Scoped to `unattended` because that is the only branch whose ceiling can now
+            # exceed the nine minutes a dead server used to cost.
+            if now is None and unattended:
+                break
             if now is not None and now != baseline:
                 changed = {k: now[k] for k in now if now[k] != baseline[k]}
                 payload = {
@@ -1593,7 +1702,9 @@ def cmd_watch(args) -> dict[str, Any]:
             # the wrong one four times in a single session.
             result["hint"] = ("no page is connected — he cannot hear you and you cannot hear "
                               "him. Say so in text, then KEEP WATCHING: this call returns the "
-                              "moment a page reconnects.")
+                              "moment a page reconnects, and with nobody connected it now holds "
+                              f"for up to {_human_seconds(_disconnected_ceiling())} instead of "
+                              "backing off, because every wake in that state is guaranteed empty.")
         elif "capturing" not in live:
             # ABSENT IS NOT FALSE. A server started before this field existed reports nothing,
             # and reading that as "the microphone was never started" produced a confidently wrong
@@ -1602,6 +1713,16 @@ def cmd_watch(args) -> dict[str, Any]:
             result["listening"] = None
             result["hint"] = ("this server predates the capturing signal, so whether he is "
                               "actually listening is UNKNOWN — restart `voice-tunnel serve` to find out")
+        elif "channel_open" in live and not live.get("channel_open"):
+            # ORDERED ABOVE `capturing`, and it has to be, because since 2026-08-16 switching the
+            # orb off RELEASES the microphone — so a closed channel now reports `capturing: false`
+            # as well, and the branch below would tell him he never tapped the orb when in fact he
+            # tapped it twice. A closed channel is a decision; an unstarted microphone is an
+            # omission. Saying the wrong one invites the agent to correct something he chose.
+            result["listening"] = False
+            result["hint"] = ("he switched the conversation off at the orb — the microphone is "
+                              "RELEASED, not merely idle, which is why `capturing` is false too. "
+                              "Anything you say is queued and reaches him when he taps it back on.")
         elif not live.get("capturing"):
             result["listening"] = False
             result["hint"] = ("a page is open but the microphone was never started — he has not "
@@ -1625,8 +1746,14 @@ def cmd_watch(args) -> dict[str, Any]:
     if first_watch:
         result["watchdog"] = _watchdog_block(args.session)
     result["waited"] = round(waited_ceiling, 1)
+    # Recomputed from the CURRENT status rather than from the baseline, because the wait that just
+    # ended is often the thing that changed it: a page can have dropped while this call was
+    # blocking, and reporting the ladder's next rung then would understate the real wait by hours.
+    next_unattended = (isinstance(live, dict) and live.get("running") is not False
+                       and not live.get("error") and not live.get("clients"))
     result["next_wait"] = round(
-        base if explicit else _backoff_ceiling(base, streak + 1, reachable), 1)
+        _watch_ceiling(base, streak + 1, reachable=reachable,
+                       unattended=bool(next_unattended), explicit=explicit), 1)
     result["quiet_rounds"] = streak + 1
     _watch_closed(args.session)
     return result
