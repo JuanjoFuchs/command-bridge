@@ -50,12 +50,40 @@ VIEWPORTS = [
 # Build rows exactly as `addRow` does — a .row is a TWO-COLUMN grid (3.5rem tag | 1fr text), so a
 # fixture with a single span drops the text into the 3.5rem column and wraps it one word per
 # line. That inflates every height and measures a page nobody will ever see.
-POPULATE = """() => {
+POPULATE = """(layout) => {
   const log = document.getElementById('log');
-  const mic = document.getElementById('mic');
-  mic.hidden = false;
   document.getElementById('mute').setAttribute('aria-checked', 'false');
-  mic.innerHTML = '<option>Headset Microphone (Realtek(R) Audio)</option>';
+  // TWO LAYOUTS, AND EXACTLY ONE OF THEM IS EVER ON SCREEN. `grouped` is the normal case: one
+  // pill for one physical device, because `enumerateDevices()` reports the two halves of a headset
+  // under a shared `groupId`. `split` is the fallback for platforms that group badly — and it is
+  // the WIDER arrangement, so both are measured rather than assuming the narrow one is worse.
+  //
+  // `hidden` lives on the WRAPPER, not the select. The pill is a <label> carrying the glyph that
+  // says which direction it points, and unhiding the select alone leaves the control collapsed to
+  // zero height. `pillsShown` below is the assertion that was missing for exactly that: nothing
+  // used to check that the thing being measured was actually on the page.
+  const show = (wrap, sel, text) => {
+    document.getElementById(wrap).hidden = false;
+    document.getElementById(sel).innerHTML = '<option>' + text + '</option>';
+  };
+  if (layout === 'grouped') {
+    show('devpick', 'dev', 'Headset (WH-1000XM4)');
+  } else {
+    show('micpick', 'mic', 'Headset Microphone (Realtek(R) Audio)');
+    // THE OUTPUT PICKER ONLY EXISTS WHERE THE PLATFORM CAN ROUTE AUDIO PER PAGE, which is never
+    // Android — `setSinkId` is unavailable there, so the page does not render a control it cannot
+    // honour. A phone therefore shows one pill and a desktop shows two, and the fixture reproduces
+    // that split rather than asserting one layout everywhere: forced into 360px, four controls wrap
+    // the two switches onto separate lines and fail `switchesSameRow` — a true measurement of a
+    // situation the target device cannot reach, which is the least useful kind of red.
+    if (window.innerWidth >= 480) {
+      show('spkpick', 'spk', 'Headphones (Realtek(R) Audio)');
+      // The page grants the wider cluster from `paintGroup`, keyed on both pills being visible.
+      // The fixture is faking that visibility, so it has to fake the consequence too — otherwise
+      // this measures a two-pill row inside the one-pill width, which the page never renders.
+      document.getElementById('controls').classList.add('split');
+    }
+  }
   const said = [
     ['me', 'what is the status of the deploy right now'],
     ['claude', 'That is running clean. 225 tests, no failures, and the tunnel is up.'],
@@ -80,8 +108,13 @@ MEASURE = """() => {
   const last = rows[rows.length - 1].getBoundingClientRect();
   const lb = log.getBoundingClientRect();
   const vb = document.getElementById('verbose').getBoundingClientRect();
-  const mb = document.getElementById('mic').getBoundingClientRect();
   const ub = document.getElementById('mute').getBoundingClientRect();
+  // Zero when a pill is not rendered, which is the honest reading rather than a missing
+  // measurement — `problems()` skips the touch check at 0 instead of failing it, and
+  // `pillsShown` is what stops "skipped everything" from reading as "passed everything".
+  const pill = (wrap, sel) => document.getElementById(wrap).hidden
+    ? 0 : Math.round(document.getElementById(sel).getBoundingClientRect().height);
+  const wraps = ['devpick', 'micpick', 'spkpick'];
   return {
     innerHeight: window.innerHeight,
     bodyScrollHeight: document.body.scrollHeight,
@@ -95,8 +128,11 @@ MEASURE = """() => {
     // forcing them would shrink a touch target rather than solve anything.
     switchesSameRow: Math.abs(ub.top - vb.top) < 6,
     muteLeftOfVerbose: ub.right <= vb.left + 1,
-    micTouchHeight: Math.round(mb.height),
+    devTouchHeight: pill('devpick', 'dev'),
+    micTouchHeight: pill('micpick', 'mic'),
+    spkTouchHeight: pill('spkpick', 'spk'),
     muteTouchHeight: Math.round(ub.height),
+    pillsShown: wraps.filter((id) => !document.getElementById(id).hidden).length,
   };
 }"""
 
@@ -117,8 +153,19 @@ def problems(m: dict) -> list:
         out.append("mute and verbose are not on the same line")
     if not m["muteLeftOfVerbose"]:
         out.append("mute is not to the left of verbose")
-    for name, key in (("microphone picker", "micTouchHeight"), ("mute switch", "muteTouchHeight")):
-        if m[key] < 44:
+    if m["muteTouchHeight"] < 44:
+        out.append(f"mute switch is {m['muteTouchHeight']}px tall, under the 44px touch minimum")
+    # THE ASSERTION THAT WAS MISSING. A pill measured at 0 is skipped below, which is right when it
+    # is genuinely not rendered — but it also means an unhidden-nothing fixture would sail through
+    # every touch check by measuring none of them.
+    if not m["pillsShown"]:
+        out.append("no device picker is on screen at all — the fixture measured nothing")
+    # 0 means "not rendered in this layout", which is correct — see POPULATE. Only a pill that IS
+    # on screen has to be tappable.
+    for name, key in (("device picker", "devTouchHeight"),
+                      ("microphone picker", "micTouchHeight"),
+                      ("speaker picker", "spkTouchHeight")):
+        if m[key] and m[key] < 44:
             out.append(f"{name} is {m[key]}px tall, under the 44px touch minimum")
     return out
 
@@ -150,23 +197,28 @@ def main() -> int:
         time.sleep(6)
         with sync_playwright() as p:
             browser = p.chromium.launch()
-            for label, w, h in VIEWPORTS:
+            # EVERY VIEWPORT IN BOTH LAYOUTS. The grouped pill is what the page normally renders;
+            # the split pair is the fallback and the wider of the two. Measuring only one of them
+            # is how the two-picker row came to fit while the cluster check it broke went unrun.
+            cases = [(lay, lab, w, h) for lay in ("grouped", "split") for lab, w, h in VIEWPORTS]
+            for layout, label, w, h in cases:
                 page = browser.new_page(viewport={"width": w, "height": h})
                 page.goto(f"http://127.0.0.1:{PORT}/?token={TOKEN}", wait_until="load")
                 page.wait_for_timeout(700)
-                page.evaluate(POPULATE)
+                page.evaluate(POPULATE, layout)
                 page.wait_for_timeout(400)
                 m = page.evaluate(MEASURE)
                 found = problems(m)
 
-                print(f"{'PASS' if not found else 'FAIL'}  {label} ({w}x{h})")
+                print(f"{'PASS' if not found else 'FAIL'}  {layout:8} {label} ({w}x{h})")
                 print(f"      {json.dumps(m)}")
                 for f in found:
                     print(f"      -> {f}")
-                    failures.append(f"{label}: {f}")
+                    failures.append(f"{layout} {label}: {f}")
 
                 if args.shots:
-                    page.screenshot(path=os.path.join(args.shots, f"layout-{w}x{h}.png"))
+                    page.screenshot(
+                        path=os.path.join(args.shots, f"layout-{layout}-{w}x{h}.png"))
                 page.close()
             browser.close()
     finally:

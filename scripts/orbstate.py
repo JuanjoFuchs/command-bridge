@@ -262,7 +262,19 @@ try:
               "closing the channel does not overwrite the agent's state either")
 
         page.click("#orb")
-        time.sleep(0.8)
+        # REOPENING NOW COSTS A WARM-UP. Since 2026-08-16 switching the orb off RELEASES the
+        # microphone, so tapping it back on re-acquires — the same warm-up the first tap has always
+        # had, and it exists so the page never says "Listening" into a gap he is already talking
+        # into. The property this check is about is unchanged (the agent's state survives a close),
+        # so wait for the restart rather than sampling the fixed 0.8s that was enough back when
+        # reopening was a flag flip. Sampling mid-restart would fail on "Warming up" and read as
+        # the state having been lost, which is the one thing it is NOT.
+        try:
+            page.wait_for_function(
+                "() => !['Starting', 'Warming up'].includes("
+                "document.getElementById('orblabel').textContent)", timeout=20000)
+        except Exception:
+            pass
         check(label() == "Thinking", "reopening restores what was actually happening",
               f"label={label()!r}")
         api("/consumed", {"cursor": 0, "state": "idle"})
@@ -437,6 +449,51 @@ try:
         frames = rp.evaluate("() => window.__voiceTunnel.framesSent")
         check(frames > 3, "and audio is actually flowing after it", f"frames={frames}")
         check(not rerrors, "no uncaught exception in the start path", "; ".join(rerrors[:2]))
+
+        # ------------------------------------------------- ORB OFF RELEASES THE MICROPHONE
+        # Reported live 2026-08-16: "you're hugging the microphone but the orb is off, so there's
+        # no point in that... what I did is I closed the tab, but I would like to keep the tab open
+        # so that I can just come back and hit the orb again."
+        #
+        # This is the only harness that can check it, for the same reason it is the only one that
+        # can check the first tap: everything else stubs `getUserMedia`, and a stubbed stream has
+        # no tracks to end. `micState()` reads the tracks themselves rather than a flag the page
+        # sets, because a flag written by the same code that does the releasing would restate the
+        # claim instead of testing it.
+        rp.click("#orb")
+        rp.wait_for_timeout(900)
+        tracks = rp.evaluate("() => window.__voiceTunnel.micState()")
+        check(tracks == [], "TAPPING THE ORB OFF RELEASES THE MICROPHONE",
+              f"tracks={tracks!r} — anything but [] means the OS indicator is still lit")
+        check(rp.evaluate("() => document.getElementById('orblabel').textContent") == "Off",
+              "and it still reads Off, not back to Tap to start",
+              "releasing capture clears `running`; only `everStarted` separates the two")
+        check(rp.evaluate("() => window.__voiceTunnel.connected"),
+              "WITHOUT CLOSING THE SOCKET — the tab, the session and the URL survive",
+              "closing the tab already released the mic; he rejected that, the URL is the cost")
+        off = api("/status")
+        check(off.get("capturing") is False and off.get("channel_open") is False,
+              "and the server is told, so `watch` stops reporting him as listening",
+              f"capturing={off.get('capturing')} channel_open={off.get('channel_open')}")
+
+        # ------------------------------------------------- AND THE NEXT TAP PICKS IT BACK UP
+        # What this canNOT show: whether a real phone re-prompts for permission.
+        # `--use-fake-ui-for-media-stream` auto-grants silently, so a green re-acquire proves the
+        # path works and proves nothing about the prompt. That one wants a real device.
+        before = rp.evaluate("() => window.__voiceTunnel.framesSent")
+        rp.click("#orb")
+        try:
+            rp.wait_for_function(
+                f"() => window.__voiceTunnel.framesSent > {before} + 3", timeout=20000)
+        except Exception:
+            pass
+        again = rp.evaluate("() => window.__voiceTunnel.framesSent")
+        check(again > before + 3, "TAPPING IT BACK ON RE-ACQUIRES AND STREAMS AGAIN",
+              f"frames {before} -> {again}")
+        check(rp.evaluate("() => window.__voiceTunnel.micState()") == ["live"],
+              "with a live track again")
+        check(not rerrors, "and no uncaught exception across the whole off/on cycle",
+              "; ".join(rerrors[:2]))
         real.close()
 
         # A REFUSED microphone must be visible and RETRYABLE. Third context, no fake device

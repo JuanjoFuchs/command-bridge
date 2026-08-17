@@ -343,19 +343,37 @@
     text-align:center; text-wrap:balance; max-width:min(100%,36ch);
   }
 
-  /* One row under the orb: mute, the device picker, verbose, collapse. */
+  /* One row under the orb: mute, the device pickers, verbose, collapse. */
   #controls {
     display:flex; align-items:center; justify-content:center;
     gap:.45rem; flex-wrap:wrap; row-gap:.45rem;
-    /* Narrow, so the three sit as a GROUP under the orb rather than spanning the screen. The
+    /* Narrow, so they sit as a GROUP under the orb rather than spanning the screen. The
        picker used to take every spare pixel and pushed the toggles to the far edges, which read
-       as three unrelated controls instead of one cluster. */
-    width:min(100%,20rem);
+       as three unrelated controls instead of one cluster. Where the platform cannot route audio
+       per-page the output pill is not rendered at all, so the phone layout is unchanged.
+
+       TWO HARNESSES DISAGREED ABOUT THIS NUMBER, AND BOTH WERE RIGHT. Widening it to 29rem is
+       what fits two pills at full width on one line, which `scripts/layout.py` requires (mute and
+       verbose must share a row). It also fails `scripts/orbstate.py`'s cluster check —
+       `controls <= orb * 1.35`, 388px against a 288px orb — which is the measured form of the
+       "one group, not a spanning bar" property argued for just above. One fixed width cannot
+       satisfy both while two pills exist, and that went unnoticed only because orbstate.py had
+       never been run against the two-picker layout.
+
+       So the width follows the LAYOUT rather than the viewport: 24rem for the grouped pill, which
+       is the normal case and comfortably inside the cluster bound, and 29rem only while BOTH
+       fallback pills are on screen — the one arrangement that genuinely needs the room. See
+       `.split` below and the single place that sets it. */
+    width:min(100%,24rem);
     margin-top:-.35rem;
   }
+  /* Set from `paintGroup`, and only when both single-purpose pills are actually visible. Tying it
+     to the class rather than to a media query is deliberate: the thing that needs the extra width
+     is a device that groups badly, and no viewport can predict that. */
+  #controls.split { width:min(100%,29rem); }
   #controls > * { min-width:0; }
   /* Shrink-to-fit with a ceiling, not grow-to-fill. */
-  #mic          { flex:0 1 9.5rem; max-width:9.5rem; }
+  .pick         { flex:0 1 10.5rem; max-width:10.5rem; }
 
   /* The round toggles. 44px is the platform minimum for a touch target. */
   .orbbtn {
@@ -431,13 +449,57 @@
   }
   #orb.closed { animation:none; }
 
-  #mic {
+  /* THREE pickers declared, at most TWO on screen: the grouped pill on its own when the platform
+     pairs a device's two halves, otherwise the microphone/speaker pair as the fallback. They must
+     not be mistakable for each other, which is why each carries its own glyph.
+     Reported live 2026-08-15: "it stops using my Bluetooth device and starts outputting through
+     the earpiece. And however, the drop-down didn't change. It still says Bluetooth."
+     The drop-down he was reading is the MICROPHONE, which had not moved and was telling the
+     truth about the only thing it has ever controlled. It read as a routing control because a
+     pill showing a bare device name makes no claim about DIRECTION — and once you believe it
+     names the route, a device name that never changes is a device name that is lying to you.
+
+     The glyph is the claim: a capsule mic for what is heard, a cone for what is played. Masked
+     rather than drawn as a background-image so ONE data URI serves both themes — the colour comes
+     from `background-color`, which is a token. Two URIs under a media query is the same picture
+     twice, and the second copy is the one that rots. */
+  .pick { position:relative; display:flex; align-items:center; }
+  .pick[hidden] { display:none; }   /* `hidden` alone loses to the author `display` above */
+  .pick::before {
+    content:""; position:absolute; left:.78rem; width:13px; height:13px;
+    pointer-events:none; background-color:var(--dim);
+    -webkit-mask-repeat:no-repeat;   mask-repeat:no-repeat;
+    -webkit-mask-size:contain;       mask-size:contain;
+    -webkit-mask-position:center;    mask-position:center;
+    transition:background-color .18s ease;
+  }
+  .pick:hover::before { background-color:var(--fg); }
+  #micpick::before {
+    -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'%3E%3Crect x='9' y='3' width='6' height='10.5' rx='3'/%3E%3Cpath d='M5.5 11.5a6.5 6.5 0 0 0 13 0'/%3E%3Cpath d='M12 18v2.6'/%3E%3C/svg%3E");
+            mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'%3E%3Crect x='9' y='3' width='6' height='10.5' rx='3'/%3E%3Cpath d='M5.5 11.5a6.5 6.5 0 0 0 13 0'/%3E%3Cpath d='M12 18v2.6'/%3E%3C/svg%3E");
+  }
+  #spkpick::before {
+    -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9.2h3.6L12 5.2v13.6L7.6 14.8H4z'/%3E%3Cpath d='M16.2 9.4a3.6 3.6 0 0 1 0 5.2'/%3E%3Cpath d='M19 6.6a7.6 7.6 0 0 1 0 10.8'/%3E%3C/svg%3E");
+            mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9.2h3.6L12 5.2v13.6L7.6 14.8H4z'/%3E%3Cpath d='M16.2 9.4a3.6 3.6 0 0 1 0 5.2'/%3E%3Cpath d='M19 6.6a7.6 7.6 0 0 1 0 10.8'/%3E%3C/svg%3E");
+  }
+  /* A HEADSET, because that is the object the grouped pill names: one thing that is both ears and
+     mouth. Not a mic-plus-cone composite — two glyphs jammed together would say "two controls" at
+     exactly the moment the point is that there is one. */
+  #devpick::before {
+    -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.4 15.4v-3a7.6 7.6 0 0 1 15.2 0v3'/%3E%3Crect x='2.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Crect x='17.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Cpath d='M19.5 19.6v.7a2.3 2.3 0 0 1-2.3 2.3H13'/%3E%3C/svg%3E");
+            mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.4 15.4v-3a7.6 7.6 0 0 1 15.2 0v3'/%3E%3Crect x='2.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Crect x='17.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Cpath d='M19.5 19.6v.7a2.3 2.3 0 0 1-2.3 2.3H13'/%3E%3C/svg%3E");
+  }
+
+  .pick select {
     appearance:none; -webkit-appearance:none;
-    max-width:100%;
+    width:100%; max-width:100%;
     /* 44px to match the switch beside it — the platform minimum for a touch target, and two
        controls of different heights on one row read as a mistake rather than a hierarchy. */
     min-height:44px;
-    padding:.46rem 2.1rem .46rem .9rem; border-radius:999px;
+    /* The extra 1rem on the left is the glyph's room. The pill grew by exactly that much, so the
+       text well is the same width it was with one picker — an ellipsis that appeared today would
+       have appeared yesterday too. */
+    padding:.46rem 2.1rem .46rem 1.9rem; border-radius:999px;
     background-color:color-mix(in srgb, var(--card) 70%, transparent);
     background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),
                      linear-gradient(135deg,var(--dim) 50%,transparent 50%);
@@ -447,9 +509,8 @@
     border:1px solid var(--edge); cursor:pointer;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
-  #mic:hover { color:var(--fg); border-color:var(--edge-2); }
-  #mic:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
-  #mic[hidden] { display:none; }
+  .pick select:hover { color:var(--fg); border-color:var(--edge-2); }
+  .pick select:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
 
   /* --- transcript -------------------------------------------------------- */
   #log {
@@ -539,8 +600,12 @@
     h1 { display:none; }
     #orbwrap { width:min(30dvh,44vw,168px); }
     /* NOT pinned to the orb any more — that was sized for two controls and there are now
-       three, so 168px stacked them. The switches stay together; the picker wraps. */
-    #controls { width:min(100%,28rem); }
+       three, so 168px stacked them. The switches stay together; the picker wraps.
+       Both widths are restated because this query's `#controls` rule would otherwise outrank the
+       `.split` class on specificity alone and silently un-widen the fallback on a short screen —
+       a layout decided by a rule nobody remembered was there. */
+    #controls { width:min(100%,24rem); }
+    #controls.split { width:min(100%,29rem); }
     #stage { gap:.55rem; }
     body { row-gap:.5rem; }
     #log { border-radius:14px; }
@@ -597,7 +662,37 @@
           <path class="slash" d="M4.8 19.2 19.2 4.8"/>
         </svg>
       </button>
-      <select id="mic" hidden aria-label="Microphone"></select>
+      <!-- Wrapped in a <label> so the glyph is part of the control rather than decoration beside
+           it: tapping the icon focuses the select, and the accessible name lives on the select
+           where a screen reader expects it. Both start hidden — device labels are empty until
+           the microphone permission is granted, so a list built before the first tap would be a
+           row of blanks. -->
+      <!-- ONE PILL WHEN ONE PILL IS THE TRUTH. Reported live 2026-08-16, on seeing the output
+           picker for the first time: "right now I see there are two dropdowns, one for the
+           microphone and one for the speaker. But I think the microphone and speaker should be
+           just one dropdown that controls both as a group together."
+
+           He is describing the thing he OWNS. A Bluetooth headset is one object — paired once,
+           expected to be both ears and mouth — and `enumerateDevices()` returns it as two entries
+           that share a `groupId`. Mirroring the platform's split faithfully is exactly the defect:
+           two dropdowns is two ways to be half-connected, and half-connected is what the 08-15
+           report already was.
+
+           The two below are the FALLBACK, not dead markup. Some platforms return an empty or
+           unstable `groupId`, and Android enumerates no `audiooutput` at all — where the halves
+           cannot be paired, one control would silently move only one of them, and the recorded
+           lesson from the last picker is that offering a dead switch is worse than offering
+           nothing. So exactly one of these two layouts is on screen at any moment. -->
+      <label class="pick" id="devpick" hidden>
+        <select id="dev" aria-label="Audio device"
+                title="Audio device — where you are heard and where replies are played"></select>
+      </label>
+      <label class="pick" id="micpick" hidden>
+        <select id="mic" aria-label="Microphone" title="Microphone — where you are heard"></select>
+      </label>
+      <label class="pick" id="spkpick" hidden>
+        <select id="spk" aria-label="Speaker" title="Speaker — where replies are played"></select>
+      </label>
       <button id="verbose" class="orbbtn" role="switch" aria-checked="false" aria-label="Verbose narration">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 7h16"/><path d="M4 12h11"/><path d="M4 17h7"/>
@@ -642,6 +737,12 @@
   const $collapse = document.getElementById("collapse");
   const $log = document.getElementById("log");
   const $mic = document.getElementById("mic");
+  const $micpick = document.getElementById("micpick");
+  const $spk = document.getElementById("spk");
+  const $spkpick = document.getElementById("spkpick");
+  const $dev = document.getElementById("dev");
+  const $devpick = document.getElementById("devpick");
+  const $controls = document.getElementById("controls");
   const $verbose = document.getElementById("verbose");
   const $mute = document.getElementById("mute");
 
@@ -667,11 +768,30 @@
   // The channel starts CLOSED and the first orb tap opens it, so a page left open in a
   // background tab is never quietly live.
   let channelOpen = false, speakingSignal = false, speakingSince = 0, speakingRunStart = 0;
+  // HAS THE MICROPHONE EVER BEEN GRANTED ON THIS PAGE? It is what separates a cold page from one
+  // he switched off, now that switching off RELEASES capture and therefore clears `running`.
+  // Without it the orb would drop from "Off" back to "Tap to start" the moment the tracks end,
+  // which reads as the session having died rather than as the switch he just pressed.
+  let everStarted = false;
   let playingSource = null;
   // The assistant's name comes from the SERVER, so the page can never show a name the wake gate
   // no longer accepts. Nothing renders it since the status line went, but it is still recorded:
   // it is how a harness proves a mid-session rename reached this client.
   let wakeName = "";
+  // WHERE REPLIES COME OUT. `sinkWanted` is what he ASKED FOR and is the only half persisted;
+  // what is actually in use is read back off the AudioContext every time it is needed and never
+  // cached, because a cached "in use" is precisely the lie this section exists to stop telling.
+  // `sinkRefused` is sticky: a platform that answered NotSupportedError once will answer it
+  // again, and re-showing the control after every enumeration would resurrect a dead switch.
+  let sinkWanted = localStorage.getItem("voice-tunnel.sinkId") || "";
+  let sinkSupported = false, sinkRefused = false;
+  // ONE DEVICE, TWO HALVES. `deviceGroups` is groupId -> {in, out, label} for the physical devices
+  // whose input and output were BOTH enumerated; `groupOfDevice` is the reverse index, deviceId ->
+  // groupId, and it is what lets the pill be painted from the live track and the live sink rather
+  // than from whatever was last clicked. `grouped` is recomputed on every enumeration and never
+  // sticky, because a headset unpairing is exactly the moment one control stops being able to
+  // reach both halves.
+  let deviceGroups = new Map(), groupOfDevice = new Map(), grouped = false;
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
@@ -694,6 +814,26 @@
     orbView: null,
     orb: null,
     collapsed: false,
+    // The audio ROUTE, recorded rather than merely acted on — same reason as `peakRms`. When he
+    // says "it came out of the earpiece", the only useful next question is which of three things
+    // was true: the platform never offered a choice (`supported:false`, `why` says which half was
+    // missing), the choice was made and held (`inUse` equals `wanted`), or it was made and lost
+    // (`inUse` differs, `why` names the failure). Without this, all three look identical from the
+    // outside and the debugging is guesswork — which is how one live report turned into a
+    // suspected mechanism that was wrong.
+    sink: { supported:false, wanted:"", inUse:null, shown:null, applied:0, devices:0, why:"" },
+    // WHETHER THE TWO HALVES COULD BE PAIRED AT ALL, recorded for the same reason as `sink`: from
+    // outside, "this platform groups badly", "nothing enumerated" and "the mic and the speaker are
+    // genuinely on different devices" all look like "he still sees two dropdowns". `why` names
+    // which, and `count` says how many physical devices the page believes exist.
+    group: { supported:false, count:0, inUse:null, shown:null, why:"" },
+    micInUse: null, micShown: null,
+    // IS THE MICROPHONE ACTUALLY HELD RIGHT NOW — read off the tracks, not a flag this code sets.
+    // The whole point of the 2026-08-16 change is that "the orb is off" and "the microphone is
+    // released" had drifted apart while every status the page published said they had not, so a
+    // boolean written by the same function that does the releasing would be the same lie one layer
+    // down. `[]` means nothing is held; `["live"]` means it is. Same discipline as `diag.sink`.
+    micState: () => (micStream ? micStream.getAudioTracks().map((t) => t.readyState) : []),
   };
 
   // Errors only. Anything that is merely "what is happening" belongs on the orb, which says it
@@ -888,7 +1028,15 @@
     // and that ambiguity cost a live session on 2026-08-07 ("tap to start does not work"). The
     // orb is where he is already looking; the failure belongs there.
     if (m.phase === "denied") return { label: "No mic", timer: null };
-    if (!m.running) return { label: m.phase === "starting" ? "Starting" : "Tap to start", timer: null };
+    // OFF AND NEVER-STARTED LOOK THE SAME TO `running` AND ARE NOT THE SAME THING. Since
+    // 2026-08-16 the orb releases the microphone when he switches it off, so `running` is false in
+    // both cases; `everStarted` is the only fact that separates "he turned it off" from "this page
+    // has never been live". Absent (an old harness sweeping the model) reads as never-started,
+    // which is the previous behaviour exactly.
+    if (!m.running) {
+      const label = m.phase === "starting" ? "Starting" : m.everStarted ? "Off" : "Tap to start";
+      return { label, timer: null };
+    }
     if (m.phase === "warming") return { label: "Warming up", timer: null };
     if (!m.channelOpen) return { label: "Off", timer: null };
     if (m.playing) return { label: "Speaking", timer: null };
@@ -901,9 +1049,12 @@
   // ONE painter, and it is the ONLY thing allowed to touch the orb. Every handler updates the
   // model and calls this; none of them writes a label or a class directly.
   function applyOrb() {
-    const view = orbView({ running, phase, channelOpen, muted, playing, agentState });
+    const view = orbView({ running, phase, channelOpen, muted, playing, agentState, everStarted });
     $orblabel.textContent = view.label;
-    $orb.classList.toggle("closed", running && !channelOpen);
+    // The dimmed "closed" look now has to survive capture being released, or switching the orb off
+    // would return it to the bright never-started styling — the visual saying "start me" over a
+    // conversation he deliberately ended.
+    $orb.classList.toggle("closed", !channelOpen && (running || everStarted));
     $orb.classList.toggle("thinking", Boolean(view.timer));
     $orb.classList.toggle("speaking", view.label === "Speaking");
     setBusyTimer(view.timer);
@@ -1093,20 +1244,46 @@
   // mobile: a page cannot hold a microphone it was never handed. After that the stream stays and
   // the orb is purely the channel.
   async function orbTapped() {
-    if (running) { setChannel(!channelOpen); return; }
+    if (running) { await closeChannel(); return; }
     // A retry clears the previous refusal, so a second tap after granting permission in the
     // browser's own UI actually starts rather than sitting on the stale failure.
     if (phase === "denied") { phase = "idle"; setError(""); applyOrb(); }
     await start();
   }
 
-  function setChannel(next) {
-    channelOpen = Boolean(next);
-    tellServer("channel", channelOpen);
-    // Closing implies silence from this side too — otherwise "the channel is shut" would still
-    // be sending him audio, which is not what the switch says it does.
-    if (!channelOpen) { levelTarget = 0; silencePlayback(); }
-    applyOrb();
+  // OFF NOW MEANS THE MICROPHONE IS ACTUALLY RELEASED.
+  //
+  // Reported live 2026-08-16: "whenever I tap the orb and I turn it off, I would like you to stop
+  // recording on the microphone, because that does not allow me to watch other media on the phone,
+  // or use the Bluetooth or whatever, right — because you're hugging the microphone but the orb is
+  // off, so there's no point in that."
+  //
+  // The orb used to stop LISTENING without stopping CAPTURING, which are different states and only
+  // one of them was visible to him. The `MediaStream` stayed open, so the OS microphone indicator
+  // stayed lit and the phone stayed in capture — confirmed on the server the same day, which
+  // reported `channel_open: false, muted: true, capturing: true` after he switched it off.
+  //
+  // WHAT MAKES THIS DIFFERENT FROM WHAT HE ALREADY HAD: closing the tab releases the microphone
+  // too, and he found that himself and rejected it. "What I did is I closed the tab, but I would
+  // like to keep the tab open so that I can just come back and hit the orb again without having to
+  // reopen the link, scroll up and go find the link." The tunnel is fronted by a URL that changes
+  // on every restart, so reopening costs him a scroll through chat history for a link that may no
+  // longer be valid. Hence `keepSocket`: the tracks end, the socket, the page and the transcript
+  // all stay. Anything the agent says while he is off still arrives — the server queues it against
+  // the closed channel and releases it when he taps back on.
+  //
+  // The permission grant belongs to the ORIGIN, not to the stream, so re-acquiring should not
+  // re-prompt. That is the one claim here that no harness in this repo can settle: Chrome's
+  // fake-media flag auto-grants silently, so a green re-acquire proves the path works and proves
+  // nothing about whether a prompt would have appeared. It wants one tap on a real phone.
+  async function closeChannel() {
+    // Off has to mean off NOW, not after this sentence. Reported 2026-08-07: "I hit the orb to turn
+    // off because I was not hearing you... However, you spoke anyway." `stop()` deliberately KEEPS
+    // the clip queue, because its other caller is a device change where those replies are still
+    // wanted; this caller is the opposite intention, so the queue is dropped here first.
+    levelTarget = 0;
+    silencePlayback();
+    await stop({ keepSocket: true });
   }
 
   // Closing the channel stops the agent MID-SENTENCE, and drops whatever else was queued.
@@ -1189,7 +1366,13 @@
       }
       diag.settings = micStream.getAudioTracks()[0].getSettings();
       diag.deviceLabel = micStream.getAudioTracks()[0].label;
-      await populateMics();
+      // The microphone has been granted at least once on this page. Never cleared — it is what
+      // lets the orb say "Off" rather than "Tap to start" after `closeChannel` ends the tracks.
+      everStarted = true;
+      // Permission has landed, so device labels are populated for the first time. There is no
+      // AudioContext yet, so this builds the lists and nothing more; the route is applied by the
+      // second call below, once there is something to route.
+      await refreshDevices("permission");
     } catch (e) {
       // On a LAN IP navigator.mediaDevices is undefined and this is a TypeError. That is not
       // a bug to fix here — it is the secure-context rule. See ai-docs/reference/browser.md.
@@ -1202,8 +1385,12 @@
     }
 
     // Created inside the click handler so the autoplay policy unlocks playback too.
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx = new AC();
     if (ctx.state === "suspended") await ctx.resume();
+    // A NEW CONTEXT OPENS ON THE BROWSER'S DEFAULT OUTPUT, whatever he chose last time. Put it
+    // back before anything can play through it — a reply that arrives during setup would
+    // otherwise come out of the wrong speaker and be gone before the route caught up.
+    await refreshDevices("start");
 
     // The page already connected on load, so re-announce the REAL sample rate rather than
     // opening a second socket. `hello` is idempotent server-side — it just updates the rate the
@@ -1340,7 +1527,10 @@
     applyOrb();
   }
 
-  async function stop() {
+  // `keepSocket` is what turns this from "end the session" into "release the microphone". A device
+  // change wants the whole thing rebuilt; the orb switching off wants the tab, the socket, the
+  // transcript and the URL left exactly where they are — see `closeChannel`.
+  async function stop({ keepSocket = false } = {}) {
     running = false;
     channelOpen = false;
     tellServer("capturing", false);
@@ -1348,10 +1538,36 @@
     try { if (node) node.disconnect(); } catch {}
     try { if (source) source.disconnect(); } catch {}
     try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch {}
-    try { if (ws) ws.close(); } catch {}
+    // NULLED, not merely stopped. An ended track still answers `getSettings()` with the device it
+    // used to be on, and `refreshDevices` paints the input picker from exactly that call — so a
+    // released microphone would keep naming a device it is no longer holding, which is the "shows
+    // what was requested" failure this file spent 2026-08-15 removing. It matters more now that
+    // the released state is somewhere he SITS rather than a moment between two starts.
+    node = null; source = null; micStream = null;
+    if (!keepSocket) { try { if (ws) ws.close(); } catch {} }
     try { if (wakeLock) { await wakeLock.release(); wakeLock = null; } } catch {}
+    // CLOSE THE CONTEXT, and null it so nothing reaches a closed one. `start()` builds a fresh
+    // AudioContext every time and this used to abandon the old one still holding its output
+    // stream open — so every microphone change leaked a context, and a leaked context holds a
+    // route. Two contexts pointing at two different sinks is a fight the picker cannot describe,
+    // let alone win. Browsers also cap how many a page may have, so the leak ends in a `start()`
+    // that throws outside the handler that reports microphone failures: the orb sticks on
+    // "Starting" and says nothing.
+    //
+    // Stop the live source FIRST. `src.stop()` fires `onended`, which is what unwinds `drainClips`
+    // cleanly; `ctx.close()` alone is not required to fire it (see the guard in playClip). The
+    // QUEUE is deliberately left alone — this is a device change, not "stop talking to me", so
+    // those replies are still wanted and `start()` drains them into the new context.
+    try { if (playingSource) playingSource.stop(); } catch {}
+    playingSource = null;
+    try { if (ctx) await ctx.close(); } catch {}
+    ctx = null;
     phase = "idle";
-    agentState = "idle";
+    // THE AGENT'S STATE IS THE SERVER'S FACT, so forget it only when we stop listening to the
+    // server. With `keepSocket` the socket is still open and the agent is still working — it keeps
+    // pushing `agent_state` — so clearing it here would tell him, the moment he taps back on, that
+    // the work he switched away from had finished. It had not; we had merely stopped watching.
+    if (!keepSocket) agentState = "idle";
     playing = false;
     $orb.classList.remove("live", "speaking");
     applyOrb();
@@ -1443,6 +1659,13 @@
         setError("");
         if (running) $orb.classList.add("live");
         applyOrb();
+        // RE-READ THE DEVICES AND RE-APPLY THE ROUTE. A socket that dropped means the server
+        // restarted or the tab was suspended, and in both cases time passed with this page not
+        // looking: earbuds can have disconnected and come back, and the audio stack can have
+        // re-resolved the output underneath us. Everything else on this path is re-asserted
+        // already — mute, capturing, channel, speaking — because the same reasoning applies to
+        // each of them. The route was the one fact left assuming it had survived.
+        await refreshDevices("reconnect");
       } else {
         scheduleReconnect();
       }
@@ -1486,8 +1709,13 @@
         // Another device (or a reconnect echo) changed it. Adopt without echoing back, same rule
         // as verbose: a client that replies to a broadcast makes a loop.
         channelOpen = Boolean(msg.value);
-        // Same reason as setChannel: a close has to silence what is already playing here, or
+        // Same reason as `closeChannel`: a close has to silence what is already playing here, or
         // "off" means "off after this sentence".
+        //
+        // IT DOES NOT RELEASE THE MICROPHONE, and the asymmetry is deliberate. Releasing capture
+        // is answering HIS tap on THIS device; a broadcast is something another page or a
+        // reconnect echo did, and letting a message tear down a live capture would mean the mic
+        // could drop mid-sentence for a reason nobody at this device can see.
         if (!channelOpen) silencePlayback();
         applyOrb();
       } else if (msg.type === "wake") {
@@ -1555,7 +1783,11 @@
     if (draining) return;
     draining = true;
     try {
-      while (clipQueue.length) {
+      // `ctx` in the condition, not just at the top: `stop()` closes and nulls it mid-drain when
+      // he changes microphone, and every remaining clip would then be shifted off the queue only
+      // to throw on `createBuffer`. Leaving them queued costs a pause; consuming them costs the
+      // reply. `start()` drains again as soon as the new context exists.
+      while (clipQueue.length && ctx) {
         const { header, buf } = clipQueue.shift();
         await playClip(header, buf);
       }
@@ -1566,6 +1798,11 @@
 
   async function playClip(header, buf) {
     try {
+      // The last moment the page can still put the sound in the right place. Costs a string
+      // compare when the route is already correct, which is every clip but the first after a
+      // drift — and a drift that happens without a reconnect or a `devicechange` has no other
+      // hook to catch it.
+      await applySink("clip");
       const pcm = new Int16Array(buf);
       const f32 = new Float32Array(pcm.length);
       for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
@@ -1584,7 +1821,17 @@
         applyOrb();
         addRow("claude", header.text || "", "claude");
       }
-      await new Promise((res) => { src.onended = res; src.start(); });
+      await new Promise((res) => {
+        let guard = 0;
+        const finish = () => { if (guard) clearInterval(guard); guard = 0; res(); };
+        src.onended = finish;
+        // A context CLOSED underneath a playing source is not guaranteed to fire `onended`, and
+        // this promise is the one `drainClips` holds its serializing flag on — so an unfired event
+        // wedges playback permanently instead of costing one clip. The context's own state is the
+        // floor under the event. It only runs while a clip is genuinely in flight.
+        guard = setInterval(() => { if (!ctx || ctx.state === "closed") finish(); }, 200);
+        src.start();
+      });
       if (playingSource === src) playingSource = null;
       if (!isCue) {
         // Clearing the flag returns the orb to whatever the model actually says — muted, closed,
@@ -1606,27 +1853,309 @@
     }
   }
 
-  // --- microphone picker ----------------------------------------------------
-  // Labels are empty until permission is granted, so the list can only be built after the
-  // first successful getUserMedia. The choice persists, because the default input on this
-  // machine is not the one you want to talk into and re-picking it every session is friction.
-  async function populateMics() {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
+  // --- device pickers: what is heard, and where replies come out ------------------------------
+  //
+  // TWO REPORTS, ONE SECTION. The 2026-08-15 one below is about a picker that told the truth
+  // about the wrong thing; the 2026-08-16 one is about there being two pickers at all —
+  // "the microphone and speaker should be just one dropdown that controls both as a group
+  // together". The second is answered by `pairDevices`/`paintGroup` further down, and it is
+  // downstream of everything here: a control that sets both routes can only be honest if each
+  // route is individually readable back, which is what the first report bought.
+  //
+  // REPORTED LIVE 2026-08-15: "whenever you restart the server, the client is still up. For some
+  // reason, it stops using my Bluetooth device and starts outputting through the earpiece. And
+  // however, the drop-down didn't change. It still says Bluetooth."
+  //
+  // TWO SYMPTOMS, AND THE CODE OWNED ONLY ONE OF THEM.
+  //
+  // The audio moving is the platform. Android does not let a page choose an output device — that
+  // is `HTMLMediaElement.setSinkId`'s documented Android limitation, not an oversight here — and
+  // an active capture with `echoCancellation` pulls the whole audio session into Android's
+  // communication mode, whose fallback output when no headset route is up is the EARPIECE. That
+  // is why it is the earpiece specifically and not the loudspeaker. Nothing in this file asked
+  // for that and nothing in this file can override it.
+  //
+  // The picker was ours, and it was worse. There was no output picker at all — playback has
+  // always gone to `ctx.destination`, wherever the OS puts that — so the drop-down he was reading
+  // is the MICROPHONE. It "still said Bluetooth" because the microphone had not moved and it was
+  // telling the truth about the only thing it has ever controlled. Two compounding reasons it
+  // read as broken instead of irrelevant: a pill showing a bare device name makes no claim about
+  // direction, and re-selecting the option already selected fires no `change` event at all — so
+  // the one gesture a person makes to repair a stale control is the one gesture that does
+  // nothing. Both are fixed here: the glyphs say which way each pill points, and neither list
+  // waits to be corrected.
+  //
+  // THE RULE THAT FALLS OUT OF IT, and the reason this is one section rather than two:
+  // A PICKER SHOWS WHAT IS IN USE, NEVER WHAT WAS REQUESTED. A request is right until the moment
+  // it matters, and then stays confidently wrong because nothing ever contradicts it. So the
+  // input list is painted from the live track's own settings, and the output list from the sink
+  // the AudioContext reports back — not from `sinkWanted`, and not from `diag.settings`, which is
+  // a snapshot taken at start() and therefore can never report a device that moved.
+
+  const AC = window.AudioContext || window.webkitAudioContext;
+  // "" and "default" are one device said two ways: `setSinkId("")` selects the browser default and
+  // `AudioContext.sinkId` reports it back as "", while `enumerateDevices` lists that same device
+  // with the id "default". Compared raw, every check disagrees with itself and the route is
+  // re-applied on every clip forever.
+  const normSink = (v) => (!v || v === "default" ? "" : v);
+  const currentSink = () => (ctx && typeof ctx.sinkId === "string" ? ctx.sinkId : "");
+
+  // THE ONE DOOR to the output route. Everything that could move audio calls this and nothing
+  // calls `ctx.setSinkId` directly, because the failure being fixed is a route that changed
+  // without the UI hearing about it — and a second call site is a second way for that to happen.
+  // Free to call on any path: it compares two strings and returns when they already agree.
+  async function applySink(reason) {
+    if (!ctx || !sinkSupported) return;
+    if (normSink(currentSink()) === normSink(sinkWanted)) return;
     try {
-      const devices = (await navigator.mediaDevices.enumerateDevices())
-        .filter((d) => d.kind === "audioinput");
-      if (!devices.length) return;
-      const current = diag.settings?.deviceId;
+      await ctx.setSinkId(sinkWanted);        // "" means the browser's own default
+      diag.sink.applied++;
+      diag.sink.why = reason;
+    } catch (e) {
+      // TWO VERY DIFFERENT FAILURES WEAR THE SAME SHAPE HERE, and treating them alike is how a
+      // dead control survives on screen. NotSupportedError means this PLATFORM cannot route audio
+      // per page — Android owns routing, which is the whole story above — so the honest response
+      // is to stop offering the choice. Anything else means THIS DEVICE went away: unpaired
+      // earbuds, an unplugged dock, a sink that existed when the page loaded and does not now.
+      if (e && e.name === "NotSupportedError") {
+        sinkRefused = true;
+        sinkSupported = false;
+        diag.sink.why = "unsupported: " + e.message;
+      } else {
+        diag.errors.push("setSinkId: " + e.message);
+        diag.sink.why = "unavailable: " + e.message;
+        sinkWanted = "";
+        localStorage.removeItem("voice-tunnel.sinkId");
+        // SAY IT OUT LOUD. He chose a speaker and is not getting it; reverting to the default in
+        // silence is the exact move that let the interface and the audio disagree in the first
+        // place. This clears itself on the next successful reconnect, like every other error here.
+        setError("speaker unavailable — playing through the system default");
+        try { await ctx.setSinkId(""); } catch {}
+      }
+    }
+    paintSink();
+    // The grouped pill stands for BOTH routes, so a sink that fell back has to move it too —
+    // otherwise the one control he was given is the one control that can be wrong about half of
+    // what it claims, which is a worse version of the defect that produced it.
+    paintGroup();
+  }
+
+  // Paint the output picker from the CONTEXT, never from `sinkWanted`. This is the whole answer to
+  // "the drop-down didn't change": the selection is a readout of the routing rather than a memory
+  // of an instruction, so if the route falls back the control falls back with it, visibly, and he
+  // learns from the picker instead of from the sound.
+  function paintSink() {
+    // Hidden while the grouped pill is on screen — one physical device, one control. It is still
+    // painted below, because `grouped` can flip back on the next enumeration and a picker that
+    // only updates while visible would return stale.
+    $spkpick.hidden = !sinkSupported || grouped;
+    diag.sink.supported = sinkSupported;
+    diag.sink.wanted = sinkWanted;
+    if (!sinkSupported) { diag.sink.inUse = null; diag.sink.shown = null; return; }
+    const have = normSink(currentSink());
+    diag.sink.inUse = have;
+    const opts = Array.from($spk.options);
+    const match = opts.find((o) => normSink(o.value) === have)
+               || opts.find((o) => normSink(o.value) === "");
+    if (match) match.selected = true;
+    else {
+      // Playing through a device the enumeration does not list. Left alone, the browser displays
+      // option zero — a specific, confident, wrong answer, which is the failure mode this whole
+      // section exists to remove. Name the gap instead.
+      const o = document.createElement("option");
+      o.value = have; o.textContent = "current output";
+      o.selected = true;
+      $spk.appendChild(o);
+    }
+    diag.sink.shown = $spk.value;
+  }
+
+  // Chrome lists the same physical device up to three times: once for real, and once each as the
+  // `default` and `communications` pseudo-devices, all sharing a groupId. The real entry is the
+  // one worth naming and the one worth selecting, so the aliases are only ever tie-breakers.
+  const ALIAS_IDS = new Set(["default", "communications"]);
+  // "Default - Headset (WH-1000XM4)" is Chrome labelling the alias, not the device. Kept off the
+  // grouped pill because the pill already means "the device", and a name that says which alias it
+  // came from is noise in a control whose whole job is to name one object.
+  const cleanLabel = (s) => (s || "").replace(/^(Default|Communications)\s+-\s+/i, "").trim();
+
+  // GROUP BY `groupId`, WHICH IS ALREADY ON EVERY ENUMERATED DEVICE — so this is a rewrite of how
+  // the lists are rendered, not new capability. Returns only the groups with BOTH halves present,
+  // because a group with one half cannot be driven by a control that claims to set both.
+  function pairDevices(ins, outs) {
+    const map = new Map();
+    const side = (kind) => (d) => {
+      if (!d.groupId) return;
+      let g = map.get(d.groupId);
+      if (!g) { g = { in:null, out:null, label:"" }; map.set(d.groupId, g); }
+      // Prefer the REAL entry over Chrome's aliases, for the id and for the label alike. First
+      // writer wins otherwise, and the aliases usually sort first.
+      //
+      // BETWEEN THE TWO HALVES, first writer wins and that is deliberate — inputs are offered
+      // first, so a group is named after its microphone. No rule picks the "better" name, because
+      // there isn't one: on the device he actually reported, a Bluetooth headset, both halves
+      // carry the same product name, and on a built-in card neither half names the card. Identity
+      // here is the `groupId`; the label is only how he recognises it. A rule that reached into
+      // label text to choose would be the same guesswork this function exists to avoid.
+      const better = g[kind] === null || (ALIAS_IDS.has(g[kind]) && !ALIAS_IDS.has(d.deviceId));
+      if (better) g[kind] = d.deviceId;
+      const label = cleanLabel(d.label);
+      if (label && (!g.label || (!ALIAS_IDS.has(d.deviceId) && g.labelFromAlias))) {
+        g.label = label;
+        g.labelFromAlias = ALIAS_IDS.has(d.deviceId);
+      }
+    };
+    ins.forEach(side("in"));
+    outs.forEach(side("out"));
+    return new Map([...map].filter(([, g]) => g.in !== null && g.out !== null));
+  }
+
+  // Paint the grouped pill from the LIVE track and the LIVE sink — never from the last selection.
+  // Same rule as `paintSink`, and it bites harder here: one control standing for two routes has
+  // two ways to become a lie, so it has to be able to say "these are not the same device".
+  function paintGroup() {
+    $devpick.hidden = !grouped;
+    // THE CLUSTER WIDTH FOLLOWS THE LAYOUT, and this is the only place that decides it — every
+    // path that can change which pills are on screen ends here. Keyed on what is ACTUALLY VISIBLE
+    // rather than on `grouped`, because the one-pill fallback (an input list with no selectable
+    // output, i.e. Android) fits the narrow cluster perfectly well; only two pills need the room.
+    $controls.classList.toggle("split", !$micpick.hidden && !$spkpick.hidden);
+    diag.group.supported = grouped;
+    diag.group.count = deviceGroups.size;
+    for (const stale of Array.from($dev.querySelectorAll("option[data-synthetic]"))) stale.remove();
+    if (!grouped) { diag.group.inUse = null; diag.group.shown = null; return; }
+    const track = micStream && micStream.getAudioTracks()[0];
+    const liveIn = track ? track.getSettings().deviceId : undefined;
+    // `currentSink()` reports the browser default as "", while `enumerateDevices` lists that same
+    // device as "default" — the pair `normSink` exists for. Look the alias up, not the blank.
+    const groupIn = groupOfDevice.get(liveIn) || null;
+    const groupOut = groupOfDevice.get(normSink(currentSink()) || "default") || null;
+    const match = groupIn && groupIn === groupOut
+      ? Array.from($dev.options).find((o) => o.value === groupIn) : null;
+    if (match) {
+      match.selected = true;
+      diag.group.inUse = groupIn;
+      diag.group.why = "grouped";
+    } else {
+      // Option zero would otherwise be displayed: a specific, confident, wrong answer, which is
+      // the failure this whole section exists to remove. Name the gap instead — and name WHICH
+      // gap, because "not enumerated yet" and "your ears and your mouth are on different devices"
+      // call for completely different responses.
+      const split = Boolean(groupIn && groupOut);
+      const o = document.createElement("option");
+      o.value = ""; o.dataset.synthetic = "1"; o.selected = true;
+      o.textContent = split ? "mic and speaker on different devices" : "current devices";
+      $dev.appendChild(o);
+      diag.group.inUse = null;
+      diag.group.why = split ? "split across two devices" : "in use but not enumerated";
+    }
+    diag.group.shown = $dev.value;
+  }
+
+  // Rebuilt on every event that can change what is attached or where audio goes: the permission
+  // grant, the context opening, a RECONNECT, and the browser's own `devicechange`. It used to run
+  // exactly once, inside start() — so a list built at the first tap was still on screen hours
+  // later, whatever had been plugged in or paired since.
+  async function refreshDevices(reason) {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    let devices;
+    try { devices = await navigator.mediaDevices.enumerateDevices(); }
+    catch (e) { diag.errors.push("enumerate: " + e.message); return; }
+
+    const ins = devices.filter((d) => d.kind === "audioinput");
+    const outs = devices.filter((d) => d.kind === "audiooutput");
+
+    // --- output capability ---------------------------------------------------
+    // BOTH halves are feature-detected, and which half is missing is recorded, because that is the
+    // question a live phone session can answer and no test here can: Android is expected to fail
+    // the first check, the second, or both, and "it came out of the earpiece" is not evidence of
+    // which. Guessing at this is what produced a suspected mechanism that turned out to be wrong.
+    // Decided BEFORE the grouping below, because a platform that cannot move output cannot honour
+    // a control that claims to move both halves either.
+    diag.sink.devices = outs.length;
+    if (sinkRefused) sinkSupported = false;
+    else if (!AC || !("setSinkId" in AC.prototype)) { sinkSupported = false; diag.sink.why = "no setSinkId on this platform"; }
+    else if (!outs.length) { sinkSupported = false; diag.sink.why = "no audiooutput devices enumerated"; }
+    else { sinkSupported = true; diag.sink.why = "selectable"; }
+
+    // --- can the two halves be paired? ---------------------------------------
+    // ALL-OR-NOTHING, and deliberately strict. Every input and every output must belong to a group
+    // that has both halves; one ungrouped device and the combined pill silently cannot reach it,
+    // which is the dead-switch defect wearing a tidier layout. Falling back costs him a second
+    // dropdown he has seen before. Getting it wrong costs him a device he cannot select at all.
+    deviceGroups = pairDevices(ins, outs);
+    groupOfDevice = new Map();
+    for (const d of devices) {
+      if (d.groupId && deviceGroups.has(d.groupId)) groupOfDevice.set(d.deviceId, d.groupId);
+    }
+    const covered = (list) => list.every((d) => d.groupId && deviceGroups.has(d.groupId));
+    grouped = Boolean(sinkSupported && ins.length && outs.length
+                      && covered(ins) && covered(outs));
+    if (!grouped) {
+      diag.group.why = !sinkSupported ? "output not selectable on this platform"
+        : !ins.length || !outs.length ? "nothing enumerated on one side"
+        : "some devices report no usable groupId";
+    }
+
+    // --- input ---------------------------------------------------------------
+    // The device actually feeding the graph, read LIVE off the track every time. Labels are empty
+    // until permission is granted, so the pill stays hidden until there is something real to show.
+    const track = micStream && micStream.getAudioTracks()[0];
+    const live = track ? track.getSettings().deviceId : undefined;
+    if (ins.length) {
       $mic.innerHTML = "";
-      for (const d of devices) {
+      for (const d of ins) {
         const o = document.createElement("option");
         o.value = d.deviceId;
         o.textContent = d.label || "microphone";
-        if (d.deviceId === current) o.selected = true;
+        if (d.deviceId === live) o.selected = true;
         $mic.appendChild(o);
       }
-      $mic.hidden = false;
-    } catch (e) { diag.errors.push("enumerate: " + e.message); }
+      diag.micInUse = live === undefined ? null : live;
+      diag.micShown = $mic.value;
+    }
+    // The two single-purpose pills stay BUILT even while hidden: `grouped` is recomputed on every
+    // enumeration, so an unpaired headset can put them back on screen at any moment, and a list
+    // that only populates while visible would arrive empty at exactly that moment.
+    $micpick.hidden = grouped || !ins.length;
+
+    // --- output --------------------------------------------------------------
+    if (sinkSupported) {
+      $spk.innerHTML = "";
+      for (const d of outs) {
+        const o = document.createElement("option");
+        o.value = d.deviceId;
+        o.textContent = d.label || (normSink(d.deviceId) === "" ? "system default" : "speaker");
+        $spk.appendChild(o);
+      }
+    }
+
+    // --- the grouped pill ----------------------------------------------------
+    if (grouped) {
+      $dev.innerHTML = "";
+      for (const [id, g] of deviceGroups) {
+        const o = document.createElement("option");
+        o.value = id;
+        o.textContent = g.label || "audio device";
+        $dev.appendChild(o);
+      }
+    }
+
+    // RE-APPLY. On the reconnect path this is the line whose absence is the bug: a socket coming
+    // back is exactly the moment the page can no longer assume anything it set up before the drop
+    // is still in force.
+    await applySink(reason);
+    paintSink();
+    paintGroup();
+  }
+
+  // The set of attached devices changed under us — earbuds paired, a dock unplugged, a headset
+  // that went away and came back. This is the ONLY event that can tell the page a sink has
+  // returned, so it is also the only chance to put audio back on it without him touching
+  // anything. Which is the point: he should not have to notice, and if he does notice, the
+  // picker should already agree with him.
+  if (navigator.mediaDevices && "ondevicechange" in navigator.mediaDevices) {
+    navigator.mediaDevices.addEventListener("devicechange", () => { refreshDevices("devicechange"); });
   }
 
   $mic.addEventListener("change", async () => {
@@ -1638,6 +2167,58 @@
     await stop();
     await start();
   });
+
+  // No stop/start here, unlike the microphone above, and the asymmetry is real rather than an
+  // oversight: `setSinkId` re-routes a LIVE context, so the session, the socket, the permission
+  // grant and anything mid-playback all survive the change. Tearing the capture down to move a
+  // speaker would drop his turn to fix his ears.
+  //
+  // Persisted, because a server restart already costs him the thread of the conversation; making
+  // it cost the speaker choice on top is a second annoyance stacked on the first, and he would
+  // have to notice it to fix it.
+  $spk.addEventListener("change", async () => {
+    sinkWanted = $spk.value;
+    localStorage.setItem("voice-tunnel.sinkId", sinkWanted);
+    await applySink("picked");
+  });
+
+  // ONE GESTURE, BOTH HALVES — AND THE ORDER IS THE WHOLE DESIGN.
+  //
+  // The two handlers above are deliberately asymmetric: the microphone tears the capture down and
+  // rebuilds it, because swapping the source on a live audio graph is where subtle capture bugs
+  // breed; the speaker does not, because `setSinkId` re-routes a live context and tearing capture
+  // down to move a speaker "would drop his turn to fix his ears". A combined control has to do
+  // both, so it inherits both reasons — which means the SINK GOES FIRST.
+  //
+  // Sink first is instant and non-destructive: his ears are fixed before anything is torn down, so
+  // a reply already playing survives the change, and if the restart below fails (a mic unplugged
+  // between enumeration and this tap) he is still left better off than he started. Capture first
+  // would make every device change cost a dropped turn — paying the microphone's price for a
+  // gesture that is usually about the speaker.
+  //
+  // Both halves are written to the SAME localStorage keys the single pickers use, so persistence,
+  // the `start()` restore path and the fallback layout all keep working unchanged. A third stored
+  // preference would be a third thing to go stale.
+  $dev.addEventListener("change", async () => {
+    const group = deviceGroups.get($dev.value);
+    // The synthetic "current devices" option has an empty value and names a state, not a choice.
+    // Selecting it is not a request for anything, so it must not move audio anywhere.
+    if (!group) { paintGroup(); return; }
+
+    sinkWanted = group.out;
+    localStorage.setItem("voice-tunnel.sinkId", sinkWanted);
+    await applySink("picked");
+
+    localStorage.setItem("voice-tunnel.micId", group.in);
+    await stop();
+    await start();
+  });
+
+  // Sync the readout at load so `diag.sink` describes the page from its first moment rather than
+  // from the first enumeration. Hides the output pill, which the markup already does — the value
+  // is that a harness reading `diag` before anyone taps gets the restored preference, not a blank.
+  paintSink();
+  paintGroup();
 
   $orb.addEventListener("click", orbTapped);
 
