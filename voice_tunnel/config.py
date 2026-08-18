@@ -176,7 +176,20 @@ worth having as an A/B, since a silent fall back to the timer and a deliberate o
 from the outside."""
 
 TURN_THRESHOLD = 0.5
-"""Probability at or above which the utterance counts as finished. HuggingFace's default."""
+"""Probability at or above which the utterance counts as finished. HuggingFace's default.
+
+**KEPT AT 0.5 ON PURPOSE, against the obvious proposal to raise it.** The project node called this
+"the cheap lever" for the 2026-08-17 truncation, and the measurement says it is not a lever at all:
+re-running the model over the aligned audio of that session, the five truncated utterances scored
+0.480 / 0.869 / 0.965 / 0.969 / 0.977 — a **median of 0.965, ABOVE the 0.931 median of the early
+exits that were correct**. Raising the bar therefore removes good closes faster than bad ones:
+0.98 drops four of five truncations while keeping 3 of 48 early exits, and 0.985 keeps none, which
+is disabling the early exit while pretending to tune it.
+
+The model is not hesitant and wrong at the boundary; it is CONFIDENT and wrong, and confidence does
+not rank truncation. `TURN_MIN_SILENCE_MS` is the number that moved. Settable as
+VOICE_TUNNEL_TURN_THRESHOLD so the finding can be re-tested rather than re-argued. Full numbers in
+specs/005-one-wait-gated-on-speech.md."""
 
 TURN_MAX_WAIT_MS = 1500
 """How much longer than the normal timeout the model may hold a turn open.
@@ -192,13 +205,43 @@ TURN_INCOMPLETE_DELAY_MS = 600
 Re-asking every audio chunk would run the model dozens of times per pause for an answer that
 cannot change that fast."""
 
-TURN_MIN_SILENCE_MS = 400
+TURN_MIN_SILENCE_MS = 800
 """The floor below which NO amount of confidence closes a turn early.
 
 This is the guard on the half of the feature that carries the risk. Ending early on a confident
 'complete' is where most of the latency win is — and it is also exactly the failure that raising
-1000 -> 1500 was meant to fix. Gaps under 400 ms are inside normal speech, so no prediction is
-allowed to act on them."""
+1000 -> 1500 was meant to fix.
+
+**RAISED 400 -> 800 FROM A MEASUREMENT, 2026-08-17**, after the first live truncation was reported:
+*"I was still speaking and the transcription started and finished and it did not catch the last
+sentence of what I was saying."* Over 56 aligned turns from that session, ALL FIVE truncated
+utterances closed at a measured trailing silence of **0.44-0.48 s** — the first check this floor
+permitted. Nothing else closed there by accident: the early-exit population is bimodal at ~0.46 s
+and ~1.04 s, which is this floor and then TURN_INCOMPLETE_DELAY_MS, i.e. the rate limiter's own
+shape.
+
+**800 is the middle of a plateau, not an edge.** 600, 700, 800 and 900 ms all keep the same 12 of
+48 early exits and admit none of the truncations; 1200 ms removes the early exit entirely. A value
+picked at 600 would sit 120 ms from the worst observed failure, so the centre is chosen instead.
+
+Cost: the 36 early exits below the new floor wait about 1.05 s longer. That is bought back several
+times over by spec 005 deleting a collapsing wait ladder that cost up to 10.5 s per exchange.
+
+**What it cannot do**, stated so nobody re-derives it: a floor only protects pauses SHORTER than
+itself. Of the five truncations his real pauses were 0.64, 0.80, 0.98, 1.14 and 2.00 s, so this
+rescues the shortest. The other four are not segmenter defects — a one-second pause is a genuine
+end of utterance — they are one thought arriving as several turns, which is the waiting layer's
+job. Override with VOICE_TUNNEL_TURN_MIN_SILENCE_MS."""
+
+UNREAD_ON_SAY_MAX = 20
+"""How many unread turns `say` hands back with a reply, newest kept.
+
+Bounded because this rides on the reply path: an agent that was away while he kept talking must
+not be handed an hour of log inside a `say` response, where it would crowd out the reply's own
+fields at the moment the agent is least able to spend the tokens. Twenty is far more than any
+single thought this tunnel has recorded — the worst measured was three turns — and small enough to
+stay a footnote. Nothing is lost by truncating: the cursor is NOT advanced, so the next `watch`
+returns them all again, and the whole log is one `voice-tunnel turns` away."""
 
 
 def barge_in_enabled() -> bool:
@@ -227,6 +270,20 @@ def turn_threshold() -> float:
         return min(1.0, max(0.0, float(_env("VOICE_TUNNEL_TURN_THRESHOLD") or TURN_THRESHOLD)))
     except ValueError:
         return TURN_THRESHOLD
+
+
+def turn_min_silence_ms() -> int:
+    """`TURN_MIN_SILENCE_MS` with its env override applied. ONE reader, so one behaviour.
+
+    Read through a function rather than as a bare constant because it is the number that decides
+    whether he gets cut off, and the whole point of raising it from a measurement is that the next
+    measurement can move it again without a release. Floored at zero rather than validated: a
+    negative floor would silently re-enable the behaviour this exists to stop.
+    """
+    try:
+        return max(0, int(float(_env("VOICE_TUNNEL_TURN_MIN_SILENCE_MS") or TURN_MIN_SILENCE_MS)))
+    except ValueError:
+        return TURN_MIN_SILENCE_MS
 
 
 def turn_threads() -> int:
@@ -1244,6 +1301,28 @@ SETTINGS: tuple = (
              lambda: str(asr_beam_size())),
     _setting("VOICE_TUNNEL_END_OF_UTTERANCE_MS", "silence that ends a turn; raise it if you get cut off",
              lambda: str(END_OF_UTTERANCE_MS)),
+    # THE THREE TURN-DETECTION VARIABLES WERE READ AND NEVER REGISTERED. `config.turn_threshold`,
+    # `turn_detect_enabled` and `turn_threads` have read the environment since spec 004, so
+    # `config set VOICE_TUNNEL_TURN_THRESHOLD 0.7` answered "unknown setting" for a key that was
+    # live and honoured — the same defect class as 0.2.1's unreachable `[turn]` extra. A knob you
+    # cannot reach through the documented interface is not tunable, whatever the code does.
+    _setting("VOICE_TUNNEL_TURN_DETECT",
+             "1 | 0 — let the learned turn model decide when a turn ends. 0 falls back to the "
+             "fixed END_OF_UTTERANCE_MS timer, which was raised from 1000 BECAUSE it cut him off",
+             lambda: "1" if turn_detect_enabled() else "0"),
+    _setting("VOICE_TUNNEL_TURN_THRESHOLD",
+             "0-1 — probability at or above which an utterance counts as finished. Measured "
+             "2026-08-17: raising this does NOT reduce truncation, because the model is "
+             "confidently wrong rather than hesitant. Use TURN_MIN_SILENCE_MS instead",
+             lambda: str(turn_threshold())),
+    _setting("VOICE_TUNNEL_TURN_MIN_SILENCE_MS",
+             "the floor below which no amount of model confidence may close a turn early. THIS "
+             "is the knob that stops him being cut off mid-sentence; 800 was measured, not "
+             "guessed. Raise it if you are still being truncated",
+             lambda: str(turn_min_silence_ms())),
+    _setting("VOICE_TUNNEL_TURN_THREADS", "ONNX intra-op threads for the turn model (4 measured "
+             "fastest on this machine; 1 and 8 are both slower)",
+             lambda: str(turn_threads())),
     _setting("VOICE_TUNNEL_CUES", "1 | 0 — short non-speech cues so a pause is audible",
              lambda: "1" if cues_enabled() else "0"),
     _setting("VOICE_TUNNEL_VERBOSE",

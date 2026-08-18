@@ -200,3 +200,94 @@ def test_the_window_is_long_enough_for_the_embedder_to_answer():
     from voice_tunnel import config, voiceprint
 
     assert config.BARGE_IN_MIN_MS / 1000 >= voiceprint.ENROLL_MIN_SECONDS
+
+
+# ------------------------------------------------- spec 005: the floor is the lever
+
+
+def test_the_early_exit_floor_is_the_measured_value_not_the_inherited_one():
+    """AC17. Raised 400 -> 800 from the 2026-08-17 session, where ALL FIVE truncated utterances
+    closed at a measured trailing silence of 0.44-0.48 s — the first check the old floor allowed.
+
+    800 is the middle of a plateau rather than an edge: 600, 700, 800 and 900 ms all keep the same
+    12 of 48 early exits and admit none of the truncations. A value at 600 would sit 120 ms from
+    the worst observed failure.
+    """
+    assert config.TURN_MIN_SILENCE_MS == 800
+    assert config.turn_min_silence_ms() == 800
+    # And it must still be BELOW the timer, or the early exit can never fire and the feature is
+    # off while appearing to be on.
+    assert config.TURN_MIN_SILENCE_MS < config.END_OF_UTTERANCE_MS
+
+
+def test_no_confidence_closes_a_turn_below_the_new_floor():
+    """AC17, behaviourally. The gaps that were being cut are the ones now protected: he resumed
+    0.04-1.40 s after those closes, and four of the five pauses were shorter than the 1.5 s the
+    segmenter otherwise requires — so without the early exit those turns would not have closed
+    there at all."""
+    buf = asr.UtteranceBuffer(turn_detector=lambda s: True)
+    got = feed_all(buf, [speech(1.0), silence(0.5)])
+
+    assert got is None, "0.5 s is inside a breath; no model confidence may close a turn there"
+
+
+def test_the_floor_is_tunable_without_a_code_change(monkeypatch):
+    """AC16. It is the number that decides whether he gets cut off, and it was set from a
+    measurement the next session may refine — so it has to move without a release."""
+    monkeypatch.setenv("VOICE_TUNNEL_TURN_MIN_SILENCE_MS", "1200")
+    assert config.turn_min_silence_ms() == 1200
+
+    buf = asr.UtteranceBuffer(turn_detector=lambda s: True)
+    assert buf._min_silence_samples == int(SR * 1.2), (
+        "the buffer must read the env value, not the bare constant — otherwise the setting is inert"
+    )
+
+
+def test_a_bad_floor_falls_back_rather_than_crashing_the_segmenter(monkeypatch):
+    """A tunnel that stopped segmenting over a typo in a settings file would be a far worse
+    regression than the one being fixed. Same rule as every other failure in this feature."""
+    monkeypatch.setenv("VOICE_TUNNEL_TURN_MIN_SILENCE_MS", "not-a-number")
+    assert config.turn_min_silence_ms() == config.TURN_MIN_SILENCE_MS
+
+
+def test_the_threshold_default_is_unchanged_and_that_is_the_finding(monkeypatch):
+    """AC16/FR5. The project node proposed raising this as "the cheap lever". Measured on the
+    aligned audio of the session that produced the complaint, the five truncations scored a median
+    0.965 — ABOVE the 0.931 median of the early exits that were CORRECT. The model is confidently
+    wrong rather than hesitant, so no threshold separates them: 0.98 drops four of five while
+    keeping 3 of 48 early exits, and 0.985 keeps none.
+
+    Kept at HuggingFace's 0.5 because no measured value is better, and made settable so the
+    finding can be re-tested rather than re-argued."""
+    assert config.TURN_THRESHOLD == 0.5
+    monkeypatch.setenv("VOICE_TUNNEL_TURN_THRESHOLD", "0.9")
+    assert config.turn_threshold() == 0.9
+
+
+def test_turn_detection_stays_on_and_the_extension_half_is_untouched():
+    """AC18 / TC4. Turning the model off returns to the fixed 1500 ms timer, which was RAISED from
+    1000 because it kept cutting him off — a known-worse failure of the same kind. And the half
+    that was never implicated keeps working: `incomplete` still extends, bounded."""
+    assert config.TURN_DETECT is True
+    assert config.turn_detect_enabled() is True
+
+    buf = asr.UtteranceBuffer(turn_detector=lambda s: False)
+    got = feed_all(buf, [speech(1.0), silence(config.END_OF_UTTERANCE_MS / 1000 + 0.4)])
+    assert got is None, "an 'unfinished' verdict must still buy him room"
+
+    bounded = asr.UtteranceBuffer(turn_detector=lambda s: False)
+    out = feed_all(bounded, [speech(1.0), silence(
+        (config.END_OF_UTTERANCE_MS + config.TURN_MAX_WAIT_MS) / 1000 + 1.0)])
+    assert out is not None and bounded.last_end_reason == "model-exhausted"
+
+
+def test_every_turn_setting_is_registered_so_config_set_can_reach_it():
+    """AC16, and the defect class it closes. These three have read the environment since spec 004
+    and were in no registry, so `config set VOICE_TUNNEL_TURN_THRESHOLD 0.7` answered "unknown
+    setting" for a key that was live and honoured — the same shape as 0.2.1's unreachable
+    `[turn]` extra. A knob you cannot reach through the documented interface is not tunable."""
+    keys = {s["key"] for s in config.SETTINGS}
+
+    for key in ("VOICE_TUNNEL_TURN_DETECT", "VOICE_TUNNEL_TURN_THRESHOLD",
+                "VOICE_TUNNEL_TURN_MIN_SILENCE_MS", "VOICE_TUNNEL_TURN_THREADS"):
+        assert key in keys, f"{key} is read by the code and registered nowhere"

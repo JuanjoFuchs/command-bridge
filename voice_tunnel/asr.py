@@ -115,7 +115,10 @@ class UtteranceBuffer:
         assumed — without it, 'is the model helping' is a matter of opinion."""
         self._max_extend_samples = int(sr * config.TURN_MAX_WAIT_MS / 1000)
         self._incomplete_delay_samples = int(sr * config.TURN_INCOMPLETE_DELAY_MS / 1000)
-        self._min_silence_samples = int(sr * config.TURN_MIN_SILENCE_MS / 1000)
+        # Through the reader, not the constant: this is the number that decides whether he gets
+        # cut off, and it was raised 400 -> 800 from a measurement that the next session may
+        # refine. A bare constant here would make VOICE_TUNNEL_TURN_MIN_SILENCE_MS inert.
+        self._min_silence_samples = int(sr * config.turn_min_silence_ms() / 1000)
         self.sr = sr
         self.silence_floor = silence_floor
         self.end_silence_samples = int(sr * end_silence_ms / 1000)
