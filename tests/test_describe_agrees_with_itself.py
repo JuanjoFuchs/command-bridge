@@ -32,12 +32,17 @@ def test_describe_documents_every_field_say_actually_returns():
         assert field in documented, f"`say` returns {field} and describe does not mention it"
 
 
-def test_the_hold_is_documented_as_a_reason_to_drain_again():
-    """`held_for` is the guide's final-drain rule keyed to a fact the tool has already measured:
-    the server held this clip because he was STILL SPEAKING while it was being composed."""
+def test_the_hold_is_documented_as_a_reason_to_watch_again():
+    """`held_for` is the final-wait rule keyed to a fact the tool has already measured: the server
+    held this clip because he was STILL SPEAKING while it was being composed.
+
+    Says WAIT AGAIN since spec 005 — the command it used to name no longer exists as a separate
+    thing, and a document that sends the reader to a retired name is how `--waits 5,3,2` outlived
+    the ladder it configured."""
     text = cli.DESCRIBE["commands"]["say"]["returns"]["held_for"]
 
-    assert "DRAIN AGAIN" in text.upper()
+    assert "WAIT AGAIN" in text.upper()
+    assert "voice-tunnel watch" in text, "name the command, do not describe it"
     assert "moved past" in text, "say WHY: the reply may answer a question he has left behind"
 
 
@@ -48,32 +53,37 @@ def test_delivered_is_documented_as_not_an_error():
 
 def _say(monkeypatch, **server_says):
     """Run `say` against a server that returns exactly `server_says`."""
-    payload = {"queued": True, "id": "clip-1", "seconds": 1.0, "held_for": 0.0,
-               "delivered": True, "reason": None}
+    payload = {"queued": True, "id": "clip-1", "seconds": 1.0, "held_for": 0.9,
+               "held_for_speech": False, "delivered": True, "reason": None,
+               "unread": [], "unread_count": 0, "cursor": 7}
     payload.update(server_says)
     monkeypatch.setattr(cli, "_request", lambda *a, **k: dict(payload))
     return cli.cmd_say(argparse.Namespace(session="dev", text="hi", voice=None, now=False))
 
 
-def test_a_held_reply_is_told_to_drain_before_it_is_trusted(monkeypatch):
+def test_a_held_reply_is_told_to_watch_before_it_is_trusted(monkeypatch):
     """THE BRANCH THAT DID NOT EXIST. The server measured the overlap and said nothing about it."""
-    out = _say(monkeypatch, held_for=3.4)
+    out = _say(monkeypatch, held_for=3.4, held_for_speech=True)
 
-    assert "drain" in out["next"], "the hold is evidence he kept talking; go and read what he said"
+    assert "watch" in out["next"], "the hold is evidence he kept talking; go and read what he said"
     assert "3.4" in out["next"], "state the measurement, not a vague warning"
     assert "moved past" in out["next"]
 
 
 def test_an_unheld_reply_just_goes_back_to_listening(monkeypatch):
-    out = _say(monkeypatch, held_for=0.0)
+    """One command now, so this can no longer be "watch, not drain". What it still has to check
+    is that nothing URGENT is implied when the server did not have to hold the clip."""
+    out = _say(monkeypatch)
 
-    assert "watch" in out["next"]
-    assert "drain" not in out["next"], "do not send an agent to drain when nothing suggests it"
+    assert "voice-tunnel watch" in out["next"]
+    assert "NOW" not in out["next"], "nothing suggests he kept talking; do not raise the alarm"
+    assert "moved past" not in out["next"]
 
 
 def test_nobody_listening_outranks_the_hold(monkeypatch):
     """There is no stale reply to worry about when there was no listener to hear it."""
-    out = _say(monkeypatch, held_for=9.0, delivered=False, reason="no_client")
+    out = _say(monkeypatch, held_for=9.0, held_for_speech=True, delivered=False,
+               reason="no_client")
 
     assert "unreachable" in out["next"]
 
@@ -148,8 +158,8 @@ def test_describe_resolves_its_own_argument_about_detaching():
     assert "not reading the result" in exception, (
         "name the real failure — an unread background watch, not backgrounding itself"
     )
-    assert "DRAIN" in exception and "foreground" in exception, (
-        "and say the drain is the thing that must never be detached"
+    assert "PRE-SAY WAIT" in exception and "foreground" in exception, (
+        "and say the wait that gates your own mouth is the thing that must never be detached"
     )
 
 
@@ -208,14 +218,23 @@ def test_status_documents_the_fields_the_discipline_rests_on(field):
     assert field in returns, f"`status` returns {field} and describe does not mention it"
 
 
-def test_the_two_speech_signals_are_documented_as_additive():
+def test_the_speech_signals_are_documented_as_additive():
+    """THREE signals now, not two, and the muted caveat is INVERTED rather than dropped.
+
+    It used to read "a MUTED microphone leaves speech_active stuck true, check muted first" — a
+    true statement about the old server and a dangerous one about this one, because under a
+    speaking-gated wait a reader who believes the flag lies will write a second workaround for a
+    bug that is fixed. Spec 005 fixed it at the source, so the document has to say the OPPOSITE:
+    frames stopping IS speech stopping."""
     returns = cli.DESCRIBE["commands"]["status"]["returns"]
     note = returns["_speaking_note"]
 
-    assert "EITHER" in note, "he is talking if either says so"
-    assert "muted" in note, "and a muted mic leaves speech_active stuck true"
+    assert "ANY" in note, "he is talking if any of the three says so"
+    assert "no longer applies" in note, "the muted caveat is retired, not silently deleted"
+    assert "frames stopping" in note.lower(), "say what replaced it"
     assert "lag" in returns["speech_active"].lower(), "say which one is late and why"
     assert "immediate" in returns["user_speaking"].lower()
+    assert "transcribed" in returns["speech_pending"], "and say what the third one counts"
 
 
 def test_pending_turns_is_documented_with_the_trap_it_used_to_be():

@@ -342,6 +342,10 @@ try:
         # never tell the agent to stop. An earlier version of this check pinned the exact phrase
         # "keep watching" and broke the moment the hints became literal commands — which is a test
         # asserting prose rather than behaviour.
+        #
+        # `watch` is THE command: spec 005 made it smart enough that `drain` was unnecessary rather
+        # than renaming it. A tool that keeps teaching a spelling it is retiring is how
+        # `--waits 5,3,2` outlived the ladder it configured.
         check("voice-tunnel watch --session" in nxt and "stop watching" not in nxt,
               "and hands back a runnable watch instead of telling the agent to stop",
               f"next={nxt!r}")

@@ -213,3 +213,106 @@ def test_a_server_that_dies_mid_wait_ends_it_rather_than_holding_for_hours(monke
     assert time.monotonic() - started < 5.0, "it blocked on a dead server"
     assert result["listening"] is False
     assert "serve" in result["hint"], "say what to do about it, not merely that it happened"
+
+
+# ------------------------------------------------- the orb being OFF is the same state, not a
+# ------------------------------------------------- milder one
+#
+# Reported 2026-08-17, after fifteen consecutive nine-minute wakes with `count: 0` every time:
+# "we shouldnt be burning turns when the orb is off, watch should not timeout."
+#
+# The old split reasoned from HOW FAST HE COULD COME BACK — a closed channel still has a page
+# behind it, a dropped page does not — and picked the ladder for the first. That is the wrong
+# question. Coming back ends the wait in a second EITHER WAY, because `clients` and `channel_open`
+# are both control facts. What decides the ceiling is whether waiting can yield anything BEFORE he
+# comes back, and switching the orb off RELEASES the microphone, so it cannot.
+
+
+def test_the_orb_being_off_means_no_turn_can_arrive():
+    off = {"clients": 1, "channel_open": False, "capturing": False, "muted": False}
+    assert cli._no_turn_possible(off) is True
+
+
+def test_nobody_connected_still_means_no_turn_can_arrive():
+    """The case that already worked, asserted through the new predicate so a refactor of it
+    cannot quietly drop the original one."""
+    assert cli._no_turn_possible(
+        {"clients": 0, "channel_open": True, "capturing": True, "muted": False}) is True
+
+
+def test_a_live_listening_tunnel_is_left_on_the_ladder():
+    """The ladder is not dead — connected-and-quiet is still the case it was designed for, and
+    routing that to eight hours would be a far worse bug than the one being fixed."""
+    live = {"clients": 1, "channel_open": True, "capturing": True, "muted": False}
+    assert cli._no_turn_possible(live) is False
+
+
+def test_an_absent_channel_field_is_not_a_closed_one():
+    """ABSENT IS NOT FALSE. A server predating `channel_open` reports nothing, and reading that as
+    closed would hand an eight-hour ceiling to a live conversation — the worst available failure,
+    because it is silent and it is on the listening path."""
+    old = {"clients": 1, "capturing": True, "muted": False}
+    assert cli._no_turn_possible(old) is False
+
+
+def test_a_dead_server_does_not_earn_the_long_ceiling():
+    """Not because a turn could arrive, but because with nothing answering there is no
+    control-change path left to end a long wait early, and a ceiling nothing can interrupt is the
+    one thing that would make eight hours unsafe."""
+    assert cli._no_turn_possible(None) is False
+    assert cli._no_turn_possible({"error": "connection refused"}) is False
+    assert cli._no_turn_possible({"running": False, "clients": 0}) is False
+
+
+def test_cmd_watch_picks_the_long_ceiling_when_the_orb_is_off(monkeypatch, tmp_path):
+    """The report, at the call site. An empty streak of zero waited 30 s and a streak of fifteen
+    waited nine minutes; both were guaranteed empty."""
+    off = {"clients": 1, "channel_open": False, "capturing": False, "muted": False}
+
+    result = _run(monkeypatch, tmp_path, off, off, 0.5)
+
+    assert result["waited"] == 0.5, "it laddered instead of holding — 30.0 means the old path ran"
+    assert result["next_wait"] == 0.5, "and the next one must not quietly drop back to the ladder"
+
+
+def test_the_orb_coming_back_on_still_ends_the_wait_immediately(monkeypatch, tmp_path):
+    """THE PATH THAT MAKES THE LONG HOLD SAFE, and the one the old design doubted existed. He taps
+    the orb, `channel_open` moves, and the wait returns — no different from a page reconnecting."""
+    off = {"clients": 1, "channel_open": False, "capturing": False, "muted": False}
+    back = {**off, "channel_open": True, "capturing": True}
+
+    started = time.monotonic()
+    result = _run(monkeypatch, tmp_path, off, back, 20.0)
+
+    assert result["event"] == "control"
+    assert result["changed"] == {"channel_open": True, "capturing": True}
+    assert time.monotonic() - started < 5.0, "it waited out the ceiling instead of waking on him"
+
+
+def test_a_quiet_but_listening_tunnel_still_ladders(monkeypatch, tmp_path):
+    """The regression guard for the fix itself: with the orb ON and him merely silent, the very
+    next wait must still be the 30 s rung, because now an empty result IS evidence."""
+    live = {"clients": 1, "channel_open": True, "capturing": True, "muted": False}
+
+    result = _run(monkeypatch, tmp_path, live, live, 0.5)
+
+    assert result["waited"] == 30.0, "the orb-off ceiling leaked onto the listening path"
+
+
+def test_the_closed_channel_guidance_says_it_holds_rather_than_re_arms(monkeypatch, tmp_path):
+    """An agent follows `next`, not the source. If that field still reads as a re-armed series the
+    behaviour changed and the instruction did not, which is the shape of the original bug."""
+    off = {"clients": 1, "channel_open": False, "capturing": False, "muted": False}
+
+    result = _run(monkeypatch, tmp_path, off, off, 0.5)
+
+    # Read through `_disconnected_ceiling` rather than off the constant: `_run` shrinks the
+    # ceiling by env so the test finishes in half a second, and these fields must publish the
+    # ceiling ACTUALLY in force. Asserting the constant would pass while the code published a
+    # different number — the exact drift the fields exist to prevent.
+    published = cli._human_seconds(cli._disconnected_ceiling())
+    assert published in result["next"], "the command to run next understates how long it holds"
+    assert published in result["hint"], "and so does the explanation beside it"
+    assert "orb" in result["hint"], (
+        "a closed channel is a decision he made; the hint must not tell him his microphone broke"
+    )

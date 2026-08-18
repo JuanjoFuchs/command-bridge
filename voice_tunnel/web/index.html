@@ -807,6 +807,19 @@
     // automated check can reach. Assigned below to the same `tellServer` the UI itself calls, so
     // a harness exercises the real path instead of a parallel one that can drift from it.
     signal: null,
+    // AND THE AUDIO THAT HAS TO ACCOMPANY THAT SIGNAL. Since spec 005 the server publishes
+    // `user_speaking` and `speech_active` as FALSE once no audio frame has arrived for
+    // END_OF_UTTERANCE_MS, because in production "he is speaking" and "frames are arriving" are
+    // the same fact — a page asserting the first while the second has stopped is a page that has
+    // frozen, and under a speaking-gated wait that lie hangs the tunnel.
+    //
+    // So a harness sending only the flag was asserting a state that cannot occur, and its "a
+    // reply is HELD while he is speaking" check had quietly become vacuous: it measured
+    // SPEAK_GRACE_S either way. This pushes real PCM through the real socket, so the harness
+    // reproduces the pairing instead of an idealised half of it — the same lesson as the
+    // air-conditioner bug, where every synthetic test passed because they all fed digital zeros
+    // as "silence".
+    pushAudio: null,
     // The pure orb reducer. A harness calls this directly to sweep the whole state matrix —
     // every combination of running/phase/channel/mute/playing/agentState — in milliseconds,
     // without a microphone and without waiting on real transitions. The transition tests then
@@ -933,6 +946,30 @@
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, value }));
   }
   diag.signal = tellServer;
+
+  // Synthetic capture for a headless harness: `ms` of speech-shaped audio down the SAME socket
+  // the microphone uses, so the server's ingest, segmenter and frame-recency guard all see
+  // exactly what they would see from a real page. Speech-SHAPED, not a constant tone: the noise
+  // floor is a rolling percentile, so a steady hiss raises the floor to its own level and is
+  // then correctly classified as background — which is the design that beat a real air
+  // conditioner, and which makes a naive fixture silently test nothing.
+  diag.pushAudio = (ms) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return 0;
+    // Announce the rate these frames are actually at. With no AudioContext the page announced
+    // 48000 on load (`openSocket(ctx ? ctx.sampleRate : 48000)`), so without this the server
+    // would resample synthetic 16 kHz audio as though it were 48 kHz — three times too fast,
+    // and a fixture that is quietly the wrong length. `hello` is idempotent server-side.
+    ws.send(JSON.stringify({ type: "hello", sample_rate: 16000 }));
+    const n = Math.round((ms || 200) * 16000 / 1000);
+    const f32 = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const env = Math.pow(Math.sin(2 * Math.PI * 4 * i / 16000), 4);   // ~4 syllables/s
+      f32[i] = 0.3 * env * (Math.random() * 2 - 1);
+    }
+    ws.send(floatToPCM16(f32).buffer);
+    diag.framesSent++;
+    return n;
+  };
 
   // Tell the server he is TALKING, from the microphone level, before any of that audio has
   // crossed the network. Live, 2026-08-06, immediately after being interrupted: "the client

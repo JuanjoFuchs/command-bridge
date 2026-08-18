@@ -222,7 +222,11 @@ def test_a_command_needing_a_server_exits_three_not_one(capsys, tmp_sessions):
 
 def test_the_no_server_remedy_names_the_watch_that_must_follow(capsys, tmp_sessions):
     """AGENTS.md's rule 1: an agent told only "no server" starts one and then forgets to go
-    straight back into a blocking watch, which from the user's side is a crash."""
+    straight back into the blocking wait, which from the user's side is a crash.
+
+    Names `watch`, which is THE waiting command: spec 005 made it smart enough that `drain` was
+    unnecessary rather than renaming it. The tool must never TEACH a spelling it is retiring —
+    that is how `--waits 5,3,2` outlived the ladder it configured."""
     _, payload, _ = run(["say", "--session", "ghost", "hello"], capsys)
 
     assert "voice-tunnel watch" in payload["remedy"]

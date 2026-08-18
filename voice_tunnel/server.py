@@ -198,6 +198,44 @@ class TunnelState:
         failure this exists to prevent. Live, 2026-08-06, having just been interrupted: *"the
         client needs to send a signal back to the server whenever it's detecting me speaking so
         that you don't interrupt me."*"""
+        self.agent_holds_turns: bool = False
+        """Has the agent been handed turns it has not yet answered?
+
+        **THE ONE FACT THAT SEPARATES "CHECKING BEFORE I SPEAK" FROM "LISTENING", and it is
+        DERIVED, never declared.** Both calls are the same command with the same arguments against
+        the same tunnel state, so nothing else can tell them apart — and they want opposite
+        things. Before speaking, the agent needs an answer in milliseconds. While listening, it
+        needs to block, because an immediate empty return would make the loop it is required to
+        sit in (`RULE_1`) a hot spin.
+
+        Reported live 2026-08-17, on the first version that got this wrong: *"I don't like that
+        this wait. If I say nothing, this waits for 30 seconds. That's slow."* Removing the rungs
+        from the speaking path while leaving them on the silent path made the pre-reply pause
+        WORSE than the drain it replaced — 30 s against 10.5 s.
+
+        Set when turns are handed over (`/consumed`), cleared when the agent speaks (`/say`) and
+        when a wait comes back with nothing — the check happened and the answer was "nothing new".
+        That is exactly the drain loop: while turns keep arriving the next check stays instant,
+        and the first empty one ends the batch.
+
+        Same principle as `agent_state` itself: *"a status the agent announces is a claim, and a
+        claim is wrong exactly when it matters."* Nothing here is a flag the caller passes, which
+        is the point — an option is a decision an agent makes wrong under time pressure."""
+        self.speech_pending: int = 0
+        """Utterances that have CLOSED and are not yet in the log — transcription in flight.
+
+        THE INVARIANT MADE OBSERVABLE. He stated it himself, 2026-08-17: *"the gist is making sure
+        that there's any speech drained before you speak."* A count of pending speech is that
+        sentence as a field.
+
+        It exists because there is a window in which both speech signals read false and he has
+        nevertheless just spoken: the segmenter has closed the utterance and the recognizer has not
+        finished. Measured 2026-08-05 at ~1-2 s, and ~13 s on long dictation. A wait that returned
+        in that window would hand back nothing while he sat waiting for an answer — the same
+        failure as interrupting him, wearing different clothes.
+
+        Incremented synchronously at the close, before any await, so no `/status` can be served
+        between the buffer emptying and this rising."""
         self.embedder = voiceprint.Embedder()
         self.voice_samples: int = 0
         self.partial_busy: bool = False
@@ -230,6 +268,62 @@ class TunnelState:
         if last_turn_id is None:
             last_turn_id = store.last_turn_id(self.session)
         return max(0, last_turn_id - self.consumed_cursor)
+
+    def frames_stale(self) -> bool:
+        """Has audio stopped arriving for longer than it would have taken to end an utterance?
+
+        **THE HALF OF THE MUTED-FLAG FIX THAT COVERS THE CASES NOBODY REPORTS.** Every event that
+        stops frames also flushes the buffer, so the words are never lost — but events only cover
+        what the client tells us about. This covers what it does not: frames still in flight when a
+        mute lands and re-opening the buffer after the flush, an Android tab suspended in the
+        background with its socket alive, a wedged page holding a live connection and sending
+        nothing. Each of those leaves an utterance open forever.
+
+        Under the old drain that was a wrong narration — the agent announcing it was waiting for
+        someone whose microphone is off. Live, 2026-08-01: *"whenever I mute, you say that you're
+        listening and you're waiting for me to finish, but I'm muted."* Under a speaking-gated wait
+        (spec 005) the same lie HANGS THE TUNNEL, because the wait never observes him stopping.
+
+        **The window is not a new constant, and that is deliberate.** It is END_OF_UTTERANCE_MS —
+        exactly the silence that would have closed the utterance had frames kept coming. So the
+        rule is not a guess about staleness, it is the segmenter's own rule applied to the case
+        where the audio simply stopped: *frames stopping means speech stopped.*
+        """
+        if not self.clients or not self.capturing or self.muted:
+            return True
+        if not self.last_audio_at:
+            return True
+        return (time.monotonic() - self.last_audio_at) > (config.END_OF_UTTERANCE_MS / 1000.0)
+
+    def speaking_now(self) -> dict[str, Any]:
+        """The three facts a wait gates on, decided in ONE place.
+
+        Published by `snapshot` and read by `_speak`'s hold loop, so the agent and the server can
+        never disagree about whether he is talking. They used to compute it separately — `_speak`
+        with a muted exception, `status` without one — which is how the CLI ended up carrying a
+        "a MUTED microphone leaves speech_active stuck true, check muted first" caveat that every
+        reader had to remember to apply.
+
+        `speech_active` is the SERVER's segmenter and lags by a buffer plus a hop; `user_speaking`
+        is the CLIENT reading its own microphone level and leads by ~120 ms. Spec 005 states the
+        asymmetry that matters: the lagging one may END a wait, the leading one may only EXTEND it.
+        """
+        stale = self.frames_stale()
+        return {
+            "speech_active": False if stale else bool(self.buffer.speech_active),
+            "user_speaking": False if stale else bool(self.user_speaking),
+            "speech_pending": max(0, int(self.speech_pending)),
+        }
+
+    def talking(self) -> bool:
+        """Is he mid-sentence right now — EITHER signal, additively.
+
+        A false positive costs a moment of delay; a false negative costs interrupting him, and the
+        two are not worth the same. `speech_pending` counts too: an utterance already closed and
+        still being transcribed is speech that has not reached anyone yet.
+        """
+        s = self.speaking_now()
+        return bool(s["speech_active"] or s["user_speaking"] or s["speech_pending"])
 
     def capture(self, samples) -> None:
         """Append to the failsafe WAV, opening it on first audio."""
@@ -303,7 +397,12 @@ class TunnelState:
             # is zero") was a one-pass no-op. See `pending_turns`.
             "pending_turns": self.pending_turns(last_id),
             "agent_state": self.agent_state,
-            "speech_active": self.buffer.speech_active,
+            # THE THREE SPEECH FACTS COME FROM ONE PLACE. `speech_active` used to be published
+            # straight off the buffer, which is true and misleading the moment frames stop: a
+            # muted or backgrounded page leaves an utterance open forever and the flag sticks
+            # true. See `frames_stale`. `user_speaking` had the same hole from the other side —
+            # nothing server-side ever reset it, so a socket that died mid-word left it true.
+            **self.speaking_now(),
             "last_played": self.last_played,
             "last_error": self.last_error,
             # Read THIS when diagnosing: `last_error` is whichever subsystem failed most
@@ -315,11 +414,14 @@ class TunnelState:
             "capturing": self.capturing,
             "channel_open": self.channel_open,
             "watch_open": self.watch_open,
+            "agent_holds_turns": self.agent_holds_turns,
             "barges": self.barges,
             "last_barge_score": self.last_barge_score,
             "turn_detection": (self.turn.describe() if self.turn else {"enabled": False}),
             "last_end_reason": self.buffer.last_end_reason,
-            "user_speaking": self.user_speaking,
+            # `user_speaking` is published above, from `speaking_now`, alongside the two facts it
+            # is only meaningful next to. It used to sit here on its own reporting the client's
+            # last message verbatim — which is why a dead socket could leave it true forever.
             "seconds_since_audio": (
                 None if not self.last_audio_at
                 else round(time.monotonic() - self.last_audio_at, 1)
@@ -442,6 +544,32 @@ async def handle_shutdown(request: web.Request) -> web.Response:
     return web.json_response({"stopping": True, "session": state.session})
 
 
+def _unread_turns(state: TunnelState) -> dict[str, Any]:
+    """Everything he said that the agent has not read, for `say` to hand back as it speaks.
+
+    **DELIBERATELY DOES NOT ADVANCE THE READ CURSOR**, which is the one design decision here worth
+    defending. `watch` consumes what it delivers, because delivering IS the acknowledgement and
+    the read boundary drives the divider on his page. `say` is not the reading loop: it is a
+    WARNING that the reading loop was skipped. Two reasons to leave the cursor alone:
+
+    * the next `watch` must still return these turns, so an agent that ignores this field loses
+      nothing — the failure mode of double-delivery is a re-read, and the failure mode of
+      consuming here would be words silently dropped;
+    * the page's "read to here" divider would otherwise jump on a REPLY. He has not been read; he
+      has been answered, and those are different facts to show someone.
+
+    Bounded because this rides on a hot path and a caller that has been away for an hour must not
+    be handed the whole log inside a `say` response.
+    """
+    last_id = store.last_turn_id(state.session)
+    if last_id <= state.consumed_cursor:
+        return {"unread": [], "unread_count": 0, "cursor": last_id}
+    turns = [t for t in store.read_turns(state.session)
+             if int(t.get("id", -1)) > state.consumed_cursor and t.get("addressed")]
+    turns = turns[-config.UNREAD_ON_SAY_MAX:]
+    return {"unread": turns, "unread_count": len(turns), "cursor": last_id}
+
+
 async def handle_say(request: web.Request) -> web.Response:
     """Synthesize and push to every connected client.
 
@@ -464,17 +592,36 @@ async def handle_say(request: web.Request) -> web.Response:
     # No 409 when nobody is connected. The reply is synthesized and held; see
     # TunnelState.undelivered. Refusing here is what made a locked phone eat answers silently.
 
+    # WHAT HE SAID THAT NOBODY READ, HANDED BACK BY THE ACT OF SPEAKING ITSELF.
+    #
+    # *"the say command resolves, it should include in its response whatever I said that wasn't
+    # drained before."* (2026-08-17)
+    #
+    # **This turns the project's core invariant from a discipline into a structural fact.** Spec
+    # 005 states it as "no speech may be pending when you speak", and until now it was enforced by
+    # an agent CHOOSING to run `watch` first — a rule, and one violated repeatedly in live
+    # sessions. Handing the unread turns back from `say` means an agent physically cannot speak
+    # without being given what it missed. The rule stops depending on memory.
+    #
+    # Sampled BEFORE synthesis so both paths carry it: `--now` is exactly the path an agent takes
+    # when it is in a hurry, which is when it skips the check.
+    unread = _unread_turns(state)
+    # SPEAKING IS WHAT ENDS THE BATCH. Whatever turns the agent was holding, it has now answered
+    # them — so its next wait is a LISTEN and should block, rather than the instant pre-reply
+    # check. Derived from the act, never declared: see TunnelState.agent_holds_turns.
+    state.agent_holds_turns = False
+
     if fire_and_forget:
         # Return before synthesis so the agent can acknowledge and keep working in parallel,
         # instead of the user waiting out a TTS round trip before anything else starts.
         asyncio.get_running_loop().create_task(_speak(state, text, voice))
-        return web.json_response({"queued": True, "async": True})
+        return web.json_response({"queued": True, "async": True, **unread})
 
     try:
         result = await _speak(state, text, voice)
     except tts.TTSError as exc:
         return web.json_response({"error": str(exc)}, status=500)
-    return web.json_response(result)
+    return web.json_response({**result, **unread})
 
 
 async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, Any]:
@@ -520,11 +667,13 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
     # been segmented, so it lags by a buffer plus a hop. That lag is what let a reply land on top
     # of him. Additive on purpose: a false positive costs a moment of delay, a false negative
     # costs interrupting him.
-    def talking() -> bool:
-        return state.user_speaking or state.buffer.speech_active
-
+    #
+    # NOW READ FROM `state.talking()` rather than computed here. Two copies of this test existed —
+    # this one, which knew about mute, and `status`, which did not — so the CLI carried a caveat
+    # telling every reader to apply the exception by hand. One place, one answer. It also picks up
+    # `speech_pending`: an utterance closed and still in transcription is speech nobody has heard.
     while waited < 15.0 and not state.muted:
-        if talking():
+        if state.talking():
             if not announced:
                 await _set_agent_state(state, "waiting")
                 announced = True
@@ -538,9 +687,9 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
             await asyncio.sleep(0.1)
             grace += 0.1
             waited += 0.1
-            if talking():
+            if state.talking():
                 break
-        if not talking():
+        if not state.talking():
             break
     await _set_agent_state(state, "speaking")
     await _push_cue(state, "speaking")
@@ -575,6 +724,18 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
         "id": clip_id,
         "seconds": round(len(pcm) / 2 / rate, 2),
         "held_for": round(waited, 1),
+        # WAS IT HELD **BECAUSE HE WAS TALKING**, or is that just the grace pass?
+        #
+        # `held_for` is never zero on a blocking say: the loop always spends SPEAK_GRACE_S
+        # re-checking before it commits, so every reply comes back at ~0.9 s whether or not
+        # anyone said a word. Everything downstream branched on `held_for > 0`, so the warning
+        # "he kept talking while you composed this — drain again" fired on EVERY SINGLE REPLY.
+        #
+        # A warning that always fires is one nobody reads, which is the same defect as a health
+        # check that cannot be emptied. `announced` is already the exact fact — it is set only
+        # when the loop actually observed him talking — so it is published rather than inferred
+        # from a number that cannot express it.
+        "held_for_speech": announced,
         "delivered": deliverable,
         # Say WHICH kind of not-delivered, so the agent can tell "his phone dropped" from "he
         # closed the channel deliberately" without a second call.
@@ -831,6 +992,12 @@ async def handle_watching(request: web.Request) -> web.Response:
     # already in flight: a watch is routinely re-armed while a reply is still playing (that is the
     # normal loop), and stamping over `speaking` or `synthesizing` would blank the orb
     # mid-sentence.
+    # A WAIT THAT CAME BACK WITH NOTHING ENDS THE BATCH. The agent asked "anything more before
+    # I speak?" and the answer was no, so it is no longer holding unanswered turns and its next
+    # call is a listen again. Without this the instant-return mode would latch on for an agent
+    # that consumed turns and then never replied.
+    if not watching and bool((body or {}).get("empty")):
+        state.agent_holds_turns = False
     state.watch_open = watching
     if watching:
         if state.agent_state == "thinking":
@@ -866,6 +1033,9 @@ async def handle_consumed(request: web.Request) -> web.Response:
     # The agent has the turn in hand. Everything from here to `say_requested` is IT thinking —
     # the stage that dominated every measurement and was invisible until it had a name.
     timing.stamp(state.session, "consumed", cursor=cursor)
+    # The agent now HOLDS turns it has not answered, which is what makes its next wait a
+    # pre-reply check rather than a listen. See TunnelState.agent_holds_turns.
+    state.agent_holds_turns = True
     agent_state = str((body or {}).get("state") or "thinking")
     await _broadcast_json(
         state,
@@ -932,6 +1102,12 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
         if not state.clients:
             # The last page went away, so nothing is capturing regardless of what it last said.
             state.capturing = False
+            # NOR IS ANYONE SPEAKING. `user_speaking` is set only by a client message, and a
+            # socket that dies mid-word never sends the matching `speaking: false` — so the flag
+            # stayed true for the life of the server. Harmless while it only drove a hold loop
+            # that a reconnect would clear; fatal once a wait gates on it, because the wait would
+            # hold forever on a page that no longer exists.
+            state.user_speaking = False
         # Flush whatever was mid-sentence when the socket dropped, so a disconnect never
         # silently eats the last thing that was said.
         try:
@@ -968,6 +1144,17 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         state.capturing = bool(msg.get("value"))
         if not state.capturing:
             state.last_audio_at = 0.0
+            # SAME FLUSH MUTE AND DISCONNECT ALREADY DO, and this was the hole. Since 2026-08-16
+            # switching the orb off RELEASES the microphone, so releasing capture became the most
+            # common way to stop talking — and it was the one path that left a half-utterance open
+            # with no further frame able to close it. Two costs: the words spoken immediately
+            # before the tap were held rather than logged, and `speech_active` stuck true, which
+            # under a speaking-gated wait hangs the wait outright.
+            state.user_speaking = False
+            try:
+                await _flush(state, asyncio.get_running_loop())
+            except Exception as exc:
+                state.fail("transport", f"flush on capture stop failed: {exc}")
     elif kind == "muted":
         state.muted = bool(msg.get("value"))
         if state.muted:
@@ -993,6 +1180,15 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         was_open = state.channel_open
         state.channel_open = bool(msg.get("value"))
         timing.stamp(state.session, "channel", open=state.channel_open)
+        if was_open and not state.channel_open:
+            # Closing the conversation stops audio in both directions, so it ends an utterance for
+            # the same reason a mute does. Ordered before the reopen branch below because the two
+            # are mutually exclusive and this one is the one that can lose words.
+            state.user_speaking = False
+            try:
+                await _flush(state, asyncio.get_running_loop())
+            except Exception as exc:
+                state.fail("transport", f"flush on channel close failed: {exc}")
         if state.channel_open and not was_open:
             # Reopening is what releases anything said while he was away. Same path a reconnect
             # takes, because from the queue's point of view they are the same event: somebody is
@@ -1090,7 +1286,15 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
     if completed is None:
         _maybe_partial(state, loop)
         return
-    await _emit(state, completed, loop)
+    # RAISED BEFORE THE FIRST AWAIT, and that ordering is the whole point. Between the buffer
+    # emptying and the turn reaching the log, both speech signals read false while he has in fact
+    # just spoken — and `_emit` awaits the recognizer, so `/status` IS served inside that window.
+    # Counting from here closes it. See TunnelState.speech_pending.
+    state.speech_pending += 1
+    try:
+        await _emit(state, completed, loop)
+    finally:
+        state.speech_pending = max(0, state.speech_pending - 1)
 
 
 def _maybe_partial(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
@@ -1131,7 +1335,14 @@ def _maybe_partial(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
 async def _flush(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
     completed = state.buffer.flush()
     if completed is not None:
-        await _emit(state, completed, loop)
+        # Same accounting as the ingest path: a flush is a close, and its turn is pending until
+        # it is in the log. This is the path a mute, an orb tap or a dropped socket takes, which
+        # is exactly when an agent is most likely to be asking whether he has finished.
+        state.speech_pending += 1
+        try:
+            await _emit(state, completed, loop)
+        finally:
+            state.speech_pending = max(0, state.speech_pending - 1)
 
 
 async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) -> None:

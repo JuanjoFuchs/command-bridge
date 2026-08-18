@@ -98,9 +98,40 @@ try:
         check(r["delivered"] is True, "a muted user still RECEIVES replies")
 
         # The speaking signal must HOLD a clip rather than play over him.
-        page.evaluate("() => { const s = window.__voiceTunnel.signal; s('muted', false); s('speaking', true); }")
-        time.sleep(0.8)
-        check(api("/status")["user_speaking"] is True, "the server records the speaking signal")
+        #
+        # THE FLAG ALONE IS NO LONGER A STATE THAT CAN HAPPEN. Since spec 005 the server publishes
+        # both speech signals false once no audio frame has arrived for END_OF_UTTERANCE_MS,
+        # because in production "he is speaking" and "frames are arriving" are the same fact — a
+        # page asserting the first while the second has stopped is a page that has frozen, and
+        # under a speaking-gated wait that lie hangs the tunnel outright.
+        #
+        # So the harness now pushes real PCM alongside the flag. That is not a workaround for the
+        # guard: sending only the flag was asserting an impossible state, and it had quietly made
+        # the hold check below VACUOUS — it measured SPEAK_GRACE_S whether or not anything was
+        # holding, so it would have passed against a server that never held a clip at all.
+        #
+        # `capturing` has to be asserted too, and that is the guard being RIGHT rather than in the
+        # way: with the microphone released there is nobody to hear, so a page claiming to be
+        # speaking while not capturing is exactly the contradiction the guard exists to refuse.
+        # The harness is simulating a live microphone, so it has to say so.
+        #
+        # The frames are pumped by an interval INSIDE the page. A Python thread cannot do it:
+        # Playwright's sync API is greenlet-based and calling it from another thread raises
+        # "cannot switch to a different thread".
+        page.evaluate("""() => {
+          const d = window.__voiceTunnel;
+          d.signal('muted', false);
+          d.signal('capturing', true);
+          d.signal('speaking', true);
+          d.pushAudio(600);
+          window.__pump = setInterval(() => d.pushAudio(200), 150);
+        }""")
+        time.sleep(0.4)
+        st = api("/status")
+        check(st["user_speaking"] is True, "the server records the speaking signal")
+        check(st["speech_active"] is True,
+              "and the segmenter agrees, because real frames arrived",
+              f"speech_active={st['speech_active']} frames={st['frames_received']}")
 
         t0 = time.time()
         r = api("/say", {"text": "This must wait."})
@@ -108,8 +139,18 @@ try:
         check(r["held_for"] >= 0.5, "a reply is HELD while he is speaking",
               f"held_for={r['held_for']}s wall={held:.1f}s")
 
-        page.evaluate("() => window.__voiceTunnel.signal('speaking', false)")
-        time.sleep(0.5)
+        page.evaluate("""() => {
+          clearInterval(window.__pump);
+          window.__voiceTunnel.signal('speaking', false);
+        }""")
+        # Long enough for the frame-recency guard to conclude the audio stopped. This is the
+        # server-side half of "he finished", and it is what the wait is now gated on — so it is
+        # worth asserting directly rather than only through the hold it produces.
+        time.sleep(2.5)
+        st = api("/status")
+        check(st["speech_active"] is False and st["user_speaking"] is False,
+              "frames stopping reads as speech stopping",
+              f"speech_active={st['speech_active']} user_speaking={st['user_speaking']}")
         t0 = time.time()
         r = api("/say", {"text": "This can go now."})
         check(r["held_for"] < 2.0, "and released once he stops",
