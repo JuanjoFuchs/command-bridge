@@ -236,7 +236,8 @@ def test_the_hold_loop_reads_the_same_answer_as_status():
 def test_unread_turns_are_those_past_the_read_cursor(state, tmp_path):
     """The set is defined by the READ CURSOR, not by anything the caller passes — so an agent
     cannot ask the wrong question, and there is no flag to get wrong."""
-    from voice_tunnel import server as srv, store
+    from voice_tunnel import server as srv
+    from voice_tunnel import store
 
     for i in range(4):
         store.append_turn(session=state.session, text=f"t{i}", t_start=float(i), t_end=i + 1.0,
@@ -257,7 +258,8 @@ def test_unread_never_advances_the_read_cursor(state):
     Two reasons: an agent that ignores the field then loses nothing (the failure mode is a
     re-read, where consuming here would silently drop words), and the page's "read to here"
     divider would otherwise jump on a REPLY — he has not been read, he has been answered."""
-    from voice_tunnel import server as srv, store
+    from voice_tunnel import server as srv
+    from voice_tunnel import store
 
     for i in range(3):
         store.append_turn(session=state.session, text=f"t{i}", t_start=float(i), t_end=i + 1.0,
@@ -272,7 +274,9 @@ def test_unread_never_advances_the_read_cursor(state):
 def test_unread_is_bounded_so_a_reply_cannot_carry_the_whole_log(state):
     """It rides on the reply path. An agent that was away while he kept talking must not be handed
     an hour of log inside a `say` response."""
-    from voice_tunnel import config as cfg, server as srv, store
+    from voice_tunnel import config as cfg
+    from voice_tunnel import server as srv
+    from voice_tunnel import store
 
     for i in range(cfg.UNREAD_ON_SAY_MAX + 12):
         store.append_turn(session=state.session, text=f"t{i}", t_start=float(i), t_end=i + 1.0,
@@ -287,7 +291,8 @@ def test_unread_is_bounded_so_a_reply_cannot_carry_the_whole_log(state):
 def test_turns_the_wake_gate_rejected_are_not_handed_back(state):
     """A room talking around him must not surface as "you spoke without reading this" — the same
     reason `--all-turns` is off by default on the wait."""
-    from voice_tunnel import server as srv, store
+    from voice_tunnel import server as srv
+    from voice_tunnel import store
 
     store.append_turn(session=state.session, text="for him", t_start=0.0, t_end=1.0,
                       addressed=True, reason="wake")

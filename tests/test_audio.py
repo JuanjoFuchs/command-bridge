@@ -335,6 +335,7 @@ def test_the_deesser_attenuates_a_sibilant_burst():
     makes someone nearby headache."*
     """
     import numpy as np
+
     from voice_tunnel import tts
 
     rate = 22050
@@ -352,6 +353,7 @@ def test_the_deesser_leaves_a_vowel_alone():
     undo that. Below the detector's threshold the gain is exactly 1.0, so a low tone must come
     back bit-identical."""
     import numpy as np
+
     from voice_tunnel import tts
 
     rate = 22050
@@ -365,6 +367,7 @@ def test_deess_zero_is_a_true_bypass():
     """0 must return the input object untouched, not a re-quantized copy — otherwise 'off' still
     costs a float32 round trip on every clip."""
     import numpy as np
+
     from voice_tunnel import config, tts
 
     rate = 22050
@@ -388,6 +391,7 @@ def test_a_midrange_tone_is_not_treated_as_sibilance():
     a framed FFT, where the split is a bin index and cannot be off by a filter design.
     """
     import numpy as np
+
     from voice_tunnel import tts
 
     rate = 22050
@@ -410,6 +414,7 @@ def test_the_deesser_cuts_the_band_and_not_the_level():
     and fails this, however loud the reduction looks in aggregate.
     """
     import numpy as np
+
     from voice_tunnel import config, tts
 
     rate = 22050

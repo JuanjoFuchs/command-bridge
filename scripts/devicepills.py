@@ -397,7 +397,7 @@ def sweep_violations(page):
     """
     views = page.evaluate("(cs) => cs.map(c => window.__voiceTunnel.pillsView(c))", SWEEP_CASES)
     bad = []
-    for c, v in zip(SWEEP_CASES, views):
+    for c, v in zip(SWEEP_CASES, views, strict=True):
         if v["show"]["spk"] and v["outputs"] < 2:
             bad.append(f"{c['id']}: output pill with {v['outputs']} choice(s)")
         if v["show"]["mic"] and v["inputs"] < 2:
@@ -503,12 +503,12 @@ try:
             check(not viol, "NO PILL IS VISIBLE WITH FEWER THAN TWO CHOICES, in all 64",
                   "" if not viol else f"{len(viol)} violations, first: {viol[0]}")
 
-            layout = [c["id"] for c, v in zip(SWEEP_CASES, views)
+            layout = [c["id"] for c, v in zip(SWEEP_CASES, views, strict=True)
                       if v["show"]["dev"] and (v["show"]["mic"] or v["show"]["spk"])]
             check(not layout, "the grouped layout never shares the screen with the fallback pair",
                   "" if not layout else f"{len(layout)} cases, first: {layout[0]}")
 
-            nosink = [c["id"] for c, v in zip(SWEEP_CASES, views)
+            nosink = [c["id"] for c, v in zip(SWEEP_CASES, views, strict=True)
                       if not c["sinkSupported"] and (v["show"]["spk"] or v["show"]["dev"])]
             check(not nosink, "a platform that cannot route output is offered no routing control",
                   "" if not nosink else f"first: {nosink[0]}")
@@ -517,7 +517,7 @@ try:
             # THIS IS WHAT THE PORT COSTS, paid off: a reference model that drifted from the page
             # would make the pytest sweep green and meaningless, and this line is where that shows.
             drift = []
-            for (cid, ins, outs, sink), v in zip(CASES, views):
+            for (cid, ins, outs, sink), v in zip(CASES, views, strict=True):
                 ref = pill_model(ins, outs, sink)
                 for field in ("inputs", "outputs", "grouped", "show", "route"):
                     if v[field] != ref[field]:
@@ -526,7 +526,7 @@ try:
                   "the page's rule agrees with the reference model in tests/test_device_pills.py",
                   "" if not drift else f"{len(drift)} disagreements, first: {drift[0]}")
 
-            unreasoned = [c["id"] for c, v in zip(SWEEP_CASES, views)
+            unreasoned = [c["id"] for c, v in zip(SWEEP_CASES, views, strict=True)
                           if any((v["why"][p] is None) == (not v["show"][p])
                                  for p in ("dev", "mic", "spk"))]
             check(not unreasoned, "every hidden pill records why, and no visible pill does",

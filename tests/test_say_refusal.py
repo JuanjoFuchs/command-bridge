@@ -222,9 +222,9 @@ def test_no_flag_anywhere_on_say_disables_the_check():
     Asserted over the PARSER, so adding the flag later fails here rather than in a live session.
     FR2's reasoning: a bypass would be reached for under exactly the conditions the check exists
     for, which is why this repo has already deleted one such flag from another queue."""
-    from voice_tunnel import cli
-
     import argparse as _argparse
+
+    from voice_tunnel import cli
     sub = next(a for a in cli.build_parser()._actions
                if isinstance(a, _argparse._SubParsersAction))
     flags = {o for a in sub.choices["say"]._actions for o in a.option_strings}
