@@ -193,6 +193,103 @@ def test_warm_is_a_no_op_for_a_backend_that_does_not_need_it(monkeypatch):
     assert tts.warm()["warmed"] is False
 
 
+# --------------------------------------------------- kokoro: the clamp, and that it is audible
+# `kokoro_onnx.create` asserts `speed <= 2.0` while this tool accepts 2.5, so an accepted and
+# persisted setting turns every reply into an AssertionError raised from inside the package. The
+# clamp fixes the crash; these pin that it is not fixed SILENTLY, which would be its own defect —
+# speech running at a different pace from the one the settings file shows, with nothing saying so.
+
+
+@pytest.fixture
+def _kokoro_present(monkeypatch, tmp_path):
+    """A Kokoro install that looks complete, without 350 MB of model on disk."""
+    monkeypatch.setattr(config, "tts_backend", lambda: "kokoro")
+    monkeypatch.setattr(config, "kokoro_model", lambda: str(tmp_path / "kokoro-v1.0.onnx"))
+    monkeypatch.setattr(config, "kokoro_voices_bin", lambda: str(tmp_path / "voices-v1.0.bin"))
+    monkeypatch.setattr(tts._KOKORO, "unavailable_reason", None)
+    return tmp_path
+
+
+def test_a_normal_speed_leaves_the_status_line_alone(monkeypatch, _kokoro_present):
+    monkeypatch.setattr(config, "speech_speed", lambda: 1.2)
+    assert tts.available() == f"kokoro (resident, {config.kokoro_voice()})"
+
+
+def test_a_clamped_speed_says_so_in_the_status_line(monkeypatch, _kokoro_present):
+    """Reported from CONFIG, not from what a past synthesis did: a CLI process has never spoken,
+    and the warning is worth most BEFORE the first reply rather than after it."""
+    monkeypatch.setattr(config, "speech_speed", lambda: 2.5)
+    line = tts.available()
+
+    assert "clamped" in line
+    assert "2.5" in line and str(config.KOKORO_SPEED_MAX) in line
+    assert "VOICE_TUNNEL_SPEECH_SPEED" in line, "name the setting to change, not just the symptom"
+
+
+class _StubKokoro:
+    """Stands in for kokoro_onnx.Kokoro, WITH its speed assertion — that is the point."""
+
+    def __init__(self):
+        self.speeds = []
+
+    def create(self, text, voice=None, speed=1.0, lang=None):
+        assert 0.5 <= speed <= 2.0, "Speed should be between 0.5 and 2.0"   # upstream's own line
+        self.speeds.append(speed)
+        return [0.0] * 240, config.KOKORO_SR
+
+    def get_voices(self):
+        return ["bm_daniel", "bm_lewis"]
+
+
+def test_an_over_ceiling_speed_reaches_kokoro_clamped_instead_of_raising(monkeypatch):
+    """THE CRASH, reproduced against upstream's real assertion and then not happening.
+
+    The stub carries `kokoro_onnx`'s own assert verbatim, so this fails the way production would
+    if the clamp were removed — rather than passing because the stub is more forgiving than the
+    package."""
+    stub = _StubKokoro()
+    monkeypatch.setattr(tts._KOKORO, "_load", lambda: stub)
+
+    pcm, rate = tts._KOKORO.synthesize("Hello there.", "bm_daniel", speed=2.5, pause=0.0)
+
+    assert stub.speeds == [config.KOKORO_SPEED_MAX]
+    assert rate == config.KOKORO_SR
+    assert pcm, "clamping must still produce audio, not an empty reply"
+    assert tts._KOKORO.speed_clamped_from == 2.5, "the clamp is recorded, not swallowed"
+
+
+def test_a_speed_within_the_ceiling_is_not_recorded_as_clamped(monkeypatch):
+    stub = _StubKokoro()
+    monkeypatch.setattr(tts._KOKORO, "_load", lambda: stub)
+
+    tts._KOKORO.synthesize("Hello there.", "bm_daniel", speed=1.2, pause=0.0)
+
+    assert stub.speeds == [pytest.approx(1.2)]
+    assert tts._KOKORO.speed_clamped_from is None
+
+
+def test_the_missing_model_remedy_names_a_command_that_exists(monkeypatch, tmp_path):
+    """`_load` has always said `voice-tunnel download kokoro`; the target did not exist, so the
+    one instruction the failure gave you exited 2 with an argparse usage error. A remedy naming a
+    command the parser rejects is worse than no remedy."""
+    import argparse
+
+    from voice_tunnel import cli
+
+    monkeypatch.setattr(config, "models_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(config, "kokoro_model", lambda: "")
+    monkeypatch.setattr(config, "kokoro_voices_bin", lambda: "")
+    holder = tts._ResidentKokoro()
+
+    assert holder._load() is None
+    assert "voice-tunnel download kokoro" in holder.unavailable_reason
+
+    parser = cli.build_parser()
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    what = next(a for a in sub.choices["download"]._actions if a.dest == "what")
+    assert "kokoro" in what.choices
+
+
 # ------------------------------------------------------------- the real model
 
 

@@ -883,6 +883,31 @@ Not a constant to "fix" by resampling: every backend already returns its own rat
 audio and every caller threads that rate through, so the honest thing is to carry 24 kHz to the
 sink rather than degrade it on the way out."""
 
+KOKORO_SPEED_MAX = 2.0
+"""Kokoro's OWN speed ceiling, which is lower than this project's `SPEED_MAX` of 2.5.
+
+`kokoro_onnx.Kokoro.create` opens with `assert speed >= 0.5 and speed <= 2.0`, so a persisted
+2.5 does not come back slightly-too-fast — it raises an `AssertionError` deep inside the package
+and every reply fails. That is a latent crash rather than a tuning question: the value is
+*already accepted and written to disk* by `voice-tunnel rate --speed 2.5`, which validates
+against `SPEED_MAX`, and the backend it will be handed to only exists on some installs.
+
+**Why this is a per-backend ceiling and not a lower `SPEED_MAX`.** Piper accepts 2.5 and the
+owner uses high speeds deliberately — dropping the global maximum to satisfy Kokoro would take a
+setting away from the backend that handles it fine, to fix a limit that belongs to the other one.
+So the clamp lives at the Kokoro boundary, the same place `length_scale_for` contains piper's
+inverted unit."""
+
+
+def kokoro_speed(speed: float) -> float:
+    """Clamp a project speed to what Kokoro will actually accept.
+
+    Clamping rather than raising, because the alternative is a reply that fails outright when a
+    slightly-slower one would have been fine — and the caller is usually the server, mid-sentence.
+    Never silent, though: `tts.available()` reports the clamp so `status` and `doctor` say the
+    speech is not running at the number the settings file claims."""
+    return max(SPEED_MIN, min(KOKORO_SPEED_MAX, float(speed)))
+
 
 def kokoro_model() -> str:
     """Path to the Kokoro `.onnx`, or "" if it is not on disk.
@@ -1273,16 +1298,41 @@ SETTINGS: tuple = (
              public_url),
     _setting("VOICE_TUNNEL_DIR", "where turn logs live", session_dir),
     _setting("VOICE_TUNNEL_MODELS_DIR", "where downloaded models live", models_dir),
-    _setting("VOICE_TUNNEL_TTS", "sapi | piper | none", tts_backend),
+    # `kokoro` was missing from this description while it was the backend in production use, so
+    # the one list an agent reads to find out what it may set omitted the answer. Same defect as
+    # the unregistered Kokoro keys below: shipped, honoured, undiscoverable.
+    _setting("VOICE_TUNNEL_TTS", "sapi | piper | kokoro | none", tts_backend),
     _setting("VOICE_TUNNEL_PIPER_BIN", "piper executable; auto-found in the repo venv or on PATH",
              piper_bin),
     _setting("VOICE_TUNNEL_PIPER_VOICE", "default .onnx voice; auto-found in the models dir", piper_voice),
     _setting("VOICE_TUNNEL_PIPER_INPROCESS",
              "1 | 0 — hold the voice model in this process (7-26x faster than spawning piper)",
              lambda: "1" if piper_inprocess() else "0"),
+    # THE THREE KOKORO VARIABLES WERE READ AND NEVER REGISTERED — the same defect the turn
+    # variables carried below, found the same way and worth recording twice rather than once.
+    # `kokoro_voice`, `kokoro_model` and `kokoro_voices_bin` have read the environment since the
+    # backend landed, so `config get VOICE_TUNNEL_KOKORO_VOICE` answered "unknown setting" for a
+    # key that was live, honoured, and sitting in the owner's own `.env` selecting the voice he
+    # was listening to. A knob you cannot reach through the documented interface is not tunable,
+    # whatever the code does.
+    _setting("VOICE_TUNNEL_KOKORO_VOICE",
+             f"kokoro voice NAME, not a path — a voice is a style vector inside the one pack, "
+             f"unlike piper where a voice IS a file (default {DEFAULT_KOKORO_VOICE}). "
+             f"`voice-tunnel voices` lists what the pack holds",
+             kokoro_voice),
+    _setting("VOICE_TUNNEL_KOKORO_MODEL",
+             "kokoro-v1.0.onnx; auto-found in the models dir. Empty means it is not downloaded "
+             "— `voice-tunnel download kokoro`",
+             kokoro_model),
+    _setting("VOICE_TUNNEL_KOKORO_VOICES",
+             "voices-v1.0.bin, the voice pack; auto-found in the models dir. Required AS WELL AS "
+             "the model — the .onnx alone synthesizes nothing",
+             kokoro_voices_bin),
     _setting("VOICE_TUNNEL_SPEECH_SPEED",
              f"how fast the agent talks; 1.0 is native pace, higher is faster "
-             f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `voice-tunnel rate --speed`",
+             f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `voice-tunnel rate --speed`. "
+             f"NOTE the kokoro backend caps at {KOKORO_SPEED_MAX} and clamps above it "
+             f"(piper takes the full range); `status` says when it clamped",
              lambda: str(speech_speed())),
     _setting("VOICE_TUNNEL_SENTENCE_PAUSE",
              f"seconds of silence between sentences (0-{PAUSE_MAX}); the pause IS the "

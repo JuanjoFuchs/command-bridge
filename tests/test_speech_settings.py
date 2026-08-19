@@ -56,6 +56,42 @@ def test_a_speed_outside_the_range_is_clamped_not_divided_by_zero():
     assert config.length_scale_for(99.0) == pytest.approx(1.0 / config.SPEED_MAX)
 
 
+# ------------------------------------------------- kokoro's ceiling is not the project's
+
+
+def test_kokoro_has_a_lower_ceiling_than_the_setting_allows():
+    """THE LATENT CRASH. `kokoro_onnx.create` opens with `assert speed <= 2.0`, while this tool
+    accepts and persists up to 2.5 — so a value `voice-tunnel rate --speed 2.5` writes without
+    complaint makes every Kokoro reply raise an AssertionError from inside the package.
+
+    The relationship is what matters, not the two numbers: the moment they are equal this test is
+    pointless, and the moment SPEED_MAX drops below 2.0 someone has 'fixed' it the wrong way."""
+    assert config.KOKORO_SPEED_MAX < config.SPEED_MAX
+
+
+def test_a_speed_kokoro_would_refuse_is_clamped_to_its_ceiling():
+    assert config.kokoro_speed(2.5) == config.KOKORO_SPEED_MAX
+    assert config.kokoro_speed(99.0) == config.KOKORO_SPEED_MAX
+    assert config.kokoro_speed(0.0) == config.SPEED_MIN
+
+
+def test_a_speed_kokoro_accepts_is_passed_through_untouched():
+    """Clamping must not become rounding. The owner's live setting is 1.2 and every value up to
+    the ceiling has to reach the model exactly as configured."""
+    for speed in (0.5, 1.0, 1.18, 1.2, 1.9, 2.0):
+        assert config.kokoro_speed(speed) == pytest.approx(speed)
+
+
+def test_piper_keeps_the_full_range_kokoro_cannot_take(monkeypatch):
+    """The reason the clamp lives at the kokoro boundary instead of in SPEED_MAX: piper handles
+    2.5, and the owner uses high speeds deliberately. Lowering the global maximum would take a
+    working setting away from one backend to accommodate the other — so the persisted value must
+    still read back at 2.5 and still reach piper as 1/2.5."""
+    monkeypatch.setenv("VOICE_TUNNEL_SPEECH_SPEED", "2.5")
+    assert config.speech_speed() == pytest.approx(2.5)
+    assert config.length_scale_for(config.speech_speed()) == pytest.approx(1.0 / 2.5)
+
+
 # ------------------------------------------------------------- reading settings
 
 

@@ -42,7 +42,7 @@ def sources() -> list[pathlib.Path]:
 
 def test_pyproject_declares_the_extras_we_expect():
     extras = declared_extras()
-    assert {"piper", "parakeet", "turn", "all"} <= extras, extras
+    assert {"piper", "kokoro", "parakeet", "turn", "all"} <= extras, extras
 
 
 def test_every_extra_the_cli_recommends_actually_exists():
@@ -62,6 +62,12 @@ def test_every_extra_the_cli_recommends_actually_exists():
 
 @pytest.mark.parametrize("module, extra", [
     ("piper", "piper"),
+    # kokoro_onnx shipped with NO extra behind it at all — the turn bug repeated verbatim, one
+    # backend later. `tts._ResidentKokoro._load` has imported it since the backend landed, so
+    # `VOICE_TUNNEL_TTS=kokoro` could only ever work in a checkout whose venv already carried the
+    # package for some other reason. That is precisely the environment this test suite runs in,
+    # which is why the gap had to be closed by declaring the pair rather than by noticing it.
+    ("kokoro_onnx", "kokoro"),
     ("sherpa_onnx", "parakeet"),
     ("onnxruntime", "turn"),
     ("transformers", "turn"),
@@ -76,8 +82,62 @@ def test_each_optional_import_is_covered_by_an_extra(module, extra):
     block = text.split("[project.optional-dependencies]", 1)[1].split("\n[", 1)[0]
     line = next((ln for ln in block.splitlines() if ln.strip().startswith(f"{extra} ")
                  or ln.strip().startswith(f"{extra}=")), "")
-    dist = {"sherpa_onnx": "sherpa-onnx", "piper": "piper-tts"}.get(module, module)
+    dist = {"sherpa_onnx": "sherpa-onnx", "piper": "piper-tts",
+            "kokoro_onnx": "kokoro-onnx"}.get(module, module)
     assert dist in line, f"`{module}` is imported optionally but [{extra}] does not install {dist}"
+
+
+def test_every_optional_import_in_the_package_is_in_the_table_above():
+    """THE HOLE THE TABLE ABOVE CANNOT SEE, and the one that let kokoro through.
+
+    The parametrized test checks each pair someone remembered to type. It cannot fail for an
+    import nobody added a row for — which is exactly how a backend ships with no extra, twice.
+    So this walks the source instead: every `from <mod> import` / `import <mod>` that sits inside
+    a function (an import deferred to call time IS the optional-dependency idiom in this package,
+    because a module-level one would break the floor install) must appear in the table.
+
+    Deliberately a whitelist of known-stdlib/first-party names rather than a clever AST pass: the
+    list is short, and a check whose failure mode is "add the module you just made optional" is
+    worth more than one nobody can read.
+    """
+    import ast
+
+    covered = {m for m, _ in test_each_optional_import_is_covered_by_an_extra.pytestmark[0].args[1]}
+    # Deferred imports that are NOT optional third-party runtimes: stdlib pulled in late to keep
+    # CLI startup cheap, and this package's own modules imported lazily to avoid an import cycle.
+    exempt = {
+        "argparse", "array", "ast", "asyncio", "base64", "collections", "ctypes", "dataclasses",
+        "datetime", "difflib", "functools", "glob", "gzip", "hashlib", "hmac", "html", "http",
+        "importlib", "inspect", "io", "ipaddress", "json", "logging", "math", "os", "pathlib",
+        "platform", "queue", "random", "re", "secrets", "shlex", "shutil", "signal", "socket",
+        "ssl", "statistics", "string", "struct", "subprocess", "sys", "tarfile", "tempfile",
+        "textwrap", "threading", "time", "traceback", "types", "typing", "unicodedata",
+        "urllib", "uuid", "wave", "webbrowser", "zipfile",
+        # Hard dependencies in [project.dependencies], deferred only to keep CLI startup cheap —
+        # they need no extra because a floor install already has them.
+        "numpy", "aiohttp", "faster_whisper",
+        "voice_tunnel",                            # first-party, lazy for cycle reasons
+    }
+    offenders = []
+    for path in sources():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for inner in ast.walk(node):
+                names = []
+                if isinstance(inner, ast.Import):
+                    names = [a.name.split(".")[0] for a in inner.names]
+                elif isinstance(inner, ast.ImportFrom) and inner.level == 0 and inner.module:
+                    names = [inner.module.split(".")[0]]
+                for name in names:
+                    if name not in exempt and name not in covered:
+                        offenders.append(f"{path.name}:{inner.lineno} imports {name!r}")
+    assert not offenders, (
+        "optional imports with no extra mapped to them — add a row to "
+        "test_each_optional_import_is_covered_by_an_extra (and an extra to pyproject):\n  "
+        + "\n  ".join(sorted(set(offenders)))
+    )
 
 
 def test_the_all_extra_is_the_union_of_the_others():
@@ -85,7 +145,7 @@ def test_the_all_extra_is_the_union_of_the_others():
     text = PYPROJECT.read_text(encoding="utf-8")
     block = text.split("[project.optional-dependencies]", 1)[1].split("\n[", 1)[0]
     all_line = next(ln for ln in block.splitlines() if ln.strip().startswith("all"))
-    for dist in ("piper-tts", "sherpa-onnx", "onnxruntime", "transformers"):
+    for dist in ("piper-tts", "kokoro-onnx", "sherpa-onnx", "onnxruntime", "transformers"):
         assert dist in all_line, f"[all] is missing {dist}"
 
 

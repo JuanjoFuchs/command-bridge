@@ -11,9 +11,10 @@ either in a wheel makes the package unusable on a slow connection to save one co
 forces a release for every voice anyone wants. They are a cache the user owns — see
 `config.models_dir()`.
 
-Three families, three upstreams, all verified reachable:
+Four families, four upstreams, all verified reachable:
 
     piper voices  huggingface.co/rhasspy/piper-voices   <name>.onnx + <name>.onnx.json
+    kokoro        github.com/thewh1teagle/kokoro-onnx   one .onnx + one voice pack, all voices
     parakeet ASR  github.com/k2-fsa/sherpa-onnx         a .tar.bz2 of a model directory
     titanet       github.com/k2-fsa/sherpa-onnx         one .onnx, for the voiceprint
 
@@ -36,6 +37,7 @@ from . import config
 
 PIPER_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 SHERPA_BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
+KOKORO_BASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
 
 DEFAULT_VOICE = "en_GB-alan-medium"
 """What `download voice` picks with no argument — the voice this project settled on by ear."""
@@ -69,6 +71,30 @@ TURN_MODEL = {
             "SOUNDED finished instead of waiting out a fixed timer, so he is not cut off "
             "mid-thought and a short question does not wait 1.5 s for nothing.",
 }
+
+KOKORO_FILES: tuple[dict[str, str], ...] = (
+    {"file": "kokoro-v1.0.onnx", "url": f"{KOKORO_BASE}/kokoro-v1.0.onnx"},
+    {"file": "voices-v1.0.bin", "url": f"{KOKORO_BASE}/voices-v1.0.bin"},
+)
+"""BOTH files, because either one alone is useless.
+
+Kokoro is a different shape from piper: ONE model plus ONE voice pack holding all 54 voices,
+rather than one 60-120 MB file per voice. So there is no name to pass and no catalog to choose
+from — `download kokoro` is the whole thing, and switching voices afterwards costs nothing.
+
+Model-without-pack is a real state and the reason these are fetched as a pair: the `.onnx` alone
+synthesizes nothing, since a voice is a style vector looked up in the `.bin`. `config.kokoro_model`
+and `config.kokoro_voices_bin` check for them separately for the same reason, and
+`_ResidentKokoro._load` names whichever is missing.
+
+Upstream is the kokoro-onnx project's own release assets, which is where the `kokoro_onnx`
+package's README sends you — Hugging Face hosts the PyTorch weights, not these ONNX exports."""
+
+KOKORO_NOTE = ("Kokoro v1.0 (Apache-2.0): one 325 MB model plus a 28 MB pack of all 54 voices, "
+               "at 24 kHz. Measurably less harsh than the piper voices — `bm_daniel` and "
+               "`bm_lewis` each score ~0.65 acum lower on DIN 45692 sharpness than "
+               "en_GB-alan-medium, a larger move than any de-esser setting achieves. Note its "
+               "speed ceiling is 2.0, below this tool's 2.5.")
 
 VOICEPRINT_MODEL = {
     "file": "nemo_en_titanet_large.onnx",
@@ -229,6 +255,38 @@ def download_asr(which: str = "parakeet", force: bool = False, on_progress=None)
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def kokoro_installed() -> bool:
+    """True only when BOTH halves are on disk — `download kokoro` skips nothing on a half install."""
+    d = config.models_dir()
+    return all(_looks_like_a_model(os.path.join(d, f["file"])) for f in KOKORO_FILES)
+
+
+def download_kokoro(force: bool = False, on_progress=None) -> dict:
+    """Fetch the Kokoro model AND its voice pack — the warmer voice, measured rather than felt.
+
+    Two files, so unlike the single-asset targets the already-present check is per file: an
+    interrupted run that got the 325 MB model and not the 28 MB pack must fetch the pack, and
+    would otherwise be skipped as done and fail at load with a missing-voice error instead.
+    """
+    models = config.models_dir()
+    fetched, present = 0, []
+    for spec in KOKORO_FILES:
+        dest = os.path.join(models, spec["file"])
+        if _looks_like_a_model(dest) and not force:
+            present.append(spec["file"])
+            continue
+        fetched += _fetch(spec["url"], dest, on_progress)
+        if not _looks_like_a_model(dest):
+            os.unlink(dest)
+            raise RuntimeError(f"{spec['file']} downloaded but is too small to be a model — removed")
+    return {
+        "kokoro": [f["file"] for f in KOKORO_FILES],
+        "path": models,
+        "already_present": len(present) == len(KOKORO_FILES),
+        "bytes_fetched": fetched,
+    }
+
+
 def download_voiceprint(force: bool = False, on_progress=None) -> dict:
     """Fetch the speaker-embedding model that makes the wake phrase optional."""
     dest = os.path.join(config.models_dir(), VOICEPRINT_MODEL["file"])
@@ -268,6 +326,10 @@ def catalog() -> dict[str, Any]:
              "installed": os.path.isdir(os.path.join(config.models_dir(), v["dir"]))}
             for k, v in ASR_MODELS.items()
         ],
+        "kokoro": [{
+            "name": "kokoro", "note": KOKORO_NOTE, "installed": kokoro_installed(),
+            "files": [f["file"] for f in KOKORO_FILES],
+        }],
         "turn": [{
             "name": "smart-turn", "note": TURN_MODEL["note"],
             "installed": _looks_like_a_model(

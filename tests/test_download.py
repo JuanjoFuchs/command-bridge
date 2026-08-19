@@ -97,14 +97,87 @@ def test_a_normal_tar_still_extracts(tmp_path):
     assert (dest / "model" / "tokens.txt").read_text(encoding="utf-8") == "a b c"
 
 
+# ------------------------------------------------------------------------ kokoro
+# `_ResidentKokoro._load` told you to run `voice-tunnel download kokoro` and the target did not
+# exist — the parser rejected it with a usage error. These pin the shape that made the target
+# worth implementing rather than rewording the message: it is TWO files, and half of it is a real
+# state to be in.
+
+
+def test_kokoro_needs_both_halves_before_it_counts_as_installed(tmp_path, monkeypatch):
+    """The model alone synthesizes nothing — a voice is a style vector looked up in the pack. An
+    interrupted run that got the 325 MB .onnx and not the 28 MB .bin must fetch the .bin, and
+    would otherwise be skipped as done and fail much later, at load."""
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    (tmp_path / "kokoro-v1.0.onnx").write_bytes(b"\0" * (2 << 20))
+    assert dl.kokoro_installed() is False
+
+    (tmp_path / "voices-v1.0.bin").write_bytes(b"\0" * (2 << 20))
+    assert dl.kokoro_installed() is True
+
+
+def test_a_kokoro_half_that_is_an_error_page_is_not_counted(tmp_path, monkeypatch):
+    """Same guard as every other target: a CDN answering with an HTML body writes a file that
+    only fails inside onnxruntime, hours later."""
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    (tmp_path / "kokoro-v1.0.onnx").write_bytes(b"\0" * (2 << 20))
+    (tmp_path / "voices-v1.0.bin").write_text("<!doctype html><title>404</title>", encoding="utf-8")
+    assert dl.kokoro_installed() is False
+
+
+def test_an_already_complete_kokoro_fetches_nothing(tmp_path, monkeypatch):
+    """Idempotent, like every other downloader — `setup` and a retry both re-run it."""
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
+        (tmp_path / name).write_bytes(b"\0" * (2 << 20))
+
+    def _no_network(*a, **k):
+        raise AssertionError("download_kokoro tried to fetch something already on disk")
+
+    monkeypatch.setattr(dl, "_fetch", _no_network)
+    result = dl.download_kokoro()
+
+    assert result["already_present"] is True
+    assert result["bytes_fetched"] == 0
+
+
+def test_only_the_missing_kokoro_half_is_fetched(tmp_path, monkeypatch):
+    """The reason the present-check is per file rather than one flag for the pair."""
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    (tmp_path / "kokoro-v1.0.onnx").write_bytes(b"\0" * (2 << 20))
+    asked = []
+
+    def _fake(url, dest, on_progress=None):
+        asked.append(url)
+        with open(dest, "wb") as fh:
+            fh.write(b"\0" * (2 << 20))
+        return 2 << 20
+
+    monkeypatch.setattr(dl, "_fetch", _fake)
+    result = dl.download_kokoro()
+
+    assert [u.rsplit("/", 1)[-1] for u in asked] == ["voices-v1.0.bin"]
+    assert result["already_present"] is False
+
+
+def test_both_kokoro_urls_come_from_one_release(tmp_path):
+    """Model and pack are versioned together upstream; splitting the base would let a v1.0 model
+    pair with some other pack, which loads and then mispronounces."""
+    names = [f["file"] for f in dl.KOKORO_FILES]
+    assert names == ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
+    assert all(f["url"].startswith(dl.KOKORO_BASE) for f in dl.KOKORO_FILES)
+    assert all(f["url"].endswith(f["file"]) for f in dl.KOKORO_FILES)
+
+
 def test_the_catalog_answers_without_a_network(tmp_path, monkeypatch):
     """`--list` has to work offline: the most likely moment someone runs it is when a download
     just failed and they are trying to find out what the name should have been."""
     monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
     cat = dl.catalog()
 
-    assert {"voices", "asr", "voiceprint", "models_dir"} <= set(cat)
+    assert {"voices", "kokoro", "asr", "voiceprint", "models_dir"} <= set(cat)
     assert all(v["installed"] is False for v in cat["voices"]), "empty dir, nothing installed"
+    assert cat["kokoro"][0]["installed"] is False
     assert sum(1 for v in cat["voices"] if v["default"]) == 1, "exactly one default voice"
     assert cat["models_dir"] == str(tmp_path)
 

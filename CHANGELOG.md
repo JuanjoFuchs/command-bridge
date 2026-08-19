@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+A backlog audit found the Kokoro TTS backend shipped, running in production, and undeclared
+everywhere a user or an agent would look for it — the same defect that made turn detection
+unreachable in 0.2.0, one backend later. Everything here is that gap, plus the latent crash
+sitting behind it.
+
+### Added
+
+- **`voice-tunnel download kokoro`.** `_ResidentKokoro._load` had been telling people to run this
+  since the backend landed, and the parser rejected it with a usage error — the one instruction
+  the failure gave you exited 2. It fetches both halves (the 325 MB `kokoro-v1.0.onnx` and the
+  28 MB `voices-v1.0.bin`) and checks for them **separately**: model-without-pack is a real state
+  after an interrupted run, and skipping it as "done" fails much later, at load.
+- **A `[kokoro]` extra, and `kokoro-onnx` in `[all]`.** `voice_tunnel.tts` has imported it since
+  the backend landed with nothing declaring it, so `VOICE_TUNNEL_TTS=kokoro` could only ever work
+  in a checkout whose venv already carried the package — which is exactly where it was written and
+  exactly where the test suite runs. It is in `[all]` rather than beside it because someone who
+  has already run `pip install voice-tunnel[all]` and is then told to install `[kokoro]` has no
+  way to know the first command was meant to have covered it.
+- **A test that walks the source for optional imports** instead of checking the pairs someone
+  remembered to list. The existing table could not fail for an import nobody added a row for,
+  which is how a backend ships with no extra twice. Confirmed against the pre-fix tree: it flags
+  `tts.py:333 kokoro_onnx` and nothing else.
+
+### Fixed
+
+- **The three Kokoro settings are registered.** `VOICE_TUNNEL_KOKORO_VOICE`, `_MODEL` and
+  `_VOICES` have read the environment since the backend landed and were in no list, so
+  `config get VOICE_TUNNEL_KOKORO_VOICE` answered *unknown setting* for a key that was live,
+  honoured, and sitting in the owner's own `.env` selecting the voice he was listening to. Same
+  defect as the turn variables before them; `describe`, `config show` and the `.env.example` drift
+  test all read `config.SETTINGS`, so one row fixes all three surfaces.
+- **`VOICE_TUNNEL_TTS` admits `kokoro` exists.** Its description read `sapi | piper | none` while
+  `kokoro` was the backend in production use.
+- **`doctor` no longer fails the working configuration.** `kokoro` fell through to the `else`
+  branch and was reported as a hard FAIL — `backend=kokoro`, remedy *"VOICE_TUNNEL_TTS must be
+  sapi | piper | none"* — which took `doctor.ok` to false on a correct install. A diagnostic that
+  calls the live setup invalid is worse than none, because the next thing anyone does is follow
+  its remedy and change something that was right. There is now a real kokoro branch, naming the
+  runtime and the model halves separately because they are fixed by different commands.
+- **A speed above 2.0 no longer makes every Kokoro reply raise.** `kokoro_onnx.create` opens with
+  `assert speed >= 0.5 and speed <= 2.0`, while `SPEED_MAX` is 2.5 and `voice-tunnel rate --speed
+  2.5` accepts and persists it. The clamp sits at the Kokoro boundary — the same place
+  `length_scale_for` contains piper's inverted unit — rather than in `SPEED_MAX`, because piper
+  handles 2.5 and the owner uses high speeds deliberately; lowering the global maximum would take
+  a working setting away from one backend to accommodate the other. **It is not silent:**
+  `status`/`voices` report `speed clamped 2.5→2.0` and `doctor` says the same, computed from the
+  configured speed so the warning arrives *before* the first reply rather than after it.
+
 ## 0.2.7 — 2026-08-10
 
 The README now says two commands: `npm install`, then one line pasted to your agent. An agent was

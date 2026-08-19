@@ -43,6 +43,17 @@ dependencies = [
 # A neural voice instead of the robotic system one. `piper-tts` is the Python API, not the
 # executable — the model is held in-process, which is 7-26x faster than spawning per reply.
 piper = ["piper-tts>=1.6"]
+# Kokoro: warmer than piper and measurably less harsh — `bm_daniel` and `bm_lewis` each score
+# ~0.65 acum lower on DIN 45692 sharpness than en_GB-alan-medium, a larger move than any de-esser
+# setting achieves. One model plus one pack of all 54 voices: `voice-tunnel download kokoro`.
+#
+# SHIPPED UNDECLARED, exactly like `turn` before 0.2.1. `voice_tunnel.tts` has imported
+# `kokoro_onnx` since the backend landed and no extra named it, so `VOICE_TUNNEL_TTS=kokoro` was
+# unreachable from any clean install — it worked only in a checkout whose venv happened to carry
+# the package already. That is the same defect twice; the guard is that a backend and its extra
+# land in one commit.
+#
+kokoro = ["kokoro-onnx>=0.4"]
 # NVIDIA Parakeet TDT via sherpa-onnx: RTF 0.077 against whisper small.en's 0.88 on the same
 # utterance, from a more accurate model. Also carries the speaker embeddings the voiceprint uses.
 parakeet = ["sherpa-onnx>=1.10"]
@@ -57,7 +68,12 @@ parakeet = ["sherpa-onnx>=1.10"]
 # verbatim, checked the installed metadata, and reported that the fix could not possibly work.
 # It had never worked outside a checkout that happened to carry both packages already.
 turn = ["onnxruntime>=1.17", "transformers>=4.40"]
-all = ["piper-tts>=1.6", "sherpa-onnx>=1.10", "onnxruntime>=1.17", "transformers>=4.40"]
+# `all` means all — the RUNTIMES, not the checkpoints. Leaving kokoro-onnx out would recreate the
+# turn bug in a new place: someone who has already run `pip install voice-tunnel[all]` and is then
+# told `pip install voice-tunnel[kokoro]` has no way to know the first command was supposed to
+# have covered it. The 325 MB model is a separate decision and stays where it belongs, behind an
+# explicit `voice-tunnel download kokoro`.
+all = ["piper-tts>=1.6", "kokoro-onnx>=0.4", "sherpa-onnx>=1.10", "onnxruntime>=1.17", "transformers>=4.40"]
 dev = [
     "build>=1.0.0",
     "playwright>=1.40",

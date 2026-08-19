@@ -305,6 +305,10 @@ class _ResidentKokoro:
         self._kokoro = None
         self._lock = threading.Lock()
         self.unavailable_reason: str | None = None
+        # The speed the LAST synthesis asked for, when it was above Kokoro's ceiling and had to
+        # be clamped — None when nothing was clamped. Kept so the clamp is a reportable fact
+        # rather than a thing that quietly happened; see `synthesize` and `available`.
+        self.speed_clamped_from: float | None = None
 
     @property
     def loaded(self) -> bool:
@@ -350,6 +354,14 @@ class _ResidentKokoro:
         Sentences are synthesized separately and joined with silence, matching what the piper
         backend does, because Kokoro returns one array for the whole input and would otherwise run
         every sentence together at whatever pace the model chose.
+
+        **The speed is clamped to Kokoro's own ceiling here**, at the boundary, for the same
+        reason `config.length_scale_for` contains piper's inverted unit at its boundary: the limit
+        belongs to this engine and not to the project. `kokoro_onnx.create` asserts
+        `speed <= 2.0`, so a persisted 2.5 — which `rate --speed` accepts, because `SPEED_MAX` is
+        2.5 and piper handles it — would raise an AssertionError instead of speaking. Clamping is
+        recorded on the instance, not swallowed: `available()` reports it so `status` says the
+        voice is not running at the number the settings file shows.
         """
         import re
 
@@ -357,6 +369,8 @@ class _ResidentKokoro:
             k = self._load()
             if k is None:
                 raise TTSError(f"the kokoro backend cannot start: {self.unavailable_reason}")
+            asked, speed = speed, config.kokoro_speed(speed)
+            self.speed_clamped_from = asked if speed != asked else None
             lang = config.kokoro_lang_for(voice)
             # Split on sentence enders, keeping the punctuation — Kokoro's prosody depends on it.
             sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
@@ -766,6 +780,16 @@ def available() -> str:
         if _KOKORO.unavailable_reason:
             return f"kokoro (unavailable — {_KOKORO.unavailable_reason})"
         if config.kokoro_model() and config.kokoro_voices_bin():
+            # THE CLAMP IS SAID OUT LOUD, and said from CONFIG rather than from what a past
+            # synthesis happened to do. A CLI process has never spoken, so an instance flag alone
+            # would report nothing in the one place someone looks before starting a session —
+            # and the whole point is to warn that the persisted speed is not the speed that will
+            # be used, BEFORE the first reply rather than after it.
+            asked = config.speech_speed()
+            if asked > config.KOKORO_SPEED_MAX:
+                return (f"kokoro (resident, {config.kokoro_voice()}; speed clamped "
+                        f"{asked}→{config.KOKORO_SPEED_MAX} — kokoro's own ceiling, "
+                        f"VOICE_TUNNEL_SPEECH_SPEED asks for more)")
             return f"kokoro (resident, {config.kokoro_voice()})"
         missing = " and ".join(
             n for n, p in (("kokoro-v1.0.onnx", config.kokoro_model()),

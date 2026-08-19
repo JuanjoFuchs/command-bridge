@@ -917,9 +917,10 @@ DESCRIBE: dict[str, Any] = {
         "voices": {"args": [], "returns": "installed piper voices for `say --voice`",
                    "notes": "Lists what is ON DISK. To GET one, `voice-tunnel download voice`."},
         "download": {
-            "args": {"what": "voice | asr | voiceprint | turn (omit to list)",
+            "args": {"what": "voice | kokoro | asr | voiceprint | turn (omit to list)",
                      "name": "voice name (default en_GB-alan-medium) or ASR model "
-                             "(default parakeet)",
+                             "(default parakeet). `kokoro` takes no name — one pack holds "
+                             "every voice",
                      "--list": "show what is available and what is installed, fetch nothing",
                      "--force": "re-download even if present"},
             # `bytes_fetched`, not `bytes`: 0 used to read as "this file is empty/corrupt" when
@@ -931,13 +932,18 @@ DESCRIBE: dict[str, Any] = {
                      "speaks in the system voice until you fetch better ones. The three worth "
                      "having: `download asr` (Parakeet, 8x faster than whisper), `download voice` "
                      "(a neural voice instead of SAPI), and `download voiceprint` (recognises the "
-                     "owner, so the wake phrase becomes optional). `doctor` says which are "
+                     "owner, so the wake phrase becomes optional). `download kokoro` fetches a "
+                     "warmer voice still — one model plus a pack of all 54 voices, so "
+                     "`--voice` afterwards costs no download, but its speed ceiling is 2.0 "
+                     "against this tool's 2.5. `doctor` says which are "
                      "missing. Progress goes to stderr so stdout stays parseable.",
         },
         "rate": {
             "args": {
                 "--session": "session id",
-                "--speed": "multiple of native pace; HIGHER IS FASTER (0.5-2.5). Omit to read",
+                "--speed": "multiple of native pace; HIGHER IS FASTER (0.5-2.5). Omit to read. "
+                           "The kokoro backend caps at 2.0 and clamps above it — piper takes the "
+                           "whole range, so the limit is the engine's, not the setting's",
                 "--pause": "seconds of silence between sentences (0-1.5). Omit to read",
                 "--no-save": "apply to the running server only, do not persist",
             },
@@ -2508,14 +2514,16 @@ def cmd_download(args) -> dict[str, Any]:
             result = dl.download_voice(args.name or dl.DEFAULT_VOICE, args.force, progress)
         elif args.what == "asr":
             result = dl.download_asr(args.name or "parakeet", args.force, progress)
+        elif args.what == "kokoro":
+            result = dl.download_kokoro(args.force, progress)
         elif args.what == "voiceprint":
             result = dl.download_voiceprint(args.force, progress)
         elif args.what == "turn":
             result = dl.download_turn(args.force, progress)
         else:
             raise ValueError(
-                f"unknown target {args.what!r} — expected voice, asr, voiceprint or turn; "
-                f"`voice-tunnel download --list` shows what is available"
+                f"unknown target {args.what!r} — expected voice, kokoro, asr, voiceprint or "
+                f"turn; `voice-tunnel download --list` shows what is available"
             )
     except RuntimeError as exc:
         # A fetch failure is a CONDITION, not a crash — the name was mistyped, the machine is
@@ -2547,6 +2555,14 @@ def cmd_download(args) -> dict[str, Any]:
                                  "piper-tts is not installed, so it cannot be used yet")
     elif args.what == "voice":
         result["use_it_with"] = "voice-tunnel config set VOICE_TUNNEL_TTS piper"
+    elif args.what == "kokoro" and not config.have_module("kokoro_onnx"):
+        # Kokoro has NO subprocess fallback — resident is the only path — so the model without
+        # its runtime is not a degraded mode, it is a backend that raises on every reply.
+        result["also_needed"] = ("`pip install voice-tunnel[kokoro]` — the model and voice pack "
+                                 "are here but kokoro-onnx is not installed, so nothing can "
+                                 "load them")
+    elif args.what == "kokoro":
+        result["use_it_with"] = "voice-tunnel config set VOICE_TUNNEL_TTS kokoro"
     elif args.what == "turn" and not config.have_module("transformers"):
         result["also_needed"] = ("`pip install voice-tunnel[turn]` — the model is here but "
                                  "onnxruntime and transformers are not, so it cannot load")
@@ -3095,9 +3111,41 @@ def cmd_doctor(_args) -> dict[str, Any]:
              "`voice-tunnel config set VOICE_TUNNEL_TTS none`"),
             degraded=_windows(),
         ))
+    elif backend == "kokoro":
+        # KOKORO FELL THROUGH TO THE `else` AND WAS REPORTED AS AN INVALID BACKEND. The whole
+        # check read `backend=kokoro` / "VOICE_TUNNEL_TTS must be sapi | piper | none" — a hard
+        # FAIL, and therefore `doctor.ok = false`, on the backend actually in production use.
+        # A diagnostic that calls the working configuration invalid is worse than no diagnostic,
+        # because the next thing anyone does is follow its remedy and change something that was
+        # right. Same stale list as the setting's own description.
+        runtime = config.have_module("kokoro_onnx")
+        model, pack = config.kokoro_model(), config.kokoro_voices_bin()
+        missing = " and ".join(n for n, p in (("kokoro-v1.0.onnx", model),
+                                              ("voices-v1.0.bin", pack)) if not p)
+        # Both halves, named separately, because they fail differently and are fixed differently:
+        # no runtime is a pip install, no model is a download, and reporting "kokoro is broken"
+        # for either sends someone to the wrong one. There is no spawning fallback to degrade to.
+        remedy = ""
+        if not runtime and missing:
+            remedy = ("`pip install voice-tunnel[kokoro]` for the engine, then "
+                      "`voice-tunnel download kokoro` for the model and voice pack")
+        elif not runtime:
+            remedy = ("`pip install voice-tunnel[kokoro]` — the model is on disk but "
+                      "kokoro-onnx is not installed, and there is no subprocess fallback")
+        elif missing:
+            remedy = f"`voice-tunnel download kokoro` — {missing} is not in {config.models_dir()}"
+        detail = f"kokoro (resident, {config.kokoro_voice()}), model={model or '(missing)'}"
+        # THE CLAMP, SAID WHERE SOMEONE IS ALREADY LOOKING. A persisted speed above Kokoro's own
+        # 2.0 ceiling is accepted by `rate` (SPEED_MAX is 2.5, and piper handles it), so the
+        # settings file can legitimately show a number this backend will never use.
+        asked = config.speech_speed()
+        if asked > config.KOKORO_SPEED_MAX:
+            detail += (f", speed clamped {asked}→{config.KOKORO_SPEED_MAX} "
+                       f"(kokoro's ceiling; VOICE_TUNNEL_SPEECH_SPEED asks for more)")
+        checks.append(_check("tts", runtime and not missing, detail, remedy))
     else:
         checks.append(_check("tts", backend == "none", f"backend={backend}",
-                             "VOICE_TUNNEL_TTS must be sapi | piper | none"))
+                             "VOICE_TUNNEL_TTS must be sapi | piper | kokoro | none"))
 
     engine = config.asr_engine()
     if engine == "parakeet":
@@ -3498,7 +3546,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="apply to the running server only; do not persist")
 
     dw = sub.add_parser("download", help="fetch a voice, an ASR model, or the voiceprint model")
-    dw.add_argument("what", nargs="?", choices=["voice", "asr", "voiceprint", "turn"],
+    dw.add_argument("what", nargs="?", choices=["voice", "kokoro", "asr", "voiceprint", "turn"],
                     help="omit (or --list) to see what is available and what is installed")
     dw.add_argument("name", nargs="?", default=None,
                     help="voice name (default en_GB-alan-medium) or ASR model (default parakeet)")
