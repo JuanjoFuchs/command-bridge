@@ -114,9 +114,16 @@ sentence yields **0 ms of measurable silence**. FR3 is confirmed as an open gap 
 - **FR3**: **Phrase-level pacing** — the comma-level prosody priced on 2026-08-06 and never built. A
   reply breathes where its meaning breaks, not only where a full stop lands. The break at a comma must
   be **measurably present and measurably shorter** than the break at a sentence end.
-- **FR4**: The normalised string is **recoverable for a given clip** through the CLI, so "why did it say
-  that" is answerable from the record rather than by re-deriving it. *Rationale: a transform nobody can
-  inspect is a transform nobody can debug.*
+- **FR4**: The normalisation is **inspectable**, in two halves, because the two answer different
+  questions and only one of them is verifiable while the live session runs:
+  - **FR4a — ahead of time.** A CLI command takes text and prints exactly what the engine will be
+    handed. Pure, server-free, and the thing you actually reach for when asking "why did it say that".
+  - **FR4b — after the fact.** The normalised string is recorded per clip in the timing log, so a clip
+    that already went out can be explained without re-deriving it.
+
+  *Rationale: a transform nobody can inspect is a transform nobody can debug. FR4a exists because the
+  per-clip record can only be read back through a running server, and there is one running that must not
+  be disturbed (TC4) — so the spec provides an inspection path that does not need one.*
 - **FR5**: Normalisation is **engine-independent** — above whichever backend answers. *Both engines were
   measured and both drop the dot, so this is not a kokoro workaround.*
 
@@ -208,13 +215,20 @@ sentence yields **0 ms of measurable silence**. FR3 is confirmed as an open gap 
 
 ### Inspectability (FR4)
 
-- [ ] **AC11** (`integration`): after a `say`, the normalised string for that clip is retrievable through
-      the CLI, keyed by the clip.
-- [ ] **AC12** (`unit`): `describe` documents the field, per the repo's add-a-command-update-describe rule.
+- [ ] **AC11** (`integration`, FR4a): the CLI command prints the normalised form of a given string,
+      driven through the CLI entry point. Exit 0, and the printed value equals what the synthesis path
+      would hand the engine — asserted **equal to the value the path actually uses**, not to a literal, so
+      the inspector cannot drift away from the thing it inspects.
+- [ ] **AC12** (`unit`): `describe` documents the new command and the new field, per the repo's
+      add-a-command-update-describe rule.
+- [ ] **AC13** (`unit`, FR4b): the say path records the normalised string against the clip id. *Verified
+      structurally and by calling the recording helper directly. **End-to-end retrieval through a running
+      `say` is NOT verified and cannot be while the live session runs (TC4)** — this is stated rather than
+      papered over.*
 
 ### Suite
 
-- [ ] **AC13** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped, and no
+- [ ] **AC14** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped, and no
       `voice-tunnel` server was started (TC4).
 
 ## Testing Approach
