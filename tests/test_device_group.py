@@ -150,8 +150,14 @@ def test_the_combined_handler_writes_the_same_preferences_the_single_pickers_do(
 
 def test_grouping_requires_the_platform_to_be_able_to_route_output():
     """Android is the case: no `audiooutput` enumerated and no `setSinkId`, so a combined control
-    would move the microphone and quietly do nothing about the speaker."""
-    body = body_of("refreshDevices")
+    would move the microphone and quietly do nothing about the speaker.
+
+    THE RULE MOVED, NOT THE REQUIREMENT (spec 009 FR4). `grouped` used to be decided in
+    `refreshDevices`, one of three places that each assigned a pill's visibility. It is now decided
+    in the pure `pillsView` alongside everything else about which pills exist, so the same
+    assertion is made about the same expression in its new home.
+    """
+    body = body_of("pillsView")
     assert re.search(r"grouped\s*=\s*Boolean\(\s*sinkSupported", body), (
         "the grouped picker is no longer gated on this platform being able to select an output "
         "device; on Android it would claim to control a route it cannot touch"
@@ -160,36 +166,103 @@ def test_grouping_requires_the_platform_to_be_able_to_route_output():
 
 def test_an_ungrouped_device_falls_back_instead_of_becoming_unreachable():
     """ALL-OR-NOTHING is the deliberate part. One device outside a usable group and the combined
-    pill silently cannot select it; a second dropdown he has seen before is the cheaper failure."""
-    body = body_of("refreshDevices")
+    pill silently cannot select it; a second dropdown he has seen before is the cheaper failure.
+
+    Read in `pillsView` since spec 009, for the reason given one test up."""
+    body = body_of("pillsView")
     assert "covered(ins)" in body and "covered(outs)" in body, (
         "grouping no longer checks that EVERY device is reachable through a group, so a device "
         "that groups badly becomes unselectable rather than falling back"
     )
 
 
-@pytest.mark.parametrize("pill,expected", [
-    ("$micpick", r"\$micpick\.hidden\s*=\s*grouped"),
-    ("$spkpick", r"\$spkpick\.hidden\s*=\s*!\s*sinkSupported\s*\|\|\s*grouped"),
-])
-def test_exactly_one_layout_is_on_screen(pill, expected):
+def test_exactly_one_layout_is_on_screen():
     """Three pills is worse than two. The single-purpose pair is the fallback, so it hides when
-    the grouped pill is up and returns the moment grouping stops working."""
-    assert re.search(expected, blanked(script())), (
-        f"{pill}'s visibility is no longer tied to whether the grouped picker is showing"
+    the grouped pill is up and returns the moment grouping stops working.
+
+    WHY THIS IS NO LONGER TWO REGEXES OVER TWO ASSIGNMENTS. It used to assert the literal lines
+    `$micpick.hidden = grouped` and `$spkpick.hidden = !sinkSupported || grouped`, which is the
+    exact shape spec 009 removed: the mutual exclusion was written down twice, in two different
+    functions, and nothing checked that the two agreed. Both now fall out of one pure decision, so
+    the property is asserted where it is decided — the grouped branch turns BOTH single-purpose
+    pills off, unconditionally, and the fallback branch is the only place they can come on.
+
+    The intent is unchanged and is still the thing that would break: a fourth arrangement in which
+    the grouped pill and the microphone pill are on screen together.
+    """
+    body = body_of("pillsView")
+    gate = re.search(r"if\s*\(\s*grouped\s*\)\s*\{", body)
+    assert gate, (
+        "pillsView() no longer branches on `grouped`, so nothing keeps the grouped pill and the "
+        "single-purpose pair off the screen at the same time"
+    )
+    els = re.search(r"\}\s*else\s*\{", body[gate.end():])
+    assert els, "the `grouped` branch has no fallback; a platform that groups badly gets no pills"
+    paired = body[gate.end():gate.end() + els.start()]
+    fallback = body[gate.end() + els.end():]
+    for pill in ("mic", "spk"):
+        assert not re.search(r"show\." + pill + r"\s*=", paired), (
+            f"pillsView() can turn the {pill} pill on while the grouped pill is up; that is three "
+            "controls for two routes, and two ways to be half-connected"
+        )
+        assert re.search(r"show\." + pill + r"\s*=", fallback), (
+            f"the {pill} pill is no longer turned on in the fallback branch, so a platform that "
+            "groups badly is left with no way to pick that half at all"
+        )
+    assert not re.search(r"show\.dev\s*=", fallback), (
+        "pillsView() can turn the grouped pill on where the halves did not pair, which is a "
+        "control that reaches only one of the two routes it claims"
+    )
+
+
+def test_no_pill_is_ever_offered_with_nothing_to_choose():
+    """THE WHOLE OF SPEC 009 IN ONE ASSERTION. Reported live 2026-08-18, on a headset, with the
+    speaker list offering only `default`: *"If there is no speaker to choose, why would we show a
+    drop-down to choose a speaker?"*
+
+    Every pill is gated on a COUNT being greater than one, and the counts are of distinct devices
+    rather than of the rows `enumerateDevices` returns — Chrome lists one physical output up to
+    three times, so a row count leaves the dead control on every single-output desktop as well.
+    """
+    body = body_of("pillsView")
+    assert re.search(r"show\.dev\s*=\s*groups\.size\s*>\s*1", body), (
+        "the grouped pill is offered without a second device to move to — a drop-down whose only "
+        "option is the one already selected"
+    )
+    assert re.search(r"show\.mic\s*=\s*inputs\s*>\s*1", body), "the input pill is offered with one input"
+    assert re.search(r"show\.spk\s*=\s*sinkSupported\s*&&\s*outputs\s*>\s*1", body), (
+        "the output pill is offered with one output"
+    )
+    counts = body_of("distinctDevices")
+    assert "ALIAS_IDS" in counts and "groupId" in counts, (
+        "the counting no longer collapses Chrome's default/communications aliases by the "
+        "platform's own grouping, so one physical device counts as three and the dead control "
+        "survives on every one-output desktop"
     )
 
 
 def test_the_fallback_pickers_are_still_built_while_hidden():
     """`grouped` is recomputed on every enumeration, so an unpairing headset can put these back on
     screen at any moment — and a list that only populates while visible arrives empty exactly
-    then."""
+    then. Spec 009 TC5 restates this as the load-bearing half of hiding a pill: hiding must stay a
+    VISIBILITY decision, because a device appearing has to put the control back already populated.
+
+    Asserted as an absence now, which is stronger than the ordering check it replaces. That one
+    compared the position of `$mic.innerHTML` against the position of `$micpick.hidden` in the same
+    function — a test that only worked because building and hiding lived together, and which cannot
+    outlive their separation. Building lives here; deciding lives in `applyPills`; and this holds
+    that `refreshDevices` populates the lists without consulting whether anyone can see them.
+    """
     body = body_of("refreshDevices")
-    mic = body.index("$mic.innerHTML")
-    hide = body.index("$micpick.hidden")
-    assert mic < hide, (
-        "the input list is now built only when it is visible, so the fallback layout can appear "
-        "with an empty dropdown"
+    assert "$mic.innerHTML" in body and "$spk.innerHTML" in body and "$dev.innerHTML" in body, (
+        "a device list is no longer built on the refresh path, so the pill it feeds can arrive on "
+        "screen empty"
+    )
+    stray = [ln.strip() for ln in body.splitlines() if re.search(r"\$\w*pick\.hidden", ln)]
+    assert not stray, (
+        "refreshDevices() decides a pill's visibility again, so building and hiding have been "
+        "re-entangled and a list can once more be skipped because nobody was looking: "
+        + " | ".join(stray)
     )
 
 

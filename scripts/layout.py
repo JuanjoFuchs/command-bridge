@@ -78,7 +78,7 @@ POPULATE = """(layout) => {
     // situation the target device cannot reach, which is the least useful kind of red.
     if (window.innerWidth >= 480) {
       show('spkpick', 'spk', 'Headphones (Realtek(R) Audio)');
-      // The page grants the wider cluster from `paintGroup`, keyed on both pills being visible.
+      // The page grants the wider cluster from `applyPills`, keyed on both pills being visible.
       // The fixture is faking that visibility, so it has to fake the consequence too — otherwise
       // this measures a two-pill row inside the one-pill width, which the page never renders.
       document.getElementById('controls').classList.add('split');

@@ -343,6 +343,21 @@
     text-align:center; text-wrap:balance; max-width:min(100%,36ch);
   }
 
+  /* WHERE THE AUDIO IS GOING, said only when no control on the page says it already and only when
+     the page can actually know (spec 009 FR3). Styled as a readout, not a control — the same
+     weight as the error line above, one step dimmer, because it is information he did not ask for.
+
+     `hidden` and nothing else: a plain <div> with `hidden` is `display:none`, so it leaves the
+     stage's flex flow entirely and the row-gap around it collapses with it. That matters more than
+     it looks — the whole point of FR3 is that an unknowable route renders NOTHING, and an empty
+     element holding a line of height is not nothing. */
+  #route {
+    font-family:var(--mono); font-size:clamp(.66rem,2.6vw,.71rem);
+    letter-spacing:.05em; line-height:1.5; color:var(--faint);
+    text-align:center; max-width:min(100%,36ch);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
   /* One row under the orb: mute, the device pickers, verbose, collapse. */
   #controls {
     display:flex; align-items:center; justify-content:center;
@@ -367,9 +382,13 @@
     width:min(100%,24rem);
     margin-top:-.35rem;
   }
-  /* Set from `paintGroup`, and only when both single-purpose pills are actually visible. Tying it
+  /* Set from `applyPills`, and only when both single-purpose pills are actually visible. Tying it
      to the class rather than to a media query is deliberate: the thing that needs the extra width
-     is a device that groups badly, and no viewport can predict that. */
+     is a device that groups badly, and no viewport can predict that.
+
+     It moved out of `paintGroup` with spec 009: the width follows which pills are on screen, and
+     since that is now decided in one place the class has to be set from the same model, or the
+     cluster could be granted the two-pill width with one pill in it. */
   #controls.split { width:min(100%,29rem); }
   #controls > * { min-width:0; }
   /* Shrink-to-fit with a ceiling, not grow-to-fill. */
@@ -699,6 +718,21 @@
         </svg>
       </button>
     </div>
+    <!-- WHERE THE AUDIO IS GOING, when nothing on this page can move it. Spec 009 FR3.
+         Reported live 2026-08-18, on a headset, with the speaker list offering only `default`:
+         "If there is no speaker to choose, why would we show a drop-down to choose a speaker?"
+         Withdrawing the control answers that — but it also removes the only thing on screen that
+         ever named the output, so where the page genuinely knows the route it says so here.
+
+         AND ONLY WHERE IT GENUINELY KNOWS. The failure that started this whole section was not a
+         missing control, it was a lying one: a picker reading "Bluetooth" while audio came out of
+         the earpiece. So this is painted from the sink read back off the LIVE AudioContext matched
+         to an enumerated device with a real label, and from nothing else — not `sinkWanted`, not
+         the stored preference, not the start()-time snapshot. Those were all true once and are
+         never contradicted, which is exactly how a stale label survives. When the page cannot
+         know, this renders NOTHING — not "unknown", and not an empty element holding a line of
+         height. Silence is honest; a confident wrong answer is the bug. -->
+    <div id="route" role="status" hidden></div>
     <!-- ERRORS ONLY. There used to be a permanent status line here relaying "say hey claude",
          "muted — tap the orb to talk" and friends, reserving three lines of a phone screen to
          repeat what the orb already says. Reported 2026-08-07: "that secondary status section... I
@@ -743,6 +777,7 @@
   const $dev = document.getElementById("dev");
   const $devpick = document.getElementById("devpick");
   const $controls = document.getElementById("controls");
+  const $route = document.getElementById("route");
   const $verbose = document.getElementById("verbose");
   const $mute = document.getElementById("mute");
 
@@ -792,6 +827,13 @@
   // sticky, because a headset unpairing is exactly the moment one control stops being able to
   // reach both halves.
   let deviceGroups = new Map(), groupOfDevice = new Map(), grouped = false;
+  // THE LAST ENUMERATION, kept verbatim. Which pills exist is a pure function of these two lists
+  // (spec 009 FR4), and the things that can change the answer are not all enumeration events: a
+  // sink that refused, a context that opened or closed, a route that fell back. Caching what the
+  // browser last said is what lets the decision be recomputed on any of those without asking again
+  // — and asking again is asynchronous, which would put a second answer in flight behind the
+  // first. `refreshDevices` is the only writer.
+  let lastIns = [], lastOuts = [];
 
   // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
   // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
@@ -826,6 +868,18 @@
     // only have to prove the model is WIRED correctly, not that the rules are right.
     orbView: null,
     orb: null,
+    // THE PILL MODEL AND ITS PURE REDUCER, the same pairing as `orb`/`orbView` above and for the
+    // same reason. `pills` is what the page decided last — how many DISTINCT devices there are on
+    // each side after Chrome's `default`/`communications` aliases are collapsed, whether the two
+    // halves paired, which pills are on screen, why each hidden one is hidden, and the route text
+    // if it is knowable. `pillsView` is the function that decided it, exposed so a harness can
+    // sweep every enumeration shape in milliseconds without a device, a permission or a phone.
+    //
+    // `show` is what the DOM is painted FROM, not a second description of it — a harness that
+    // finds these two disagreeing has found a defect, which is the whole reason the model is
+    // published rather than inferred by scraping.
+    pills: null,
+    pillsView: null,
     collapsed: false,
     // The audio ROUTE, recorded rather than merely acted on — same reason as `peakRms`. When he
     // says "it came out of the earpiece", the only useful next question is which of three things
@@ -1608,6 +1662,11 @@
     playing = false;
     $orb.classList.remove("live", "speaking");
     applyOrb();
+    // THE ROUTE READOUT HAS TO GO WITH THE CONTEXT. It names where audio is going, and the context
+    // it was read from has just been closed — so leaving it on screen would be the same stale label
+    // this section exists to remove, in the one state he now SITS in rather than passes through.
+    // `liveSink()` answers null with no context, so this is the model correcting itself.
+    applyPills();
   }
 
   function openSocket(sampleRate) {
@@ -1936,6 +1995,14 @@
   // re-applied on every clip forever.
   const normSink = (v) => (!v || v === "default" ? "" : v);
   const currentSink = () => (ctx && typeof ctx.sinkId === "string" ? ctx.sinkId : "");
+  // THE SAME READING, BUT ABLE TO SAY "I DON'T KNOW" — which `currentSink` deliberately cannot.
+  // It answers "" both for "the browser's own default" and for "there is no context to ask", and
+  // collapsing those is right for `applySink`, which only needs to know whether a call is
+  // necessary. FR3 turns on exactly that distinction: the first is knowledge and the second is a
+  // guess, and this page has already shipped the bug where a guess was rendered as a fact.
+  // `null` means unknowable, and unknowable renders nothing at all.
+  const liveSink = () => (ctx && ctx.state !== "closed" && typeof ctx.sinkId === "string")
+    ? normSink(ctx.sinkId) : null;
 
   // THE ONE DOOR to the output route. Everything that could move audio calls this and nothing
   // calls `ctx.setSinkId` directly, because the failure being fixed is a route that changed
@@ -1970,6 +2037,12 @@
         try { await ctx.setSinkId(""); } catch {}
       }
     }
+    // VISIBILITY FIRST, then the two painters. This call is not decoration on either side of it:
+    // a `NotSupportedError` above has just cleared `sinkSupported`, which changes which pills can
+    // exist AND whether the halves can be paired — and `paintSink`/`paintGroup` both read
+    // `grouped`, which `applyPills` republishes. Painting before deciding would repaint the
+    // layout that was just withdrawn.
+    applyPills();
     paintSink();
     // The grouped pill stands for BOTH routes, so a sink that fell back has to move it too —
     // otherwise the one control he was given is the one control that can be wrong about half of
@@ -1982,10 +2055,12 @@
   // of an instruction, so if the route falls back the control falls back with it, visibly, and he
   // learns from the picker instead of from the sound.
   function paintSink() {
-    // Hidden while the grouped pill is on screen — one physical device, one control. It is still
-    // painted below, because `grouped` can flip back on the next enumeration and a picker that
-    // only updates while visible would return stale.
-    $spkpick.hidden = !sinkSupported || grouped;
+    // SELECTION ONLY — this function no longer decides whether the pill is on screen. It used to
+    // set `$spkpick.hidden` itself, and `paintGroup` and `refreshDevices` each set one too: three
+    // independent writers of the same rule, which is the shape the orb already paid for. Spec 009
+    // moved all three into `pillsView`/`applyPills`. It is still painted while hidden, because the
+    // pill can come back on the next enumeration and a list that only updates while visible would
+    // return stale.
     diag.sink.supported = sinkSupported;
     diag.sink.wanted = sinkWanted;
     if (!sinkSupported) { diag.sink.inUse = null; diag.sink.shown = null; return; }
@@ -2047,16 +2122,198 @@
     return new Map([...map].filter(([, g]) => g.in !== null && g.out !== null));
   }
 
+  // HOW MANY DEVICES ARE THERE REALLY. This is the count spec 009 turns on, and the reason the
+  // rule is "distinct devices" rather than "entries returned by enumerateDevices".
+  //
+  // Chrome lists one physical output up to THREE times — once for real, once as `default`, once as
+  // `communications`, all sharing a `groupId`. A rule that counted rows would therefore leave the
+  // dead picker on every single-output desktop: three entries, one choice, a drop-down that can
+  // only ever re-select what is already selected. Two entries that are the same device said twice
+  // are one choice, not two.
+  //
+  // IDENTITY IS THE PAGE'S EXISTING ONE, deliberately. `groupId` first, because that is the
+  // browser's own statement that two entries are one object and it is already what `pairDevices`
+  // trusts; the alias ids second. A second notion of "same device" invented here would be a second
+  // thing for the grouped pill to disagree with.
+  //
+  // An alias is a POINTER, not a device — `default` names whichever real device the OS currently
+  // points it at. So it folds into that device when the platform says which (a shared `groupId`,
+  // or the label Chrome copied onto it), and is counted on its own ONLY when it is all there is.
+  // That last case is not hypothetical: a lone unlabelled `default` is the Android shape exactly,
+  // and it has to count as one — hiding the picker for "nothing to choose from" rather than for
+  // "nothing enumerated" is the same outcome by an honest route.
+  function distinctDevices(list) {
+    const keys = new Set();
+    const real = list.filter((d) => !ALIAS_IDS.has(d.deviceId));
+    const aliases = list.filter((d) => ALIAS_IDS.has(d.deviceId));
+    for (const d of real) keys.add(d.groupId ? "g:" + d.groupId : "d:" + d.deviceId);
+    for (const d of aliases) {
+      // Already counted under the real entry it points at.
+      if (d.groupId && keys.has("g:" + d.groupId)) continue;
+      // No groupId anywhere is the platform declining to say. The label is the only remaining
+      // evidence, and "Default - Headset (WH-1000XM4)" is Chrome naming the device it points at.
+      const label = cleanLabel(d.label);
+      if (label && real.some((r) => cleanLabel(r.label) === label)) continue;
+      keys.add(d.groupId ? "g:" + d.groupId : "l:" + (label || "default"));
+    }
+    return keys.size;
+  }
+
+  // THE ONE FUNCTION THAT DECIDES WHICH PILLS EXIST — pure, in the same sense and for the same
+  // reason as `orbView`: enumeration facts in, a model out, no DOM and no globals read or written.
+  //
+  // WHY IT IS ONE FUNCTION. `paintSink`, `paintGroup` and `refreshDevices` each used to assign a
+  // pill's `hidden` independently, which is precisely the shape that made the orb read "Thinking"
+  // with no clock: whichever writer ran last won, none of them knew about the others, and nothing
+  // in the suite could see the disagreement because there was no single thing to sweep. A rule
+  // that lives in three assignments is a rule that will be tested on one path and broken on
+  // another.
+  //
+  // THE RULE ITSELF. A control appears only when it can change something. Reported live
+  // 2026-08-18, on a headset, with the speaker list offering only `default`: "It seems we need to
+  // be smarter than that, right? If there is no speaker to choose, why would we show a drop-down
+  // to choose a speaker?" Zero or one choice is not a choice. Disabling or greying such a control
+  // would be worse than removing it — a disabled control still asserts that the capability EXISTS
+  // and is merely unavailable right now, which is a different and false claim.
+  //
+  // The model:
+  //   m.inputs         raw `audioinput` rows as `enumerateDevices` returns them
+  //   m.outputs        raw `audiooutput` rows, same — RAW, because the alias collapse is this
+  //                    function's job and a caller that pre-counted would be the second answer
+  //   m.sinkSupported  can this platform route output per page at all
+  //   m.liveSink       the sink read back off a LIVE AudioContext, normalised; `null` when there
+  //                    is no live context or it reports none. Never `sinkWanted`, never the stored
+  //                    preference, never the start()-time snapshot — see the route block below.
+  function pillsView(m) {
+    const ins = m.inputs || [];
+    const outs = m.outputs || [];
+    const sinkSupported = Boolean(m.sinkSupported);
+
+    // PAIRING IS UNCHANGED — the 008-era rule moved here, not rewritten. Still all-or-nothing:
+    // every input and every output must belong to a group that has both halves, because one
+    // ungrouped device and the combined pill silently cannot reach it.
+    const groups = pairDevices(ins, outs);
+    const covered = (list) => list.every((d) => d.groupId && groups.has(d.groupId));
+    const grouped = Boolean(sinkSupported && ins.length && outs.length
+                            && covered(ins) && covered(outs));
+
+    const inputs = distinctDevices(ins);
+    const outputs = distinctDevices(outs);
+
+    const show = { dev:false, mic:false, spk:false };
+    const why = { dev:null, mic:null, spk:null };
+
+    if (grouped) {
+      // ONE PILL FOR ONE DEVICE — and still only where there is a second device to move to. A
+      // laptop whose only sound card pairs cleanly reaches this branch with one group, and a
+      // drop-down listing that one group is the same dead control in a tidier layout.
+      show.dev = groups.size > 1;
+      if (!show.dev) why.dev = "only one paired device — nothing to choose";
+      // The single-purpose pair is the FALLBACK. Three pills is worse than two, and two ways to
+      // set one route is two ways to be half-connected.
+      why.mic = "the grouped pill covers both halves";
+      why.spk = "the grouped pill covers both halves";
+    } else {
+      why.dev = !sinkSupported ? "output not selectable on this platform"
+        : !ins.length || !outs.length ? "nothing enumerated on one side"
+        : "some devices report no usable groupId";
+      show.mic = inputs > 1;
+      if (!show.mic) why.mic = inputs ? "one input device — nothing to choose"
+                                      : "no audioinput devices enumerated";
+      // TWO SEPARATE REASONS TO WITHDRAW THE OUTPUT PILL, and they are not the same fact. The
+      // platform may be unable to route audio per page at all (`setSinkId` absent or refused), or
+      // it may be able to and have nothing to route between. Counting answers the second without
+      // needing the platform to admit the first — which matters because the capability check that
+      // WOULD have caught Android is structurally unreachable: `applySink` returns early when the
+      // wanted and current sinks already agree, and at page load both are "". Nothing calls
+      // `setSinkId`, so nothing throws, so the dead control was never withdrawn. Provoking a
+      // refusal on purpose is the wrong repair; not offering an empty choice is the right one.
+      show.spk = sinkSupported && outputs > 1;
+      if (!show.spk) why.spk = !sinkSupported ? "this platform cannot select an output device"
+        : outputs ? "one output device — nothing to choose"
+                  : "no audiooutput devices enumerated";
+    }
+
+    // FR3 — WHERE THE AUDIO IS GOING, said only when the page can genuinely know.
+    //
+    // The bar is deliberately high, because the failure that started this section was not a
+    // missing control but a lying one: a picker reading "Bluetooth" while audio came out of the
+    // earpiece. Knowing means the sink read back off the LIVE context matching an enumerated
+    // device that carries a REAL label. A remembered preference, a `sinkWanted` and a start-time
+    // snapshot are each a thing that was true once and is never contradicted — which is exactly
+    // how a stale label survives — so none of them reach this function at all.
+    //
+    // AND ONLY WHERE NO CONTROL SAYS IT ALREADY. With a picker on screen the pill IS the readout,
+    // and a second one beside it is a second thing to go stale. `route` is therefore non-null
+    // exactly when the page renders route text, so the model and the DOM cannot disagree about it.
+    let route = null;
+    if (!show.dev && !show.spk && m.liveSink !== null && m.liveSink !== undefined) {
+      const have = normSink(m.liveSink);
+      const hit = outs.find((d) => normSink(d.deviceId) === have && cleanLabel(d.label));
+      route = hit ? cleanLabel(hit.label) : null;
+    }
+
+    return { inputs, outputs, grouped, show, why, route };
+  }
+
+  // THE ONLY WRITER OF PILL VISIBILITY. Everything that can change what is enumerated, whether the
+  // platform can route, or where audio is actually going ends here — and nothing else assigns a
+  // pill's `hidden`, which `tests/test_device_pills.py` asserts over the source so a fourth
+  // assignment cannot be added quietly.
+  //
+  // It computes nothing of its own: it is a projection of the model onto the DOM. A second
+  // computation here would be a second answer, which is the defect this replaces rather than a
+  // tidier version of it.
+  function applyPills() {
+    const view = pillsView({
+      inputs: lastIns,
+      outputs: lastOuts,
+      sinkSupported,
+      liveSink: liveSink(),
+    });
+    // PUBLISHED, not recomputed. `paintSink`, `paintGroup` and the list building in
+    // `refreshDevices` all read `grouped`, and every one of them now reads the value this function
+    // decided rather than deciding it again.
+    grouped = view.grouped;
+    $devpick.hidden = !view.show.dev;
+    $micpick.hidden = !view.show.mic;
+    $spkpick.hidden = !view.show.spk;
+    // THE CLUSTER WIDTH FOLLOWS THE LAYOUT, from the same model. 29rem is what fits two pills on
+    // one line, which `scripts/layout.py` requires; 24rem is the cluster bound `scripts/orbstate.py`
+    // measures. Only the two-pill arrangement genuinely needs the room, and keying it on the model
+    // rather than on a second reading of the DOM is what stops the wide cluster being granted to a
+    // row that has one pill in it.
+    $controls.classList.toggle("split", view.show.mic && view.show.spk);
+    // NOTHING AT ALL when the route is unknowable — not "unknown", not an empty element holding a
+    // line of height. `hidden` on a plain <div> is `display:none`, so it leaves the flex flow.
+    //
+    // Written only when it CHANGES, because this is a live region: assigning the same string still
+    // replaces the text node, and some screen readers announce that. This function runs on every
+    // enumeration and on every route change, so an unguarded write would re-announce the speaker
+    // at moments where nothing about it moved.
+    const text = view.route || "";
+    if ($route.textContent !== text) $route.textContent = text;
+    $route.hidden = !view.route;
+    diag.pills = view;
+    return view;
+  }
+
+  // Exposed for the same reason as `orbView`: a harness can sweep every enumeration shape — the
+  // Android single `default`, Chrome's three rows for one card, two real devices, nothing at all —
+  // in milliseconds, with no device, no permission and no phone. The browser checks then only have
+  // to prove the model is WIRED to the page, not that the rules are right.
+  diag.pillsView = pillsView;
+
   // Paint the grouped pill from the LIVE track and the LIVE sink — never from the last selection.
   // Same rule as `paintSink`, and it bites harder here: one control standing for two routes has
   // two ways to become a lie, so it has to be able to say "these are not the same device".
   function paintGroup() {
-    $devpick.hidden = !grouped;
-    // THE CLUSTER WIDTH FOLLOWS THE LAYOUT, and this is the only place that decides it — every
-    // path that can change which pills are on screen ends here. Keyed on what is ACTUALLY VISIBLE
-    // rather than on `grouped`, because the one-pill fallback (an input list with no selectable
-    // output, i.e. Android) fits the narrow cluster perfectly well; only two pills need the room.
-    $controls.classList.toggle("split", !$micpick.hidden && !$spkpick.hidden);
+    // SELECTION ONLY — like `paintSink`, this no longer decides whether its pill is on screen, and
+    // it no longer sets the cluster width either. Both moved to `applyPills` with spec 009: the
+    // width is a consequence of which pills are visible, so it has to be set by whatever decides
+    // that, or a one-pill row can be granted the two-pill width. The pill is still painted while
+    // hidden, because `grouped` is recomputed on every enumeration and a stale list would arrive
+    // on screen at exactly the moment it comes back.
     diag.group.supported = grouped;
     diag.group.count = deviceGroups.size;
     for (const stale of Array.from($dev.querySelectorAll("option[data-synthetic]"))) stale.remove();
@@ -2101,6 +2358,11 @@
 
     const ins = devices.filter((d) => d.kind === "audioinput");
     const outs = devices.filter((d) => d.kind === "audiooutput");
+    // KEPT, so the visibility rule can be re-run on the events that are not enumerations — a sink
+    // that refused, a context that opened or closed, a route that fell back. This is the only
+    // place that writes them.
+    lastIns = ins;
+    lastOuts = outs;
 
     // --- output capability ---------------------------------------------------
     // BOTH halves are feature-detected, and which half is missing is recorded, because that is the
@@ -2116,27 +2378,36 @@
     else { sinkSupported = true; diag.sink.why = "selectable"; }
 
     // --- can the two halves be paired? ---------------------------------------
-    // ALL-OR-NOTHING, and deliberately strict. Every input and every output must belong to a group
-    // that has both halves; one ungrouped device and the combined pill silently cannot reach it,
-    // which is the dead-switch defect wearing a tidier layout. Falling back costs him a second
-    // dropdown he has seen before. Getting it wrong costs him a device he cannot select at all.
+    // ALL-OR-NOTHING, and deliberately strict — the rule itself now lives in `pillsView`, which is
+    // where `grouped` is decided. What is still built here is the REVERSE INDEX `paintGroup` needs
+    // to look a live device up by id, which is not a decision and cannot disagree with one:
+    // `pillsView` calls the same `pairDevices` on the same two lists.
     deviceGroups = pairDevices(ins, outs);
     groupOfDevice = new Map();
     for (const d of devices) {
       if (d.groupId && deviceGroups.has(d.groupId)) groupOfDevice.set(d.deviceId, d.groupId);
     }
-    const covered = (list) => list.every((d) => d.groupId && deviceGroups.has(d.groupId));
-    grouped = Boolean(sinkSupported && ins.length && outs.length
-                      && covered(ins) && covered(outs));
-    if (!grouped) {
-      diag.group.why = !sinkSupported ? "output not selectable on this platform"
-        : !ins.length || !outs.length ? "nothing enumerated on one side"
-        : "some devices report no usable groupId";
-    }
+
+    // --- WHICH PILLS EXIST ---------------------------------------------------
+    // THE DECISION, ON THE PATH THAT ALREADY RUNS (spec 009 FR5/TC2). This function is called on
+    // the permission grant, on the context opening, on a reconnect and on the browser's own
+    // `devicechange` — and enumeration is permission-dependent, so a decision made once at first
+    // paint is wrong a second later. Sitting the rule here rather than beside it is the difference
+    // between a rule that re-runs and a rule that sampled.
+    //
+    // It runs BEFORE the lists are built because it publishes `grouped`, which the building below
+    // and both painters read. It runs again at the end, because `applySink` can discover a route
+    // this platform will not honour and that changes which pills can exist at all.
+    const view = applyPills();
+    // Kept exactly as it was: `diag.group.why` answers "why is there no grouped pill", and
+    // `paintGroup` owns the answer whenever there IS one. The finer reason a pill is off screen —
+    // including a pairing that worked but offers one device — lives in `diag.pills.why`.
+    if (!view.grouped) diag.group.why = view.why.dev;
 
     // --- input ---------------------------------------------------------------
     // The device actually feeding the graph, read LIVE off the track every time. Labels are empty
-    // until permission is granted, so the pill stays hidden until there is something real to show.
+    // until permission is granted — which is why the decision above re-runs on the grant rather
+    // than being taken once at first paint.
     const track = micStream && micStream.getAudioTracks()[0];
     const live = track ? track.getSettings().deviceId : undefined;
     if (ins.length) {
@@ -2151,10 +2422,11 @@
       diag.micInUse = live === undefined ? null : live;
       diag.micShown = $mic.value;
     }
-    // The two single-purpose pills stay BUILT even while hidden: `grouped` is recomputed on every
-    // enumeration, so an unpaired headset can put them back on screen at any moment, and a list
-    // that only populates while visible would arrive empty at exactly that moment.
-    $micpick.hidden = grouped || !ins.length;
+    // NOTE THAT NOTHING HERE HIDES ANYTHING. The lists are built from what is enumerated and the
+    // pills are shown from what is choosable, and those are two different questions with two
+    // different answers — TC5. `grouped` is recomputed on every enumeration and a second device
+    // can appear at any moment, so a list that only populated while visible would arrive on screen
+    // empty at exactly the moment it came back.
 
     // --- output --------------------------------------------------------------
     if (sinkSupported) {
@@ -2168,6 +2440,9 @@
     }
 
     // --- the grouped pill ----------------------------------------------------
+    // Built whenever the halves PAIR, not whenever the pill is on screen. With one paired device
+    // the pill is withdrawn — nothing to choose — but a second device appearing is a `devicechange`
+    // away, and the list has to be ready for it. Same rule as the two above.
     if (grouped) {
       $dev.innerHTML = "";
       for (const [id, g] of deviceGroups) {
@@ -2182,6 +2457,11 @@
     // back is exactly the moment the page can no longer assume anything it set up before the drop
     // is still in force.
     await applySink(reason);
+    // SECOND PASS. `applySink` may have just learned this platform refuses to route at all, which
+    // withdraws the output pill and un-pairs the halves — and it may have moved the live sink,
+    // which is what the FR3 route readout is painted from. Both are facts that did not exist when
+    // the decision above was taken, and `applyPills` is cheap and pure.
+    applyPills();
     paintSink();
     paintGroup();
   }
@@ -2252,8 +2532,10 @@
   });
 
   // Sync the readout at load so `diag.sink` describes the page from its first moment rather than
-  // from the first enumeration. Hides the output pill, which the markup already does — the value
-  // is that a harness reading `diag` before anyone taps gets the restored preference, not a blank.
+  // from the first enumeration. Nothing is enumerated yet, so every pill is hidden — which the
+  // markup already does. The value is that a harness reading `diag` before anyone taps gets the
+  // restored preference and a real `pills` model, not a blank and a null.
+  applyPills();
   paintSink();
   paintGroup();
 

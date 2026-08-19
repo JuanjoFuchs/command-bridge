@@ -151,32 +151,32 @@ The same collapse applies to inputs (FR2), where Chrome plays the same alias tri
 
 ## Implementation Tasks
 
-- [ ] Extract a pure function of the enumeration facts that returns which pills are visible, alongside
+- [x] Extract a pure function of the enumeration facts that returns which pills are visible, alongside
       the reason each hidden one is hidden.
-- [ ] Make it the only writer of pill visibility; the existing assignments call it or are removed.
-- [ ] Collapse alias devices before counting, reusing the page's existing identity machinery.
-- [ ] Apply the same rule to the input pill.
-- [ ] Add the route readout for FR3, painted from the live context only, absent when unknowable.
-- [ ] Expose the model on `window.__voiceTunnel` so a harness can read it without scraping the DOM.
-- [ ] Add the exhaustive sweep of the pure function over the enumeration combinations.
-- [ ] Add the browser harness that drives the real page with a stubbed enumeration, over a static
+- [x] Make it the only writer of pill visibility; the existing assignments call it or are removed.
+- [x] Collapse alias devices before counting, reusing the page's existing identity machinery.
+- [x] Apply the same rule to the input pill.
+- [x] Add the route readout for FR3, painted from the live context only, absent when unknowable.
+- [x] Expose the model on `window.__voiceTunnel` so a harness can read it without scraping the DOM.
+- [x] Add the exhaustive sweep of the pure function over the enumeration combinations.
+- [x] Add the browser harness that drives the real page with a stubbed enumeration, over a static
       server, starting no voice-tunnel process.
-- [ ] Add the structural pytest assertions that keep the single-writer property from regressing.
-- [ ] Run the full suite.
+- [x] Add the structural pytest assertions that keep the single-writer property from regressing.
+- [x] Run the full suite.
 
 ## Acceptance Criteria
 
 ### The rule itself (FR1, FR2)
 
-- [ ] **AC1** (`unit`): with **zero** distinct outputs, the output pill is hidden.
-- [ ] **AC2** (`unit`): with **one** distinct output — including the Android shape, a single unlabelled
+- [x] **AC1** (`unit`): with **zero** distinct outputs, the output pill is hidden.
+- [x] **AC2** (`unit`): with **one** distinct output — including the Android shape, a single unlabelled
       `default` — the output pill is hidden.
-- [ ] **AC3** (`unit`): with **one** distinct output presented as Chrome's three rows (`default`,
+- [x] **AC3** (`unit`): with **one** distinct output presented as Chrome's three rows (`default`,
       `communications`, real, one `groupId`), the output pill is hidden. *This is the case a row count
       gets wrong, and it is a desktop case, so it is not hypothetical.*
-- [ ] **AC4** (`unit`): with **two or more** distinct outputs, the output pill is visible.
-- [ ] **AC5** (`unit`): AC1–AC4 hold for the **input** pill against input enumerations.
-- [ ] **AC6** (`unit`, **exhaustive sweep**): the pure function is swept over every combination of
+- [x] **AC4** (`unit`): with **two or more** distinct outputs, the output pill is visible.
+- [x] **AC5** (`unit`): AC1–AC4 hold for the **input** pill against input enumerations.
+- [x] **AC6** (`unit`, **exhaustive sweep**): the pure function is swept over every combination of
       {0, 1 alias-collapsed, 1 multi-row, 2+} inputs × the same for outputs × {setSinkId present,
       absent} × {paired, unpaired}, and in every combination **no pill is visible with fewer than two
       choices**, and exactly one layout is on screen. *Rationale: the orb's defect was found by sweeping
@@ -185,39 +185,39 @@ The same collapse applies to inputs (FR2), where Chrome plays the same alias tri
 
 ### It is wired to the page, not merely computed (FR4)
 
-- [ ] **AC7** (`integration`, real browser): the real page, served statically with
+- [x] **AC7** (`integration`, real browser): the real page, served statically with
       `navigator.mediaDevices.enumerateDevices` stubbed to the **Android shape**, renders **no output
       pill** after a `devicechange`. Asserted on the DOM, not on the model.
-- [ ] **AC8** (`integration`, real browser): the same page, stubbed with **two distinct outputs**,
+- [x] **AC8** (`integration`, real browser): the same page, stubbed with **two distinct outputs**,
       renders the output pill with two options.
-- [ ] **AC9** (`integration`, real browser): switching the stub from two outputs to one and dispatching
+- [x] **AC9** (`integration`, real browser): switching the stub from two outputs to one and dispatching
       `devicechange` **removes** the pill without a reload (FR5/TC2).
-- [ ] **AC10** (`unit`, structural): exactly one function assigns pill visibility. Asserted over the page
+- [x] **AC10** (`unit`, structural): exactly one function assigns pill visibility. Asserted over the page
       source so a fourth `hidden =` cannot be added silently. *This is the criterion that keeps FR4 true
       after this spec is closed.*
 
 ### The route readout (FR3)
 
-- [ ] **AC11** (`integration`, real browser): with routing unselectable and the live sink unreadable
+- [x] **AC11** (`integration`, real browser): with routing unselectable and the live sink unreadable
       (the Android shape), the page shows **no route text at all**.
-- [ ] **AC12** (`integration`, real browser): with one output that carries a real label and a live sink
+- [x] **AC12** (`integration`, real browser): with one output that carries a real label and a live sink
       that matches it, the route text names that device.
-- [ ] **AC13** (`unit`): the route text is never derived from `sinkWanted`, a stored preference, or a
+- [x] **AC13** (`unit`): the route text is never derived from `sinkWanted`, a stored preference, or a
       start-time snapshot. *Negative control: with a stored preference naming device A and a live sink
       reporting device B, the readout says B or says nothing — never A.*
 
 ### Instrument controls
 
-- [ ] **AC14** (`integration`, **negative control**): the browser harness is shown to **fail** when the
+- [x] **AC14** (`integration`, **negative control**): the browser harness is shown to **fail** when the
       rule is inverted — a deliberately broken build renders the pill on the Android shape and the
       harness reports it. *Without this, AC7's "no pill" is indistinguishable from a harness that never
       found the pill, never loaded the page, or asserted on an element that no longer exists.*
-- [ ] **AC15** (`integration`): the whole verification runs with **no `voice-tunnel` server process
+- [x] **AC15** (`integration`): the whole verification runs with **no `voice-tunnel` server process
       started**, asserted by the harness itself rather than by intention (TC4).
 
 ### Suite
 
-- [ ] **AC16** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped, and
+- [x] **AC16** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped, and
       `python scripts/layout.py` is **not** run (TC4) — its geometry assertions are noted as unverified
       for this change, see Verified state.
 
@@ -272,10 +272,71 @@ The same collapse applies to inputs (FR2), where Chrome plays the same alias tri
   behind them.
 - `scripts/orbstate.py` — the pure-model-plus-real-transitions pattern AC6 and AC7 follow.
 
-## Verified state
+## Verified state (2026-08-19)
 
-*Filled in by the implementer after verification, per the completion rule. Empty at the refined-spec
-gate: nothing here has been built yet.*
+> **Status is `in_progress`, not `complete`, and deliberately so.** Every automated criterion passes and the code is done. **Two checks are open and neither can be closed by this agent:** AC17 needs his phone, and the geometry harness starts a server he is currently talking through. Marking this `complete` would claim a verification nobody performed — which is the one thing the completion rule exists to stop.
 
-**Baseline before any change (2026-08-19):** `python -m pytest tests/` — 617 passed, 2 skipped, exit 0
-(the count includes spec `010`'s 42 new tests).
+Recorded by the team lead after **independent** verification — the suite, the harness and the
+single-writer property were re-run by the lead, not taken from a sub-agent's self-report.
+
+**Suite.** Baseline 617 passed / 2 skipped → **892 passed / 2 skipped / 0 failed.** No test was deleted.
+Five existing assertions in `tests/test_audio_route.py` and `tests/test_device_group.py` were adapted or
+rewritten because they asserted on the *three separate* `hidden =` writes that FR4 removes; each one's
+invariant is now asserted where the decision is actually made. The rewritten
+`test_the_fallback_pickers_are_still_built_while_hidden` is strictly stronger than the one it replaced.
+
+**The rule holds in all 64 enumeration shapes, measured twice independently.** The pure sweep runs the
+page's own `pillsView` over every combination of {0 / one-device-one-row / one-device-three-rows /
+two-distinct} inputs × the same outputs × `setSinkId` present-absent × paired-unpaired, and asserts the
+invariant *no pill is visible with fewer than two choices* in every one. A Python reimplementation of the
+same rule, written by a different slice, agrees with the page in all 64 — two derivations that could
+have disagreed and did not.
+
+**The DOM is painted from the model, not computed a second time.** All 64 shapes are also driven through
+the real page in a real browser and the DOM compared against the model; a disagreement is reported as a
+defect. This is the criterion that catches the orb's actual failure shape, where the model is right and
+the paint is wrong.
+
+**Single writer verified directly (AC10).** Exactly three `hidden` assignments and one `split` toggle
+exist in the page, all consecutive inside `applyPills`. `paintSink`, `paintGroup` and `refreshDevices`
+now *read* the decision instead of making it.
+
+**The harness has been seen to fail, four ways (AC14).** Against deliberately broken builds it reports:
+the inverted rule (`outputs > 1` → `outputs > 0`) as a source mutation; the same inversion caught
+independently by the 64-case sweep with 15 violations; a **model/DOM desync** where `pillsView` stays
+correct and the paint lies — the orb defect exactly, which a model-only check cannot see; and a
+**stale-route** build that names a device the page cannot know. The mutation builder raises rather than
+silently skipping if its target literal disappears, so a negative control that stops mutating fails
+instead of going quiet.
+
+**AC15 verified, and this matters because JJ was mid-conversation.** The harness asserts, rather than
+intends, that it started no tunnel: no `sessions/*.server.json` created or modified, the PID listening on
+8765 unchanged (`[33652] → [33652]` — the live `dev` session still up), no voice-tunnel child process
+spawned, every static server on an ephemeral port. It states its own blind spots: a server started by
+another process, a detached server that reparented, or one on a non-default port outside this tree.
+
+### Not verified, and why
+
+- **Geometry.** `scripts/layout.py` and `scripts/orbstate.py`'s cluster bound both start a voice-tunnel
+  server, which TC4 forbids while the live session runs, so **neither was run.** The layout consequences
+  were reasoned through — the new route element is `hidden`/`display:none` and leaves the flex flow
+  entirely, the `split` class still carries the two-pill width from the same model, and `layout.py`'s
+  fixture fakes pill visibility directly so `applyPills` cannot undo it — **but reasoning is not a
+  measurement, and this is recorded as an open check rather than a pass.** Run `python scripts/layout.py`
+  once the live session ends.
+- **AC17**, the premise: only his phone can confirm Android enumerates the shape every automated
+  criterion assumes.
+
+### 🔴 One ruling inside this spec that is JJ's, not the implementer's
+
+**The rule now reaches the GROUPED pill too, and that changes a desktop case.** AC6 says *no pill is
+visible with fewer than two choices*, and a combined pill offering one device is a control with nothing
+to choose — so `show.dev` requires more than one paired group. **Consequence: a laptop whose single
+sound card pairs cleanly now shows no device pill at all**, where it previously showed one combined pill
+naming that card.
+
+This follows directly from his ruling — *"if there is no speaker to choose, why would we show a
+drop-down to choose a speaker?"* — and NFR2 was read as governing the grouped layout *when that pill is
+on screen*, not as a guarantee that it always is. **It is nonetheless the one place this spec could be
+read the other way, it changes what he sees on a machine he uses, and it is flagged rather than
+absorbed.** Reversing it is a one-line change to `pillsView`.

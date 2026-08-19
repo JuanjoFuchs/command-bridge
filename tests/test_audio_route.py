@@ -223,9 +223,15 @@ def test_the_visible_control_follows_the_platform_capability():
 
     Offering a dead control is the same defect as the reported one, built on purpose: he taps it,
     nothing changes, and the interface has told him something untrue about itself.
+
+    THE ASSERTION MOVED WITH THE RULE, spec 009. It used to read `$spkpick.hidden = !sinkSupported`
+    inside `paintSink`, which was one of three places that assigned a pill's visibility — and three
+    writers of one rule is the orb defect's exact shape. The rule now lives in `pillsView`, so the
+    invariant is asserted where it lives; what is being held is unchanged, and the single-writer
+    property it was half of is held by `tests/test_device_pills.py` instead.
     """
-    body = body_of("paintSink")
-    assert re.search(r"\$spkpick\.hidden\s*=\s*!\s*sinkSupported", body), (
+    body = body_of("pillsView")
+    assert re.search(r"show\.spk\s*=\s*sinkSupported\s*&&", body), (
         "the output picker's visibility is no longer tied to whether this platform can actually "
         "select an output device"
     )
@@ -300,6 +306,33 @@ def test_the_session_closes_its_audio_context():
     assert re.search(r"ctx\s*=\s*null", body), (
         "stop() closes the context but leaves the handle, so the next arriving clip reaches a "
         "closed context instead of waiting for the new one"
+    )
+
+
+def test_the_route_readout_is_never_derived_from_a_request():
+    """THE SAME RULE AS THE PICKER, applied to the text that replaces it (spec 009 FR3).
+
+    Withdrawing a picker that can choose nothing removes the only thing on screen that ever named
+    the output — so where the page can know the route it says so in words instead. That readout
+    inherits the whole reason the picker was rewritten on 2026-08-15: *"the drop-down didn't change.
+    It still says Bluetooth."* A remembered preference, a `sinkWanted` and the `start()`-time
+    snapshot are each a thing that was true once and is never contradicted, which is exactly how a
+    stale label survives being wrong.
+
+    So the negative control is structural and total: the function that decides the route text
+    cannot even SEE those three. It is handed the sink read back off the live context and the
+    enumerated devices, and nothing else.
+    """
+    body = body_of("pillsView")
+    stray = [ln.strip() for ln in body.splitlines()
+             if any(bad in ln for bad in ("sinkWanted", "localStorage", "diag.settings"))]
+    assert not stray, (
+        "pillsView() consults a REQUEST rather than the live route, so the page can once again "
+        "name a device the audio is not going to: " + " | ".join(stray)
+    )
+    assert "m.liveSink" in body, (
+        "pillsView() no longer reads the sink back off the live context, so the route readout is "
+        "derived from something other than what is actually happening"
     )
 
 
