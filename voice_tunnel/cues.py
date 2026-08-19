@@ -38,7 +38,13 @@ CUES: dict[str, tuple[tuple[float, float], float]] = {
 }
 
 CUE_MEANING = {
-    "heard": "rising — your turn arrived and was read",
+    # NOT "arrived", and not merely "was read" — the sound used to mean the first of those and was
+    # documented as the second. It fired at the end of the turn-logging path, before any agent had
+    # seen the turn and whether or not one was listening, so it asserted acknowledgement for every
+    # utterance including the ones nobody would ever answer. It now follows the agent's INTENT TO
+    # RESPOND (spec 007, FR3), which is what lets its ABSENCE mean something: heard, and
+    # deliberately not being answered.
+    "heard": "rising — the agent has your turn and is answering it",
     "thinking": "flat, mid — working on it",
     "tool": "flat, low, short — running something (a tick, so a burst reads as activity)",
     "speaking": "falling — about to talk, so stop if you were not finished",

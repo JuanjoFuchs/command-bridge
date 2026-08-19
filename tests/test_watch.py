@@ -1,4 +1,4 @@
-"""One wait, gated on speech. `watch` and `drain` are aliases for it.
+"""One wait, gated on speech. `watch` is its only name — spec 007 removed the second.
 
 The two commands this replaces were one job with two hard-coded schedules — `watch` backing off
 30s->9min, `drain` collapsing 5/3/2 — and **both were clocks standing in for a signal the server
@@ -12,16 +12,19 @@ Every test here pins one of three things:
   authoritative) may END the wait, while `user_speaking` (the client's microphone level, early and
   noisy, and it drops during gaps INSIDE a sentence) may only EXTEND it. Returning on the first
   `false` from either is the naive version and it cuts him off mid-sentence;
-* **the collapse** — one implementation under three names, so the aliases cannot drift and a
-  scheduled watchdog holding the old spelling keeps firing;
+* **the collapse** — ONE implementation under ONE name. It was three names, then two kept "for a
+  release", and the tests here pinned that the aliases could not drift. They now pin that the
+  aliases are GONE and that a caller holding an old spelling is handed the new invocation rather
+  than argparse's `invalid choice`;
 * **the honest exits** — a ceiling, a dead server and a concurrent waiter are each reported as
   themselves and never as permission to speak.
 
 Deliberately NOT here any more: the collapsing ladder, `--waits`, `--max-seconds` and
 `_parse_waits`. They configured a schedule that no longer exists. See
-specs/005-one-wait-gated-on-speech.md.
+specs/005-one-wait-gated-on-speech.md and specs/007-the-tool-enforces-the-loop.md.
 """
 import argparse
+import json
 import time
 import types
 
@@ -310,7 +313,7 @@ def test_an_empty_heartbeat_advances_the_idle_backoff(monkeypatch):
 # ------------------------------------------------------------ the collapse
 
 
-def test_the_dispatch_table_maps_every_alias_to_the_same_object(monkeypatch, capsys):
+def test_the_waiting_command_reaches_its_handler_through_main(monkeypatch, capsys):
     """THE TEST THAT WOULD HAVE CAUGHT THE OUTAGE.
 
     Renaming `cmd_watch` to `cmd_wait` left the dispatch table pointing at a name that no longer
@@ -319,16 +322,18 @@ def test_the_dispatch_table_maps_every_alias_to_the_same_object(monkeypatch, cap
     firing `voice-tunnel watch` every minute erred each time.
 
     The gap was that nothing in the suite ever called `main()` with a real argv. This does.
+
+    It used to loop over `("watch", "drain")` and assert both names reached the same function
+    object. Spec 007 removed the second name outright, so there is one name to check and the
+    identity half of the assertion has nothing left to compare — what replaced it is
+    `test_the_retired_name_is_not_dispatchable_at_all` below, which pins the ABSENCE.
     """
     seen = set()
     monkeypatch.setattr(cli, "cmd_watch", lambda args: seen.add(args.cmd) or {})
-    for name in ("watch", "drain"):
-        assert cli.main([name, "--session", "s", "--since", "1"]) == cli.EXIT_OK
-        capsys.readouterr()
+    assert cli.main(["watch", "--session", "s", "--since", "1"]) == cli.EXIT_OK
+    capsys.readouterr()
 
-    assert seen == {"watch", "drain"}, (
-        "every alias must reach the one implementation THROUGH main()"
-    )
+    assert seen == {"watch"}, "the waiting command must reach its implementation THROUGH main()"
 
 
 def test_every_subcommand_the_parser_offers_has_a_handler(monkeypatch):
@@ -370,49 +375,58 @@ def test_the_wait_has_no_flag_that_changes_when_it_returns():
                      "--all-turns"}
 
 
-def test_the_drain_alias_accepts_the_retired_flags_and_says_they_did_nothing(monkeypatch):
-    """AC12. The invocation is in circulation — `_next_action` emitted `--waits 5,3,2` and the
-    guide taught it. Honouring it would keep the ladder alive under a new name; dropping it
-    silently would let a caller believe it had configured something."""
-    Fake([_quiet()], turns_at={0: [_turn(6)]}).install(monkeypatch)
-    args = cli.build_parser().parse_args(
-        ["drain", "--session", "s", "--since", "5", "--waits", "5,3,2", "--max-seconds", "60"])
-    out = cli.cmd_drain(args)
+def test_the_retired_name_is_not_dispatchable_at_all(capsys):
+    """AC15/AC17. The second waiting command is GONE, not deprecated and not aliased.
 
-    assert out["ignored"] == ["--waits", "--max-seconds"]
-    assert "no longer exists" in out["ignored_note"]
-    assert out["finished"] is True, "and it still does the job it was called for"
+    REPLACES TWO TESTS THAT PINNED ITS SURVIVAL: one asserted the retired name still parsed
+    `--waits 5,3,2` and reported them as ignored, the other that an unpassed flag was not
+    reported. Both were correct while the alias was being kept "for one release" so invocations
+    already in circulation would not crash — and that kindness is exactly what kept the hazard
+    alive. The two names ran the same code, and the second one is what led an operating guide to
+    write them up as two instruments with two waiting strategies and ship a wrong rule.
+
+    What must survive is not the command but the MIGRATION: one failed call that names its own
+    replacement, rather than argparse's `invalid choice` and a guess."""
+    code = cli.main(["drain", "--session", "dev", "--since", "42"])
+    err = capsys.readouterr().err
+    payload = json.loads(err)
+
+    assert code == cli.EXIT_USAGE, "a command that does not exist is a usage error"
+    assert payload["code"] == "unknown_command"
+    assert payload["replaced_by"] == "watch"
+    # THE WHOLE POINT: the same call, respelled and runnable, not a list to choose from.
+    assert payload["remedy"] == "voice-tunnel watch --session dev --since 42"
+    assert "drain" not in payload["commands"]
 
 
-def test_an_unpassed_flag_is_not_reported_as_ignored(monkeypatch):
-    """Reporting a flag nobody passed trains the reader to skip the field, which is how a warning
-    stops being a warning."""
-    Fake([_quiet()], turns_at={0: [_turn(6)]}).install(monkeypatch)
-    args = cli.build_parser().parse_args(["drain", "--session", "s", "--since", "5"])
-
-    assert "ignored" not in cli.cmd_drain(args)
+def test_the_retired_flags_cannot_be_typed_on_the_waiting_command(capsys):
+    """They only ever parsed on the command that is gone. Accepting them on `watch` now would be
+    the ladder coming back under the surviving name."""
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(
+            ["watch", "--session", "s", "--since", "5", "--waits", "5,3,2"])
 
 
 # ------------------------------------------------------------- the contract
 
 
-def test_describe_documents_wait_and_marks_the_others_as_aliases():
-    """AC13. The alias entries SHARE wait's objects rather than copying them: three copies of one
-    backoff cap once drifted three different ways, two of them inside a single `describe` payload,
-    and a reader cannot tell a stale copy from a current one."""
+def test_describe_offers_exactly_one_waiting_command():
+    """AC16. The contract is where an agent looks for what it may run, so a retired name surviving
+    ANYWHERE in this payload — as a command, an alias, an `alias_of`, a `deprecated` note — reads
+    as a command that still works.
+
+    REPLACES the test that asserted the alias entry shared `watch`'s own string objects. That was
+    a good answer to the wrong question: two entries that can never drift are still two entries,
+    and the defect was never that the second description went stale. It was that a second name
+    existed to be chosen."""
     cmds = cli.DESCRIBE["commands"]
 
     assert "wait" not in cmds, "the third name he rejected"
+    assert "drain" not in cmds, "and the second one, which is what this spec removed"
     assert "watch" in cmds
-    for alias in ("drain",):
-        assert cmds[alias]["alias_of"] == "watch"
-        assert "DEPRECATED" in cmds[alias]["deprecated"]
-        assert cmds[alias]["returns"] is cmds["watch"]["returns"], "share, do not copy"
-        assert cmds[alias]["notes"] is cmds["watch"]["notes"]
-    # `drain` needs two extra entries, so its args dict is new — but every shared entry is still
-    # the same string object, so only the deprecated pair can ever differ.
-    assert cmds["drain"]["args"]["--timeout"] is cmds["watch"]["args"]["--timeout"]
-    assert "IGNORED" in cmds["drain"]["args"]["--waits"]
+    # Not just absent as a KEY — absent from the whole document, including any `alias_of` or
+    # `deprecated` field that would name it while claiming to retire it.
+    assert "drain" not in json.dumps(cli.DESCRIBE).lower()
 
 
 def test_the_rules_no_longer_ask_an_agent_to_choose_a_command():
@@ -446,7 +460,13 @@ def test_the_watchdog_prompt_emits_the_new_command():
     assert "voice-tunnel watch --session dev" in prompt
     assert "voice-tunnel drain" not in prompt
     assert "voice-tunnel wait" not in prompt, "the third name he rejected must not be taught"
-    assert "deprecated alias" in prompt, "and `drain` must be named as the one on its way out"
+    # WAS: `assert "deprecated alias" in prompt`, so the prompt named the old command as the one
+    # on its way out. There is nothing on its way out any more — it is gone — and a scheduled
+    # prompt that mentions a command which does not exist is the tool teaching a dead spelling.
+    assert "drain" not in prompt.lower(), "a retired name must not survive in a prompt to EXECUTE"
+    assert "no second waiting command" in prompt, (
+        "say there is only one, since the reason this prompt exists is agents picking wrong"
+    )
 
 
 # ------------------------------------ the pre-reply check must not have a ladder either
@@ -536,7 +556,14 @@ def test_a_check_that_found_turns_does_not_end_the_batch(monkeypatch):
     )
 
 
-# ------------------------------- `say` hands back what the wait never drained
+# ------------------- what `say` does about turns the wait never picked up
+#
+# THESE NOW PIN A COMPATIBILITY PATH, NOT THE DESIGN. Under spec 007 a live server REFUSES rather
+# than speaking and reporting afterwards, so `unread_count > 0` beside a queued clip can only come
+# back from a server that predates the refusal — and one is always running somewhere, because the
+# CLI is reloaded from disk on every invocation while a server keeps the code it started with.
+# The branch is kept for exactly that caller, so it is kept tested. The refusal itself is pinned
+# in tests/test_say_refusal.py.
 
 
 def _say(monkeypatch, **server_says):
@@ -604,15 +631,21 @@ def test_a_clean_reply_says_so_without_raising_the_alarm(monkeypatch):
 
 
 def test_describe_documents_the_new_fields():
-    """`describe` is the tie-break, so a field an agent is told to branch on has to be in it."""
+    """`describe` is the tie-break, so a field an agent is told to branch on has to be in it.
+
+    THE TWO ASSERTIONS THIS DROPPED WERE ABOUT A WARNING THAT NO LONGER EXISTS. They required
+    `unread` to explain why IGNORING it was safe, and `unread_count` to be the field to branch on
+    before any other — both correct while `say` spoke first and reported afterwards. Under spec
+    007 there is nothing to ignore and nothing to branch on: a non-empty unread set is refused
+    rather than returned beside a clip, so the branch is the `code` on a failed call."""
     returns = cli.DESCRIBE["commands"]["say"]["returns"]
 
     for field in ("unread", "unread_count", "cursor"):
         assert field in returns, f"`say` returns {field} and describe does not mention it"
-    assert "does NOT advance the read cursor" in returns["unread"], (
-        "say why ignoring it is safe — that is what makes it a warning rather than a delivery"
+    assert "REFUSAL" in returns, "the refusal is the fact an agent most needs from this command"
+    assert "NOT the cursor to use after a refusal" in returns["cursor"], (
+        "the two cursors are the trap: resuming from the head of the log recovers nothing"
     )
-    assert "BRANCH ON THIS BEFORE ANYTHING ELSE" in returns["unread_count"]
 
 
 def test_the_grace_pass_is_not_reported_as_him_talking(monkeypatch):

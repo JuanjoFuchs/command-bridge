@@ -570,6 +570,51 @@ def _unread_turns(state: TunnelState) -> dict[str, Any]:
     return {"unread": turns, "unread_count": len(turns), "cursor": last_id}
 
 
+def _unread_refusal(state: TunnelState, unread: dict[str, Any]) -> dict[str, Any]:
+    """The payload `say` returns INSTEAD of speaking, when he said something nobody read.
+
+    **THE CURSOR IN THE REMEDY IS THE ONE FACT THIS FUNCTION EXISTS TO GET RIGHT.** It is
+    `consumed_cursor` — where the agent has read to — and NOT `last_turn_id`, which is what
+    `_unread_turns` reports and what the success path hands back for resuming. Those are different
+    numbers here by definition, and handing over the wrong one makes the refusal unescapable:
+    `watch --since <last_turn_id>` returns nothing, so nothing is marked read, so the cursor never
+    moves, so the retried `say` refuses again on the same turns, forever. `--since
+    <consumed_cursor>` delivers exactly the turns being complained about and advances the cursor
+    past them as it does, which is what makes the next `say` succeed.
+
+    So the two cursors are published under names that cannot be confused for one another —
+    `since` (run this) and `last_turn_id` (the head of the log) — rather than under one `cursor`
+    key whose meaning would depend on which branch produced the payload.
+
+    JJ, 2026-08-18: *"It should say the operator did not hear you because there was this turn —
+    process it, and if you want to restate your message, do so."* Hence `unread` riding along: the
+    recovery is a read, and making the agent spend another round trip to find out WHAT it missed
+    would be the tool asking for the discipline it just enforced.
+    """
+    n = unread["unread_count"]
+    return {
+        "spoke": False,
+        "error": (
+            f"refusing to speak: he said {n} thing(s) you have not read. Nothing was synthesized "
+            f"and nothing was queued — he did not hear this."
+        ),
+        "code": config.UNREAD_REFUSAL_CODE,
+        "remedy": (
+            f"voice-tunnel watch --session {state.session} --since {state.consumed_cursor}"
+        ),
+        "unread": unread["unread"],
+        "unread_count": n,
+        # The cursor the remedy uses, published so a caller building its own command cannot
+        # arrive at a different number than the one it was just handed.
+        "since": state.consumed_cursor,
+        "last_turn_id": unread["cursor"],
+        # No `next` here. Every other `next` on a `say` response is written by the CLI, which is
+        # the layer that knows how the caller invokes this tool; a second author for one field is
+        # how two descriptions of the same situation start disagreeing. `remedy` is the part that
+        # has to survive without a CLI, and it does.
+    }
+
+
 async def handle_say(request: web.Request) -> web.Response:
     """Synthesize and push to every connected client.
 
@@ -606,9 +651,52 @@ async def handle_say(request: web.Request) -> web.Response:
     # Sampled BEFORE synthesis so both paths carry it: `--now` is exactly the path an agent takes
     # when it is in a hurry, which is when it skips the check.
     unread = _unread_turns(state)
+
+    # AND NOW IT REFUSES, WHERE IT USED TO SPEAK AND THEN WARN (spec 007, FR1).
+    #
+    # JJ, 2026-08-18: *"The `say` command should exit with an error and not stream what you're
+    # saying if there was a turn from me that you didn't see."*
+    #
+    # **THIS IS A CHANGE OF VERDICT, NOT OF MEASUREMENT.** The state was already here, already
+    # sampled at exactly this point, already filtered to turns actually addressed to the agent.
+    # What it did with it was hand it back attached to a reply that had already gone out — a
+    # warning, and therefore optional, on a discipline that had failed in live session after live
+    # session. Three rewrites of the operating guide did not fix it, which is the signal that the
+    # rule belongs in the tool.
+    #
+    # FOUR PROPERTIES, each load-bearing:
+    #
+    # * **Before `_speak`, so nothing is synthesized and nothing is queued.** Not synthesise-then-
+    #   discard: an early return further down would put a clip into `state.undelivered` and
+    #   reintroduce the 409-and-drop this project already fixed (spec 007 TC3).
+    # * **Before the `fire_and_forget` branch, so `--now` is refused too.** The hurried path is the
+    #   one that skips checks; exempting it would put the hole exactly where the comment above says
+    #   it is most likely to be used, and `--now` is one argument away.
+    # * **The read cursor is not touched.** `_unread_turns` never advanced it and still does not,
+    #   so refusing costs nothing: the next `watch` returns those turns exactly as it would have.
+    # * **There is no flag that turns this off**, here or in the CLI. A bypass would be reached for
+    #   under precisely the conditions the check exists for. This repo has deleted such a flag
+    #   before, for the same reason.
+    #
+    # Muting does not enter into it and does not need to: a muted microphone sends no frames, so
+    # no utterance closes and no turn is appended — muting cannot manufacture an unread turn. What
+    # it also cannot do is forgive one said before the mute, and that is correct. Those words were
+    # still said, and are still unread.
+    #
+    # 428 PRECONDITION REQUIRED, and deliberately not 409. The status means "do the thing that has
+    # to happen first, then retry", which is exactly the instruction. 409 is the status this same
+    # endpoint used to answer when nobody was connected, right before throwing the reply away —
+    # and a reader meeting 409 in `handle_say` again would reasonably conclude that bug had come
+    # back. It has not: nothing is discarded here because nothing was ever made.
+    if unread["unread_count"]:
+        return web.json_response(_unread_refusal(state, unread), status=428)
+
     # SPEAKING IS WHAT ENDS THE BATCH. Whatever turns the agent was holding, it has now answered
     # them — so its next wait is a LISTEN and should block, rather than the instant pre-reply
     # check. Derived from the act, never declared: see TunnelState.agent_holds_turns.
+    #
+    # Below the refusal on purpose: a refused `say` answered nothing, so the agent is still
+    # holding its turns and its next wait is still the pre-reply check.
     state.agent_holds_turns = False
 
     if fire_and_forget:
@@ -1029,12 +1117,38 @@ async def handle_watching(request: web.Request) -> web.Response:
     return web.json_response({"agent_state": state.agent_state, "verbose": state.verbose})
 
 
+def _will_respond(agent_state: str) -> bool:
+    """Does this read signal carry an INTENT TO RESPOND? The acknowledgement cue follows this.
+
+    **THE READ SIGNAL ALREADY CARRIED THE INTENT; nothing was listening to it.** `/consumed` has
+    always taken a `state` — what the agent is doing now that it has the turn — and the two
+    answers mean opposite things about whether an answer is coming:
+
+        thinking (the default)   it has the turn and is working on a reply   -> acknowledge
+        idle                     it has read the turn and is going straight
+                                 back to listening without answering        -> say nothing
+
+    `idle` is the case JJ reported. An agent that reads something and deliberately leaves it
+    unanswered must not make a sound that says *I heard you and I am on it*, because then the
+    absence of the sound means nothing and the presence of it means nothing either.
+
+    Written as a function rather than an inline `!= "idle"` so there is one definition of "is an
+    answer coming", and so a new agent state added later has to come here and decide which side of
+    the line it is on rather than silently landing on the acknowledging side.
+    """
+    return agent_state != "idle"
+
+
 async def handle_consumed(request: web.Request) -> web.Response:
     """The agent reports how far it has read — mirrors `mc consumed`.
 
     This is what turns the page from a transcript into a status display: the user can see the
     gap between what they have said and what the agent has actually processed, instead of
     guessing whether they are talking into a void.
+
+    **It is also where the acknowledgement cue now lives** (spec 007, FR3), because this is the
+    first moment at which the tunnel knows anything about the agent's intent. Reading is not
+    acknowledgement; being answered is.
     """
     state: TunnelState = request.app["state"]
     ok, reason = _check(request, state)
@@ -1048,6 +1162,10 @@ async def handle_consumed(request: web.Request) -> web.Response:
         cursor = int((body or {}).get("cursor", -1))
     except (TypeError, ValueError):
         return web.json_response({"error": "cursor must be an int"}, status=400)
+    # WHETHER THIS READ ACTUALLY MOVED THE BOUNDARY, sampled before it is overwritten. A repeated
+    # `consumed` at the same cursor acknowledges nothing new, and a cue for it would be a sound
+    # with no turn behind it — the same defect as firing on capture, one layer along.
+    advanced = cursor > state.consumed_cursor
     state.consumed_cursor = cursor
     # Persisted beside the log so a server restart resumes from the real read position instead
     # of reporting every turn ever logged as pending. Best-effort: see write_consumed_cursor.
@@ -1064,6 +1182,14 @@ async def handle_consumed(request: web.Request) -> web.Response:
         {"type": "consumed", "cursor": cursor, "pending": state.pending_turns()},
     )
     await _set_agent_state(state, agent_state)
+    # THE ACKNOWLEDGEMENT, and it is the intent that earns it — not the arrival of the words, and
+    # not the act of reading them. See `_will_respond`. An agent that reads a turn and signals it
+    # is going back to listening (`state: "idle"`) makes no sound at all, which is the whole point:
+    # the cue's absence is now information.
+    if advanced and _will_respond(agent_state):
+        await _push_cue(state, "heard")
+    # UNAFFECTED, and deliberately so. `thinking` answers a different question — not "did you get
+    # that" but "are you still working" — and spec 007 changes the acknowledgement cue only.
     if agent_state == "thinking":
         await _push_cue(state, "thinking")
     # `verbose` rides back on the response every `watch` already makes, so the agent learns the
@@ -1451,7 +1577,27 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
             "pending": state.pending_turns(int(turn.get("id", -1))),
         },
     )
-    await _push_cue(state, "heard")
+    # NO ACKNOWLEDGEMENT CUE HERE ANY MORE (spec 007, FR3).
+    #
+    # `heard` was pushed on this line, at the end of the turn-logging path — the moment ASR
+    # finished, **before any agent had seen the turn and whether or not one was even listening.**
+    # So the sound asserted acknowledgement for EVERY utterance: room chatter the wake gate had
+    # just rejected, turns nobody would read for twenty minutes, and turns an agent would
+    # deliberately never answer.
+    #
+    # JJ, 2026-08-19: *"Whenever you hear something that you are not going to acknowledge, it
+    # doesn't make sense to reproduce the sound as if you heard me, as if you are acknowledging
+    # me."* The cue now follows the agent's intent to respond, on the read signal — see
+    # `handle_consumed`. Its ABSENCE is information, which it could never be while it fired on
+    # capture.
+    #
+    # WHAT THIS COSTS, stated rather than left to be discovered: he loses the immediate audible
+    # confirmation that the tunnel heard him at all, and there is now silence between his last
+    # word and the agent deciding. The page still paints the turn into the transcript the instant
+    # it is logged, over the broadcast two lines above, so the confirmation survives VISUALLY —
+    # but on a phone in a pocket it does not. A quieter capture tick, distinct from the
+    # acknowledgement, would buy the liveness signal back at the cost of a fifth sound in a
+    # four-sound vocabulary. That is his call to make, and the spec flags it rather than assuming.
     await _set_agent_state(state, "idle")
 
 

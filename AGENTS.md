@@ -13,12 +13,24 @@ the user talking to a tool nobody is reading, and from their side that is indist
 from a crash.
 
 **Never end a turn without either sitting in a blocking `watch` or saying out loud that you
-stopped listening.** And when `watch` returns, **run `voice-tunnel drain --session <s> --since
-<cursor>` before you reply** — one thought routinely arrives as several turns, and an empty watch
-only means he had not started the next sentence yet. `drain` re-watches on collapsing short
-ceilings and checks the speech signals `watch` never returns, so `finished: true` is the answer to
-"may I speak", not a guess. This paragraph used to ask an agent to remember all of that; he was
-interrupted four times in one session on 2026-08-14, which is the argument for a command.
+stopped listening.** And when `watch` hands you turns, **run `voice-tunnel watch --session <s>
+--since <cursor>` again before you reply** — one thought routinely arrives as several turns, and an
+empty watch only means he had not started the next sentence yet. The second call costs
+milliseconds when he is quiet, because the wait is gated on the server's speech signals rather than
+on a schedule: `finished: true` is an answer to "may I speak", not a guess.
+
+**You are no longer asked to remember that.** This paragraph used to, and he was interrupted four
+times in one session on 2026-08-14 — which is the argument for putting the rule in the tool. `say`
+now REFUSES when he has said something you never read: nothing is synthesized, nothing is queued,
+the cursor does not move, and the `remedy` is the literal `watch` that hands you the turns. There
+is no flag that disables it.
+
+**THERE IS ONE WAITING COMMAND AND IT IS `watch`.** A second name for it, `drain`, was removed on
+2026-08-19. The two spellings ran the same code, and the second one was not cosmetic — it is what
+led an operating guide to write them up as two instruments with two waiting strategies, and to ship
+a wrong rule about when to use which. A call still carrying the old spelling is answered by
+`RETIRED_COMMANDS` with the name that replaced it and the invocation respelled: a lifeline for
+calls already in flight, not a command.
 
 ## The one rule that governs every change
 

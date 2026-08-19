@@ -7,8 +7,58 @@ everywhere a user or an agent would look for it — the same defect that made tu
 unreachable in 0.2.0, one backend later. Everything here is that gap, plus the latent crash
 sitting behind it.
 
+Four specs then landed on top of it (`007`–`010`), and they share a shape worth naming: **each one
+replaces a rule somebody had to remember with something the tool refuses to get wrong.** A build
+that fails on a setting the CLI cannot describe, rather than a note asking you to keep a list up to
+date. A picker that counts what it can actually offer, rather than a comment explaining when it is
+useless. A `say` that will not speak over you, rather than a guide asking the agent not to.
+
+### Removed
+
+- **`drain`.** The second name for `watch` is gone — not deprecated, not aliased, not kept for calls
+  already in circulation. The two spellings ran the same code, and the second one was not cosmetic:
+  it is what led an operating guide to write them up as two instruments with two waiting strategies,
+  and to ship a wrong rule about which to use when. A call still carrying the old spelling gets
+  `code: unknown_command`, the name that replaced it, and **its own arguments respelled onto
+  `watch`**, so whatever session and cursor it carried come back in a line that runs. That is a
+  lifeline for calls already in flight, not a command. **There is one waiting command and it is
+  `watch`.**
+
+  *(This entry was itself rewritten by the check that enforces the removal: the first draft
+  demonstrated the respelling by quoting the old invocation, and the scan refused it as something a
+  reader could copy and run. The guard fired on the person who committed it, which is the only kind
+  of evidence worth having.)*
+
 ### Added
 
+- **`say` refuses when he has said something you never read** (spec `007`). It exits non-zero with
+  `code: unread_turns`, synthesises nothing, queues nothing, and does not move the read cursor — so
+  refusing costs nothing, because the next `watch` returns those turns exactly as it would have. The
+  refusal hands back the turns themselves and a `remedy` that is the literal `watch` to run.
+  **There is no flag that disables it**, and the check applies to `say --now` as well: the hurried
+  path is precisely the one where the check used to get skipped. *The remedy resumes from the read
+  cursor rather than the last turn id — the obvious choice deadlocks, because a `watch` starting at
+  the head of the log returns nothing, marks nothing read, and refuses again forever.*
+- **The acknowledgement cue means acknowledgement** (spec `007`). It used to fire at the end of the
+  turn-logging path — before any agent had seen the turn, and whether or not one was listening — so
+  it asserted acknowledgement for every utterance including the ones nobody would answer. It now
+  follows the agent's intent to respond, which is what lets its **absence** carry information.
+  `voice-tunnel consumed --not-responding` is how an agent reads a turn and stays silent.
+- **`voice-tunnel pronounce "<text>"`** (spec `008`). Prints exactly what the engine will be handed,
+  with no server involved — the thing you reach for when asking why a clip sounded wrong.
+- **Speech normalisation before synthesis** (spec `008`), above the backend dispatch so every engine
+  gets it. `0.2.6` was being spoken as "zero two six" and `1.0.0` as "one hundred": the dot was
+  dropped and the digits ran together into a different number, with nothing in the sound to say
+  anything had been lost. Numbers now take "point" and identifiers, extensions and domains take
+  "dot". Clause breaks also get a pause, set as a fraction of the sentence pause so it keeps
+  tracking the value tuned by ear. Measured through the recognizer rather than by ear: the fixed
+  rendering transcribes back to `0.2.6`, the old one to `026`.
+- **The five settings the code read in secret are registered** (spec `010`) —
+  `VOICE_TUNNEL_BARGE_IN`, `..._BARGE_IN_THRESHOLD`, `..._CONSONANT_BOOST`, `..._WATCH_MAX_S` and
+  `..._WATCH_DISCONNECTED_MAX_S` are now in `describe`, `config` and `.env.example`. **And a guard
+  now fails the build** on any `VOICE_TUNNEL_*` the code reads and the registry does not declare,
+  walking the source rather than comparing two hand-maintained lists — because a table that can only
+  be wrong when somebody forgets to update it cannot catch somebody forgetting to update it.
 - **`voice-tunnel download kokoro`.** `_ResidentKokoro._load` had been telling people to run this
   since the backend landed, and the parser rejected it with a usage error — the one instruction
   the failure gave you exited 2. It fetches both halves (the 325 MB `kokoro-v1.0.onnx` and the
@@ -27,6 +77,16 @@ sitting behind it.
 
 ### Fixed
 
+- **No device picker is offered with nothing to choose** (spec `009`). On Android the browser
+  enumerates one output and cannot route audio from the page anyway, so the speaker menu held a
+  single entry and could never do anything. The page already had a rule meant to withdraw it, and
+  that rule had never fired: the only signal it waited for is a refusal from `setSinkId`, and
+  `setSinkId` is never called on the default path. So the decision is now a **count** — of distinct
+  devices, after collapsing Chrome's `default`/`communications` aliases, because Chrome lists one
+  physical output up to three times and counting rows would have fixed Android while leaving the
+  same dead menu on every one-sound-card desktop. Where no picker is offered, the page names the
+  route only when it can read it back off the live audio context, and otherwise says nothing — a
+  stale label is the bug that started this.
 - **The three Kokoro settings are registered.** `VOICE_TUNNEL_KOKORO_VOICE`, `_MODEL` and
   `_VOICES` have read the environment since the backend landed and were in no list, so
   `config get VOICE_TUNNEL_KOKORO_VOICE` answered *unknown setting* for a key that was live,

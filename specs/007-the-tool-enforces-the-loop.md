@@ -200,70 +200,70 @@ since the thing being removed is feedback he has had in every session so far.
 
 ## Implementation Tasks
 
-- [ ] Refuse in the say path when the unread set is non-empty, before synthesis, on both the blocking and
+- [x] Refuse in the say path when the unread set is non-empty, before synthesis, on both the blocking and
       the fire-and-forget branches.
-- [ ] Give the refusal the repo's error shape, a stable code slug, a documented exit code, the unread
+- [x] Give the refusal the repo's error shape, a stable code slug, a documented exit code, the unread
       turns, and the literal `watch` command as its remedy.
-- [ ] Register the new code slug in the documented code list and update `describe` in the same change.
-- [ ] Move the acknowledgement cue off the capture path and onto the agent's respond intent.
-- [ ] Remove `drain` — the alias table, its handler, its subparser, its `describe` entry, the dispatch
+- [x] Register the new code slug in the documented code list and update `describe` in the same change.
+- [x] Move the acknowledgement cue off the capture path and onto the agent's respond intent.
+- [x] Remove `drain` — the alias table, its handler, its subparser, its `describe` entry, the dispatch
       row, and every prose mention that tells a reader it exists.
-- [ ] Make `voice-tunnel drain` fail as an unknown command with a message naming `watch`.
-- [ ] Sweep the repo's own docs and harnesses for `drain` and update what would now mislead.
-- [ ] Run the full suite.
+- [x] Make `voice-tunnel drain` fail as an unknown command with a message naming `watch`.
+- [x] Sweep the repo's own docs and harnesses for `drain` and update what would now mislead.
+- [x] Run the full suite.
 
 ## Acceptance Criteria
 
 ### The refusal (FR1, FR2, FR5)
 
-- [ ] **AC1** (`unit`): with one unread addressed turn, the say path **returns a refusal** and
+- [x] **AC1** (`unit`): with one unread addressed turn, the say path **returns a refusal** and
       **`tts.synthesize` is never called**. *Asserted on the synthesis call, not only on the return value
       — "did not speak" is the requirement, and a refusal that still synthesised would pass a
       return-value-only check.*
-- [ ] **AC2** (`unit`): the refusal payload carries `error`, a stable `code`, a `remedy` containing the
+- [x] **AC2** (`unit`): the refusal payload carries `error`, a stable `code`, a `remedy` containing the
       literal `watch` command with the session and cursor filled in, and the unread turns with their ids
       and text.
-- [ ] **AC3** (`unit`): the CLI exits **non-zero** on a refusal, with the documented code.
-- [ ] **AC4** (`unit`): the new code slug appears in `describe`'s documented code list and the command's
+- [x] **AC3** (`unit`): the CLI exits **non-zero** on a refusal, with the documented code.
+- [x] **AC4** (`unit`): the new code slug appears in `describe`'s documented code list and the command's
       own documentation. *Convention 3.*
-- [ ] **AC5** (`unit`): **no flag anywhere on `say` disables the check.** Asserted over the parser, so
+- [x] **AC5** (`unit`): **no flag anywhere on `say` disables the check.** Asserted over the parser, so
       adding one later fails. *A prohibition with no test can only be observed failing.*
-- [ ] **AC6** (`unit`, TC2 ruling): `say --now` refuses on the same condition as blocking `say`.
-- [ ] **AC7** (`unit`, TC3): on a refusal, nothing is queued — the undelivered queue is unchanged, and
+- [x] **AC6** (`unit`, TC2 ruling): `say --now` refuses on the same condition as blocking `say`.
+- [x] **AC7** (`unit`, TC3): on a refusal, nothing is queued — the undelivered queue is unchanged, and
       the read cursor is **not** advanced, so the next `watch` still returns those turns.
-- [ ] **AC8** (`unit`, **negative control**): with **zero** unread turns, `say` proceeds normally and
+- [x] **AC8** (`unit`, **negative control**): with **zero** unread turns, `say` proceeds normally and
       synthesis is called. *Without this, AC1 is indistinguishable from a say path that is simply
       broken.*
-- [ ] **AC9** (`unit`, TC1): a **muted** session with everything read does **not** refuse; a muted session
+- [x] **AC9** (`unit`, TC1): a **muted** session with everything read does **not** refuse; a muted session
       with a turn said *before* the mute and still unread **does** refuse. *Both arms, because the
       property currently falls out of other decisions and nothing would notice if it stopped.*
-- [ ] **AC10** (`unit`): an **unaddressed** turn — room speech that never passed the wake gate — does not
+- [x] **AC10** (`unit`): an **unaddressed** turn — room speech that never passed the wake gate — does not
       cause a refusal.
 
 ### The cue (FR3)
 
-- [ ] **AC11** (`unit`): the acknowledgement cue is **not** emitted on the turn-logging path.
-- [ ] **AC12** (`unit`): it **is** emitted when the agent signals it will respond.
-- [ ] **AC13** (`unit`, **negative control**): it is **not** emitted when the agent reads a turn and
+- [x] **AC11** (`unit`): the acknowledgement cue is **not** emitted on the turn-logging path.
+- [x] **AC12** (`unit`): it **is** emitted when the agent signals it will respond.
+- [x] **AC13** (`unit`, **negative control**): it is **not** emitted when the agent reads a turn and
       signals it will not respond. *This is the case JJ reported; without an arm that fires only here,
       AC11 and AC12 can both pass with the cue simply moved to "every read".*
-- [ ] **AC14** (`unit`, TC4): the other three cues are unaffected.
+- [x] **AC14** (`unit`, TC4): the other three cues are unaffected.
 
 ### `drain` is gone (FR4)
 
-- [ ] **AC15** (`integration`): `voice-tunnel drain` exits non-zero as an unknown command, and its
+- [x] **AC15** (`integration`): `voice-tunnel drain` exits non-zero as an unknown command, and its
       message names `watch`.
-- [ ] **AC16** (`unit`): `drain` appears nowhere in `describe` — not as a command, not as an alias, not
+- [x] **AC16** (`unit`): `drain` appears nowhere in `describe` — not as a command, not as an alias, not
       in any `alias_of`/`deprecated` field.
-- [ ] **AC17** (`unit`): `drain` appears in no help text, no parser, and no dispatch table.
-- [ ] **AC18** (`unit`): **no remaining occurrence of the word in the repo tells a reader the command
+- [x] **AC17** (`unit`): `drain` appears in no help text, no parser, and no dispatch table.
+- [x] **AC18** (`unit`): **no remaining occurrence of the word in the repo tells a reader the command
       exists.** Historical prose explaining that it *was* removed is allowed and expected; an instruction
       to run it is not. *Asserted by a scan, because the word appears dozens of times in commentary and a
       blanket ban would be unmaintainable while a blanket allowance is how the instruction survives.*
 
 ### Suite
 
-- [ ] **AC19** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped, and no
+- [x] **AC19** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped, and no
       `voice-tunnel` server was started (TC5).
 
 ## Testing Approach
@@ -306,7 +306,75 @@ since the thing being removed is feedback he has had in every session so far.
 - `specs/006-orb-off-is-not-quiet.md` — the control-event semantics the refusal must not fight.
 - Project node: `Voice Tunnel` in the project notes — the roadmap rows this spec closes.
 
-## Verified state
+## Verified state (2026-08-19)
 
-*Filled in by the implementer after verification, per the completion rule. Empty at the refined-spec
-gate: nothing here has been built yet.*
+Recorded by the team lead after **independent** verification.
+
+**Suite.** 958 passed / 2 skipped → **1006 passed / 2 skipped / 0 failed.** No test weakened or
+skipped. No server started, stopped or contacted.
+
+**The refusal is real, verified by breaking it.** The lead disabled the refusal branch in
+`server.py` and re-ran: **seven tests went red**, including both muted arms
+(`test_muting_does_not_forgive_a_turn_said_before_it` failed with *"a muted microphone is not
+permission to speak over what he already said"*, `assert 200 == 428`). The mutation was reverted and
+the file's checksum restored. **So AC1's "synthesis was never reached" is a measurement, not an
+assertion that cannot fail.**
+
+**`drain` is gone, and it fails helpfully.** `voice-tunnel drain --session dev` exits **2** with
+`code: unknown_command`, names `watch` as its replacement, explains why the second name was removed,
+and — the part that matters for a live caller — **respells the invocation it was given**:
+`drain --session dev --since 42` answers `voice-tunnel watch --session dev --since 42`. The word
+occurs **zero** times in the `describe` payload, walked recursively.
+
+**TC7's sequencing held.** The unknown-command handler was built and verified working *while `drain`
+still existed*, and only then was the alias removed. There was never a window in which the live
+agent could have received argparse's generic "invalid choice".
+
+**The remaining occurrences of the word are history, not instruction** — *"was removed on
+2026-08-19"*, *"spec 005 made it smart enough that `drain` was unnecessary"*. AC18's scan encodes
+that distinction by the shape of the occurrence and **has been seen to fire**: planted into a copy
+of `AGENTS.md`, it names the file and line for an invocation, an imperative and a present-tense
+claim, and stays silent on four historical phrasings. It also asserts it is still reading the repo,
+so a scan that collapsed to zero files would fail rather than pass.
+
+### 🔴 Two things the spec assumed that the code contradicted
+
+1. **FR3 was not implementable as written.** The spec said *"the agent's existing read signal already
+   carries an intent field"*. The **server** handler accepted one, but the **CLI never sent it**, and
+   `describe` stated the opposite in as many words: *"It no longer takes a state: the agent's status
+   is DERIVED from which commands are running, never declared."* There was no way for an agent to
+   express intent at all. A `consumed --not-responding` flag was added to close it.
+
+2. **⚠ A residual that weakens FR3's guarantee, and it is a judgement call worth revisiting.**
+   `watch` posts the read signal **automatically the moment it hands turns over — before the agent
+   has decided anything.** So intent defaults to *responding*, and the cue fires at hand-over. **An
+   agent that reads through `watch` and then decides to stay silent has already made the sound.** To
+   get the silence, the read must ride on `consumed --not-responding` instead.
+
+   The default was chosen deliberately: silent-by-default makes the cue vanish in practice, because
+   an agent that must declare intent to produce a sound will forget, and he would lose it entirely.
+   **What is definitely fixed is the dominant case** — unaddressed room speech now makes no sound at
+   all, where before every captured utterance did. **What is not fully fixed is the exact case JJ
+   named**, and that is stated here rather than left to be discovered.
+
+3. **An acoustic side effect of TC4.** Because `thinking` fires on the same event, the common path
+   now plays `heard` + `thinking` back to back rather than spread across capture and read. Same
+   number of cues per turn, adjacent instead of separated. **Wants an ear check** alongside the
+   option-A/option-B question above.
+
+4. **A deadlock the spec did not anticipate, avoided.** The obvious cursor for the remedy is the one
+   the success path returns — `last_turn_id`. Using it makes the refusal **inescapable**: a `watch`
+   starting at the head of the log returns nothing, so nothing is marked read, so the cursor never
+   moves, so the retried `say` refuses on the same turns forever. The remedy resumes from
+   `consumed_cursor`, and the two are published under names that cannot be confused. Pinned by a
+   test that *runs* the remedy and then speaks.
+
+### Not verified
+
+- **Nothing ran against a live server** (TC5). The refusal and the cue are verified through
+  in-process handlers and structurally.
+- **The refusal is not active in the live `dev` session**, because that server keeps the code it
+  started with until it restarts. Only the command-surface change reached it — which is the
+  migration path working as designed.
+- **TC6 stands and is flagged upward:** the project's Voice Tunnel Guide still instructs agents to run
+  the removed command before every reply. It is not in this repo and was not edited.

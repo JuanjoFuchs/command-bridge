@@ -234,14 +234,26 @@ end of utterance — they are one thought arriving as several turns, which is th
 job. Override with VOICE_TUNNEL_TURN_MIN_SILENCE_MS."""
 
 UNREAD_ON_SAY_MAX = 20
-"""How many unread turns `say` hands back with a reply, newest kept.
+"""How many unread turns `say` hands back when it REFUSES, newest kept.
 
 Bounded because this rides on the reply path: an agent that was away while he kept talking must
-not be handed an hour of log inside a `say` response, where it would crowd out the reply's own
+not be handed an hour of log inside a `say` response, where it would crowd out the refusal's own
 fields at the moment the agent is least able to spend the tokens. Twenty is far more than any
 single thought this tunnel has recorded — the worst measured was three turns — and small enough to
 stay a footnote. Nothing is lost by truncating: the cursor is NOT advanced, so the next `watch`
 returns them all again, and the whole log is one `voice-tunnel turns` away."""
+
+UNREAD_REFUSAL_CODE = "unread_turns"
+"""The stable slug on the payload `say` returns when it refuses to speak over an unread turn.
+
+HERE, RATHER THAN IN EITHER MODULE THAT USES IT, because the server WRITES it and the CLI BRANCHES
+on it, and a protocol string written down in two places is a protocol string that eventually
+differs in one. This file already carries the sibling bound above for the same reason; elsewhere
+in this package a constant existed only because one prefix had been typed twice and the two copies
+disagreed about whether a microphone was exposed.
+
+`unread_turns`, not `error` or `busy`: convention 8 says an agent branches on the code, and the
+code has to name the CONDITION so the branch can be written before the condition is ever hit."""
 
 
 def barge_in_enabled() -> bool:

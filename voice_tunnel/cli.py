@@ -36,16 +36,69 @@ EXIT_NO_SERVER = 3    # nothing is serving this session: run `voice-tunnel serve
 
 EXIT_CODES = {
     "0": "ok",
-    "1": "the command ran and the operation failed — see .error and .remedy in the payload",
-    "2": "bad arguments or rejected input (argparse usage errors land here too)",
+    "1": "the command ran and the operation failed — see .error and .remedy in the payload. "
+         "A REFUSED `say` lands here too (`code: unread_turns`): the tool worked and declined "
+         "on purpose, so read .remedy rather than retrying the same call",
+    "2": "bad arguments or rejected input (argparse usage errors land here too, as does a command "
+         "that does not exist — `code: unknown_command`, and .remedy names the replacement when "
+         "the name used to be one)",
     "3": "no server is running for that session — start `voice-tunnel serve --session <s>` and retry",
 }
 
 ERROR_SHAPE = {
     "error": "str — what went wrong, in one sentence",
-    "code": "str — stable slug to branch on: no_server | server_unreachable | invalid_input",
+    "code": "str — stable slug to branch on; see `error_codes` for the registry",
     "remedy": "str — the command that fixes it. Present whenever one exists.",
 }
+
+ERROR_CODES = {
+    "no_server": "nothing is serving this session. Exit 3.",
+    "server_unreachable": "a runtime file exists but nothing answers — the server died and left "
+                          "its note behind. Exit 3.",
+    "invalid_input": "an argument was rejected. Exit 2.",
+    "unknown_command": "no such command. Exit 2. When the name USED to be a command, `remedy` "
+                       "carries the same invocation respelled with the one that replaced it.",
+    # THE ONE FAILURE THAT IS NOT A MALFUNCTION. Everything above means something is broken or
+    # mistyped; this one means the tool is working and is declining on purpose.
+    config.UNREAD_REFUSAL_CODE: (
+        "`say` REFUSED because he said something you never read. Exit 1. Nothing was synthesized, "
+        "nothing was queued, and the read cursor did not move — so the turns are still there and "
+        "he did not hear you. `unread` carries the turns themselves; `remedy` is the literal "
+        "`watch` that delivers them, and its `--since` is your READ cursor, NOT the head of the "
+        "log (resuming from the head returns nothing, moves no cursor, and leaves you refused on "
+        "the same turns forever). Read them, then say your piece — restated if it no longer "
+        "answers him, unchanged if it still does. THERE IS NO FLAG THAT DISABLES THIS."
+    ),
+}
+"""Every `code` an error payload can carry, and what to do about each.
+
+**A registry rather than a sentence inside `ERROR_SHAPE`.** The slug is the thing an agent
+branches on (convention 8), and a branch has to be written before the condition is ever hit — so
+the set of slugs has to be enumerable, not buried in a description of the field that holds them."""
+
+RETIRED_COMMANDS = {
+    "drain": (
+        "watch",
+        "`watch` and `drain` ran the same code under two names, and the second name was not "
+        "cosmetic: it is what led an operating guide to write them up as two instruments with two "
+        "waiting strategies, and to ship a wrong rule about when to use which. There is one "
+        "waiting command and it is `watch`.",
+    ),
+}
+"""Names that USED to be commands, and the command that replaced each.
+
+**A LIFELINE FOR CALLS ALREADY IN FLIGHT, NOT DOCUMENTATION OF A COMMAND.** An agent driving a
+live conversation follows a guide that cannot be updated atomically with this package, and the
+CLI is loaded from disk on every invocation — so the instant a name is retired there are
+invocations carrying it, mid-conversation, with someone waiting on the other end. Argparse
+answers those with `invalid choice`, a list of every valid command, and no indication which one
+took over: a failed call plus a guess, at the moment the agent can least afford either.
+
+With this, the worst case is ONE failed call that names its own replacement and hands back the
+same invocation respelled. That is a migration working, rather than a break.
+
+Deliberately absent from `describe`: a retired name that appears in the contract reads as a
+command that still exists, which is the thing being removed."""
 
 
 def _human_seconds(s: float) -> str:
@@ -356,8 +409,8 @@ DESCRIBE: dict[str, Any] = {
         "THERE IS ONE WAITING COMMAND AND YOU RUN IT TWICE. `watch` after `serve` to hear him, and "
         "`watch` again immediately before every `say`. Same command, same flags — the second call "
         "returns instantly when he is quiet and holds when he is not, so it costs nothing when it "
-        "is not needed. It replaces `watch` AND `drain`, which were one job with two hard-coded "
-        "schedules; choosing between them is a decision agents got wrong, so it no longer exists."
+        "is not needed. There is no second waiting command to pick: there used to be, it ran the "
+        "same code, and choosing between them is a decision agents got wrong, so it is gone."
     ),
     # THE THIRD RULE IS NOW A PROPERTY OF THE COMMAND RATHER THAN AN INSTRUCTION ABOUT IT. It used
     # to say "an empty watch is not permission to speak, so run `drain` first" — a rule an agent
@@ -671,12 +724,11 @@ DESCRIBE: dict[str, Any] = {
                 "elapsed_s": "float",
                 "event": "'control' when a BUTTON moved; `changed` says which",
                 "changed": "which control moved, e.g. {'muted': true}",
-                "ignored": "[flag, ...] — flags you passed that configure nothing any more. Only "
-                           "on the `drain` alias, and only when you actually passed them",
                 "next": "the literal command to run next, session and cursor filled in",
             },
-            "notes": "THE ONE WAITING COMMAND — `watch` and `drain` are aliases for it and run "
-                     "the same code. THE RULE: **this returns only at a moment when he is not "
+            "notes": "THE ONE WAITING COMMAND — there is no second name for it and no second "
+                     "waiting command to choose between. THE RULE: **this returns only at a "
+                     "moment when he is not "
                      "speaking.** It holds while the server says he is mid-utterance, while the "
                      "client's microphone says he is talking, and while an utterance he already "
                      "finished is still being transcribed — then returns the instant all three "
@@ -688,7 +740,8 @@ DESCRIBE: dict[str, Any] = {
                      "positions behave differently and you never have to say which you are in — "
                      "it works that out from whether you are holding turns you have not yet "
                      "answered.** Before a reply it answers in MILLISECONDS when he is quiet and "
-                     "holds when he is not, which is what `drain` used to be; while listening it "
+                     "holds when he is not — the pre-reply check, which used to be a command of "
+                     "its own; while listening it "
                      "BLOCKS, because an instant empty return would make the loop RULE_1 requires "
                      "a hot spin. There is no flag for this and there must not be: an option is a "
                      "decision an agent makes wrong under time pressure. **Start the work the "
@@ -803,35 +856,50 @@ DESCRIBE: dict[str, Any] = {
                                    "pass re-checking before it commits, so `held_for` comes back "
                                    "at ~0.9s on a completely clean reply. False here means that "
                                    "number is only the grace, and nothing was observed.",
-                "unread": "[turn, ...] — **WHAT HE SAID THAT YOU NEVER READ, handed back BY THE "
-                          "ACT OF SPEAKING.** Non-empty means you spoke without knowing what you "
-                          "were answering. It does NOT advance the read cursor, so your next "
-                          "`watch` returns these again — ignoring this field loses nothing, which "
-                          "is what makes it safe as a warning rather than a delivery. Present on "
-                          "`--now` too, because that is the path taken when you are in a hurry, "
-                          "which is when the check gets skipped.",
-                "unread_count": "int — 0 on a clean reply. BRANCH ON THIS BEFORE ANYTHING ELSE "
-                                "here: the other fields are about the fate of the CLIP, this one "
-                                "is about you having spoken without knowing what you answered.",
+                "unread": "[turn, ...] — ON A REFUSAL, THE TURNS THAT CAUSED IT, with their ids "
+                          "and text, so recovering costs no extra round trip. Empty on a reply "
+                          "that went out, because a non-empty one is refused rather than spoken. "
+                          "Reading them does NOT depend on this field: the read cursor is never "
+                          "advanced by `say`, so the `watch` in `remedy` delivers them properly.",
+                "unread_count": "int — 0 on a reply that went out. Non-zero only on a refusal, "
+                                "where it is the number of things he said that you never read.",
                 "cursor": "int — the last turn id in the log, so `watch --since` can resume "
-                          "exactly here without you tracking it yourself.",
-                "next": "the literal command to run next, branched on the four facts above",
+                          "exactly here without you tracking it yourself. **NOT the cursor to "
+                          "use after a refusal** — that payload carries `since` instead, and the "
+                          "difference is the difference between recovering and looping.",
+                "next": "the literal command to run next, branched on the facts above",
+                "REFUSAL": "**`say` REFUSES, exit 1, when he has said something you have not "
+                           f"read.** `code: {config.UNREAD_REFUSAL_CODE}`, and the payload is "
+                           "`{error, code, remedy, next, unread, unread_count, since, "
+                           "last_turn_id, spoke: false}` — no clip fields, because there is no "
+                           "clip: nothing was synthesized, nothing was queued, nothing was "
+                           "delivered, and the read cursor did not move. `remedy` is the literal "
+                           "`watch` to run, with the session and YOUR READ CURSOR (`since`) "
+                           "filled in — run that, fold the turns in, then say your piece. "
+                           "APPLIES TO `--now` TOO. THERE IS NO FLAG THAT DISABLES IT.",
             },
             "notes": "Returns when QUEUED, not when playback finishes — and queued is not heard. "
-                     "**IT ALSO HANDS BACK ANYTHING HE SAID THAT YOU NEVER READ (`unread`), which "
-                     "makes the tunnel's central rule structural instead of remembered.** The "
-                     "rule is *no speech may be pending when you speak*, and it used to depend on "
-                     "an agent choosing to run `watch` first — a discipline, violated repeatedly "
-                     "in live sessions. Now speaking itself hands you what you missed, so you "
-                     "cannot skip it: at worst you find out immediately afterwards instead of "
-                     "never. **This is NOT permission to speak without checking** — `watch` still "
-                     "gates WHETHER to speak; this gates LEARNING WHAT YOU MISSED once you have. "
-                     "Three fields decide what to do afterwards: `unread_count` (you spoke "
-                     "blind), `delivered` (whether anyone was there) and `held_for` (whether he "
-                     "was still talking while you wrote it). SAYING SOMETHING IS NOT THE END OF A "
-                     "TURN; it is the moment to go back to listening. Barge-in is not reported "
-                     "here — playback outlives this call, so a clip cut off mid-sentence shows up "
-                     "in `status.barges` and the timing log, not in this payload.",
+                     "**IT REFUSES TO SPEAK OVER A TURN YOU HAVE NOT READ, which makes the "
+                     "tunnel's central rule a property of the tool instead of a thing to "
+                     "remember.** The rule is *no speech may be pending when you speak*. It used "
+                     "to depend on an agent choosing to run `watch` first — a discipline, "
+                     "violated in live session after live session — and then on an agent reading "
+                     "a warning attached to a reply that had already gone out, which is a report "
+                     "of the failure rather than a control against it. Now the words are never "
+                     "synthesized: exit 1, `code: "
+                     f"{config.UNREAD_REFUSAL_CODE}`, the turns in `unread`, and the `watch` that "
+                     "recovers in `remedy`. **This is still not permission to skip the check** — "
+                     "`watch` before every `say` remains the loop, and being refused means you "
+                     "were about to answer a question he had already moved past. THE REFUSAL "
+                     "COVERS `--now`: the hurried path is the one that skips checks. THERE IS NO "
+                     "FLAG THAT TURNS IT OFF, and one must not be added — it would be reached for "
+                     "under exactly the conditions it exists for. On a reply that DID go out, two "
+                     "fields decide what to do next: `delivered` (whether anyone was there) and "
+                     "`held_for_speech` (whether he was still talking while you wrote it). SAYING "
+                     "SOMETHING IS NOT THE END OF A TURN; it is the moment to go back to "
+                     "listening. Barge-in is not reported here — playback outlives this call, so "
+                     "a clip cut off mid-sentence shows up in `status.barges` and the timing log, "
+                     "not in this payload.",
         },
         "status": {
             "args": {"--session": "session id"},
@@ -929,13 +997,24 @@ DESCRIBE: dict[str, Any] = {
             "returns": "the turn log, read straight from disk (works with no server running)",
         },
         "consumed": {
-            "args": {"--session": "session id", "--cursor": "how far you have read"},
+            "args": {"--session": "session id", "--cursor": "how far you have read",
+                     "--not-responding": "YOU READ THESE AND ARE DELIBERATELY NOT ANSWERING. The "
+                                         "one thing the tool cannot observe, so it is the one "
+                                         "thing left to declare. It suppresses the "
+                                         "acknowledgement cue and returns the orb to Listening. "
+                                         "Use it when the wake gate let something through that "
+                                         "was not for you, or when the right response is silence "
+                                         "— otherwise he hears 'I am on it' for an answer that "
+                                         "never comes."},
             "returns": {"consumed": "int", "state": "str"},
             "notes": "YOU ALMOST CERTAINLY DO NOT NEED THIS. `watch` calls it for you the moment "
-                     "it hands over turns — delivering them IS the acknowledgement. It remains "
-                     "only to move the read boundary by hand, e.g. after reading the log with "
-                     "`turns`. It no longer takes a state: the agent's status is DERIVED from "
-                     "which commands are running, never declared.",
+                     "it hands over turns — delivering them IS the read. It remains to move the "
+                     "boundary by hand (e.g. after reading the log with `turns`), and for "
+                     "`--not-responding`. THE ACKNOWLEDGEMENT CUE FOLLOWS THIS SIGNAL: it sounds "
+                     "when the read carries an intent to answer, and is SILENT when it does not. "
+                     "It used to fire the moment a turn was transcribed — before anyone had seen "
+                     "it — so it announced acknowledgement for every noise in the room. Its "
+                     "absence now means something, which is the only reason its presence does.",
         },
         "voices": {"args": [], "returns": "installed piper voices for `say --voice`",
                    "notes": "Lists what is ON DISK. To GET one, `voice-tunnel download voice`."},
@@ -1040,6 +1119,7 @@ DESCRIBE: dict[str, Any] = {
     },
     "exit_codes": EXIT_CODES,
     "errors": ERROR_SHAPE,
+    "error_codes": ERROR_CODES,
     "config_file": {
         # The LIVE path, not a description of one. It differs between a checkout (repo-local and
         # gitignored) and an installed copy (the per-user config dir), so a hardcoded "<repo>/.env"
@@ -1078,42 +1158,16 @@ DESCRIBE: dict[str, Any] = {
     },
 }
 
-# THE ALIAS ENTRIES SHARE `watch`'s OBJECTS — they are not copies, and that is deliberate.
+# THE ALIAS ENTRY THAT USED TO LIVE HERE IS GONE, along with the command it documented.
 #
-# Three copies of one backoff cap once drifted three different ways, two of them inside a single
-# `describe` payload, and the lesson written down at the time was "generate the documentation from
-# the value". The same applies to prose: `watch` and `drain` run the same function, so they must
-# document it with the same object, or a future edit to one will silently leave the other saying
-# something that is no longer true. A reader cannot tell a stale copy from a current one.
+# It shared `watch`'s own string objects rather than copying them, so the two could never drift —
+# a good answer to the wrong question. The second name was never a documentation problem: it was
+# a CHOICE, and an agent that has to choose between two commands that do the same thing chooses
+# wrong under time pressure. It did, in a guide that wrote them up as two instruments with two
+# waiting strategies. Spec 007 removes the choice rather than describing it more carefully.
 #
-# `alias_of` and `deprecated` are what an agent needs to know that it has reached the old name.
-_WATCH_DOC = DESCRIBE["commands"]["watch"]
-_ALIAS_NOTE = (
-    "DEPRECATED ALIAS for `watch`, kept for ONE RELEASE. It runs the same code and returns the "
-    "same payload — there is nothing to choose between them and nothing this does that `watch` "
-    "does not. Use `watch`, which is THE waiting command and always was; `drain` existed only "
-    "because `watch` used to be too dumb to know when he had finished."
-)
-DESCRIBE["commands"]["drain"] = {
-    **_WATCH_DOC,
-    "alias_of": "watch",
-    "deprecated": _ALIAS_NOTE + (
-        " Its `--waits` and `--max-seconds` still PARSE, so an invocation already in circulation "
-        "does not crash, but they configure nothing: the collapsing ladder they set is gone, "
-        "replaced by the speech signals themselves. Anything you pass comes back in `ignored`."
-    ),
-    # A NEW ARGS DICT because this alias genuinely accepts two more flags — but every entry it
-    # shares with `watch` is the same string object, so only the deprecated pair can ever differ.
-    "args": {
-        **_WATCH_DOC["args"],
-        "--waits": "IGNORED. It set the collapsing ceilings of the old drain ladder, and there "
-                   "is no ladder: the wait holds on the speech signals and returns when they go "
-                   "quiet. Reported back in `ignored` so you can see it did nothing.",
-        "--max-seconds": "IGNORED. Reported back in `ignored`. The wait still refuses to hold "
-                         f"forever — {_human_seconds(WATCH_SPEECH_MAX_S)} of continuous speech "
-                         "returns `reason: \"ceiling\"` — but that bound is not yours to set.",
-    },
-}
+# A caller that still says the old name is answered by RETIRED_COMMANDS, which is deliberately
+# NOT part of this document: a retired name inside the contract reads as one that still works.
 
 
 # ---------------------------------------------------------------- runtime file
@@ -1534,8 +1588,8 @@ then fire every interval and start a duplicate each time.
 
 `watch` is the ONE waiting command and it is smart now: it blocks until he has spoken AND stopped
 speaking, so it cannot hand you a half-finished thought, and it returns at once when you are
-holding a reply and he is quiet. `drain` still runs as a deprecated alias for one release; there
-is nothing it does that `watch` does not.
+holding a reply and he is quiet. There is no second waiting command; if you are holding an older
+instruction that names one, the tool will tell you so and hand you this call respelled.
 
 STEP 3 - IF TURNS COME BACK: start the work immediately, then run `watch` again from the returned
 cursor before you speak. If that hands back more turns, fold them in and run it once more (one
@@ -1651,18 +1705,18 @@ def _next_action(turns, live: dict[str, Any] | None,
                 if live.get("verbose") else
                 "stay quiet unless he asked you something; if he gave you an order, confirm it in "
                 "one line and warn if it will take a while, then work without narrating")
-        # THE PRE-SAY WAIT GOES IN THE `next`, NOT IN A MANUAL. Within an hour of `drain`
-        # shipping, the agent that specified it was hand-rolling watch rungs from memory — the
-        # rule survived in prose and died at the moment of use. So the one moment that matters
-        # (turns just landed, a reply is coming) carries the rule itself: work first, wait last,
-        # foreground, then say.
+        # THE PRE-SAY WAIT GOES IN THE `next`, NOT IN A MANUAL. Within an hour of the pre-reply
+        # check shipping as its own command, the agent that specified it was hand-rolling watch
+        # rungs from memory — the rule survived in prose and died at the moment of use. So the one
+        # moment that matters (turns just landed, a reply is coming) carries the rule itself: work
+        # first, wait last, foreground, then say.
         #
-        # NO `--waits` HERE ANY MORE. It used to emit `--waits 5,3,2`, which is exactly how a flag
-        # stays alive after the thing it configured is gone — the tool teaching agents a spelling
-        # it no longer honours.
-        drain = (f"`voice-tunnel watch --session {session} --since <cursor>` in the FOREGROUND "
-                 "(never backgrounded — an unread wait protects nothing)")
-        return (f"do the work his turn asks for FIRST, then run {drain} immediately before any "
+        # NO RETIRED FLAGS HERE ANY MORE. It used to emit `--waits 5,3,2`, which is exactly how a
+        # flag stays alive after the thing it configured is gone — the tool teaching agents a
+        # spelling it no longer honours.
+        pre_say = (f"`voice-tunnel watch --session {session} --since <cursor>` in the FOREGROUND "
+                   "(never backgrounded — an unread wait protects nothing)")
+        return (f"do the work his turn asks for FIRST, then run {pre_say} immediately before any "
                 f"say — if it returns turns, fold them in and wait again; then {mode}")
     return f"run {watch}"
 
@@ -1720,29 +1774,20 @@ def _controls(live: Any) -> dict[str, Any] | None:
     return {k: bool(live.get(k)) for k in CONTROL_FACTS}
 
 
-def _ignored_flags(args) -> list[str]:
-    """Flags a caller passed that no longer configure anything — named rather than swallowed.
-
-    `drain --waits 5,3,2` is in circulation: `_next_action` emitted it, the guide taught it, and
-    agents have it in their habits. FR3 says that invocation must keep working, and NFR1 says the
-    wait has no tuning surface, so the flags are ACCEPTED and REPORTED as ignored. Silently
-    honouring them would keep the ladder alive under a new name; silently dropping them would let
-    a caller believe it had configured something. Saying so is the only option that is true.
-
-    Their parser defaults are None rather than the old constants, so only a flag the caller
-    ACTUALLY typed is reported. Reporting one nobody passed would train the reader to skip the
-    field, which is how a warning stops being a warning.
-    """
-    return [flag for flag, attr in (("--waits", "waits"), ("--max-seconds", "max_seconds"))
-            if getattr(args, attr, None) is not None]
+# `_ignored_flags` LIVED HERE AND IS GONE WITH THE COMMAND IT SERVED.
+#
+# It reported `--waits` and `--max-seconds` back to a caller as configuring nothing — accepted so
+# an invocation already in circulation would not crash, named rather than swallowed so nobody
+# believed they had tuned something. Both flags parsed on one command only, and that command no
+# longer exists, so the pair can no longer be typed and there is nothing left to report. A
+# caller that types them now gets an argparse usage error naming the flag, which is the truth.
 
 
 def _watch_payload(args, reason: str, turns: list, cursor: int, rounds: int, started: float,
-                  talking: bool | None, live: Any, *, ignored: list | None = None,
-                  **extra: Any) -> dict[str, Any]:
+                  talking: bool | None, live: Any, **extra: Any) -> dict[str, Any]:
     """ONE SHAPE FOR EVERY EXIT.
 
-    Five different ways out of the old drain loop was five chances for the `turns` an agent is
+    Five different ways out of the old pre-reply loop was five chances for the `turns` an agent is
     waiting on to be missing from whichever branch happened to take a shortcut — so nothing
     returns without them, not even the failures.
     """
@@ -1763,13 +1808,6 @@ def _watch_payload(args, reason: str, turns: list, cursor: int, rounds: int, sta
     }
     if isinstance(live, dict) and live.get("speech_pending") is not None:
         out["speech_pending"] = live["speech_pending"]
-    if ignored:
-        out["ignored"] = ignored
-        out["ignored_note"] = (
-            "these flags configured the old collapsing ladder, which no longer exists — the wait "
-            "is gated on whether he is speaking, not on a schedule. They are accepted so an "
-            "invocation already in circulation does not break, and they changed nothing here."
-        )
     # AN UNKNOWABLE ANSWER IS SAID OUT LOUD. `finished` against a server that publishes neither
     # speech signal rests on empty polls alone — the weaker evidence this command exists because
     # it is not enough — and the caller has no other way to tell.
@@ -1788,7 +1826,7 @@ def _watch_closed(session: str, empty: bool = False) -> None:
 
     Called on EVERY exit from `cmd_watch`, including the empty heartbeat, because the moment the
     call returns is the moment the agent has control and the tunnel does not know what it will do
-    next. If it re-arms immediately (a drain), the next `/watching` puts it straight back to idle
+    next. If it re-arms immediately (a pre-reply check), the next `/watching` puts it back to idle
     and the flicker is sub-second and honest. If it goes away to think for twenty seconds, that is
     exactly the interval that used to be painted "Listening".
 
@@ -1803,15 +1841,17 @@ def _watch_closed(session: str, empty: bool = False) -> None:
 def cmd_watch(args) -> dict[str, Any]:
     """THE ONE WAITING COMMAND. Block until he has something to say and has stopped saying it.
 
-    `watch` and `drain` are aliases for this and dispatch to this same function. They were never
-    two jobs — they were one job with two hard-coded wait strategies, `watch` backing off
-    30s->9min because it was listening for someone who might say nothing for an hour, `drain`
-    collapsing 5/3/2s because it was confirming someone had stopped. **Both were clocks standing
-    in for a signal the server already publishes**, and choosing between them under time pressure
-    is a decision an agent gets wrong: it happened twice in the session that produced this change,
-    costing a 30-second rung each time to learn that nothing had arrived. Live, 2026-08-17:
-    *"I have noticed that we have a watch command and a drain command. What's the difference? Why
-    do we need two commands? I thought the watch was going to be enough."*
+    There used to be a second command that dispatched here too. They were never two jobs — they
+    were one job with two hard-coded wait strategies, this one backing off 30s->9min because it
+    was listening for someone who might say nothing for an hour, the other collapsing 5/3/2s
+    because it was confirming someone had stopped. **Both were clocks standing in for a signal the
+    server already publishes**, and choosing between them under time pressure is a decision an
+    agent gets wrong: it happened twice in the session that produced this change, costing a
+    30-second rung each time to learn that nothing had arrived. Live, 2026-08-17: *"I have noticed
+    that we have a watch command and a drain command. What's the difference? Why do we need two
+    commands? I thought the watch was going to be enough."* — and 2026-08-19, when the alias that
+    had been kept "for one release" went too: *"Everything is just `watch`, and there's no need to
+    give a synonym."*
 
     **ONE RULE GOVERNS EVERY RETURN: this call returns only at a moment when he is not speaking.**
     What it hands back — turns, a control change, or an empty heartbeat — depends on what happened
@@ -1860,7 +1900,6 @@ def cmd_watch(args) -> dict[str, Any]:
     #
     # Refused rather than reported, because the caller here is usually a watchdog following a
     # rule, and a rule that returns a warning gets followed anyway.
-    ignored = _ignored_flags(args)
     status_pre = _request(args.session, "/status")
     if (isinstance(status_pre, dict) and status_pre.get("watch_open") is True
             and not getattr(args, "force", False)):
@@ -2014,18 +2053,16 @@ def cmd_watch(args) -> dict[str, Any]:
             _watch_closed(args.session, empty=False)
             return _watch_payload(
                 args, "ceiling", collected, cursor, rounds, started, talking, live,
-                ignored=ignored,
                 next=f"run `voice-tunnel watch --session {args.session} --since {cursor}` again — "
                      f"the {_human_seconds(WATCH_SPEECH_MAX_S)} ceiling ended this, not silence, "
                      f"so it is NOT permission to reply. `voice-tunnel cue --session "
                      f"{args.session} heard` tells him you are there without talking over him.")
     turns = collected
-    # ONE PAYLOAD BUILDER FOR EVERY EXIT. Five different ways out of the old drain loop was five
-    # chances for the `turns` an agent is waiting on to be missing from whichever branch took a
-    # shortcut, so nothing returns without them — not even the failures.
+    # ONE PAYLOAD BUILDER FOR EVERY EXIT. Five different ways out of the old pre-reply loop was
+    # five chances for the `turns` an agent is waiting on to be missing from whichever branch took
+    # a shortcut, so nothing returns without them — not even the failures.
     reason = "turns" if turns else ("control" if changed else "quiet")
-    result = _watch_payload(args, reason, turns, cursor, rounds, started, talking, live,
-                           ignored=ignored)
+    result = _watch_payload(args, reason, turns, cursor, rounds, started, talking, live)
     if changed:
         # The EVENT is named, not merely implied by a diff, because "he unmuted" and "he muted"
         # call for opposite responses and an agent should not have to reconstruct which happened
@@ -2183,41 +2220,30 @@ def _still_talking(live: Any) -> bool | None:
     return any(bool(live[k]) for k in keys)
 
 
-ALIASES = {"drain": "watch"}
-"""`drain`, kept for ONE RELEASE, dispatching to the same function object as `watch`.
-
-**THE COMMAND IS `watch`. It was never supposed to become a third name**, and briefly it did —
-this shipped for an afternoon with a new `watch` command and the owner counted the result: *"I
-don't like that we have had a watch command, then a drain command, and now we have, I think, a
-wait command. I only want to have one watch command that is smart and does all the things that
-it's supposed to do, right? I never meant it to be three different commands."*
-
-He is right, and the mistake is worth naming because it was made while trying to do the opposite:
-the goal was to SHRINK the surface, and a rename ADDS a thing to learn while the old names are
-still running. `watch` did not need a better name; it needed to be smart enough that `drain` was
-unnecessary.
-
-Same function object, not a wrapper, so the two can never drift and a test can assert the collapse
-by IDENTITY rather than by comparing behaviour and hoping. And a live scheduled watchdog invokes
-`voice-tunnel watch --session dev --since <cursor>` every minute, which with `watch` as the
-primary name is no longer a compatibility concern — it is simply correct.
-"""
-
-
-def cmd_drain(args) -> dict[str, Any]:
-    """Deprecated alias for `watch`. See ALIASES.
-
-    `drain`'s job — collapsing re-watches plus a speech check before letting the agent speak — is
-    now what every `watch` does, so there is nothing left for a separate command to add. Its
-    `--waits` and `--max-seconds` are accepted and reported in `ignored`.
-    """
-    return cmd_watch(args)
+# THE ALIAS TABLE IS GONE, AND SO IS THE SECOND NAME IT MAPPED.
+#
+# **THE COMMAND IS `watch`, and it was never supposed to become a second one.** The owner counted
+# the names out loud: *"I don't like that we have had a watch command, then a drain command, and
+# now we have, I think, a wait command. I only want to have one watch command that is smart and
+# does all the things that it's supposed to do, right? I never meant it to be three different
+# commands."* And then, 2026-08-19: *"Everything is just `watch`, and there's no need to give a
+# synonym."*
+#
+# The alias was kept "for one release" so invocations already in circulation would not break. That
+# reasoning is what kept the hazard alive: the second name was not a spelling, it was a CHOICE,
+# and it is what led an operating guide to write the two up as separate instruments with separate
+# waiting strategies and ship a wrong rule. A soft alias leaves that in place while looking like
+# it has been dealt with.
+#
+# What replaces it is not silence. RETIRED_COMMANDS answers the old spelling with the new
+# invocation, respelled and runnable — the migration a live session actually needs, without a
+# command surface that offers two ways to wait.
 
 
 def cmd_say(args) -> dict[str, Any]:
     """Speak, then say what to do about the two facts the server just measured.
 
-    `held_for` IS THE FINAL-DRAIN RULE, keyed to a fact rather than to memory. The server holds a
+    `held_for` IS THE FINAL-CHECK RULE, keyed to a fact rather than to memory. The server holds a
     clip up to fifteen seconds while he is still speaking, and it has always returned how long it
     waited — so a non-zero value is the tool stating, in its own numbers, that he carried on
     talking during the window in which this reply was written. The reply may therefore already be
@@ -2234,6 +2260,26 @@ def cmd_say(args) -> dict[str, Any]:
     if getattr(args, "now", False):
         payload["async"] = True
     result = _request(args.session, "/say", payload)
+    if isinstance(result, dict) and result.get("code") == config.UNREAD_REFUSAL_CODE:
+        # THE REFUSAL, AND NOTHING ELSE RUNS. The server did not speak, so every branch below —
+        # each of which is about the fate of a clip that exists — would be describing an event
+        # that never happened. `main` reads `error` and exits 1.
+        #
+        # His ruling is the shape of this sentence, 2026-08-18: *"It should say the operator did
+        # not hear you because there was this turn — process it, and if you want to restate your
+        # message, do so."* Both halves matter. The reply is not lost and does not need
+        # apologising for, because it was never spoken; what it may need is REWRITING, since
+        # being refused means he had already moved on from the thing it answers.
+        n = int(result.get("unread_count") or 0)
+        resume = result.get("since")
+        resume = resume if resume is not None else "<cursor>"
+        result["next"] = (
+            f"HE DID NOT HEAR THAT — nothing was spoken. Read the {n} turn(s) in `unread` first: "
+            f"run `voice-tunnel watch --session {args.session} --since {resume}`, fold them in, "
+            f"then say your piece — restated if it no longer answers what he actually asked, "
+            f"unchanged if it still does. There is nothing to take back."
+        )
+        return result
     if isinstance(result, dict) and result.get("running") is not False:
         # The single most-forgotten step in the loop. Saying something is not the end of a turn —
         # it is the moment you must go back to listening, and an agent that stops here has left
@@ -2483,7 +2529,20 @@ def cmd_verbose(args) -> dict[str, Any]:
 
 
 def cmd_consumed(args) -> dict[str, Any]:
-    return _request(args.session, "/consumed", {"cursor": args.cursor})
+    """Move the read boundary by hand — and, when you are NOT going to answer, say so.
+
+    `--not-responding` is the only way to read a turn without acknowledging it out loud. It posts
+    `state: "idle"`, which the server reads as "no answer is coming": no acknowledgement cue, and
+    the orb goes straight back to Listening rather than sitting on Thinking for something that
+    will never arrive. See `_will_respond` in server.py.
+
+    Nothing is sent when the flag is absent, so the server applies its own default and the wire
+    stays compatible with every caller that predates this.
+    """
+    payload: dict[str, Any] = {"cursor": args.cursor}
+    if getattr(args, "not_responding", False):
+        payload["state"] = "idle"
+    return _request(args.session, "/consumed", payload)
 
 
 def cmd_cue(args) -> dict[str, Any]:
@@ -3523,11 +3582,11 @@ def build_parser() -> argparse.ArgumentParser:
         "driving it. Persists, so it only has to be passed once.",
     )
 
-    # THE ONE WAITING COMMAND, and its two old names. `watch` and `drain` are registered as real
-    # subparsers rather than argparse `aliases=` because they must keep their own flags: `drain`
-    # still has to PARSE `--waits` and `--max-seconds` (an invocation already in circulation, and
-    # emitted by `_next_action` until this release) even though nothing honours them any more.
-    def _watch_parser(name: str, help_text: str, deprecated: str = ""):
+    # THE ONE WAITING COMMAND. This used to build two subparsers from one factory — the second
+    # name needing its own because it still had to PARSE two retired flags — and the factory is
+    # kept as a function for one reason: it is the seam where a second waiting command would be
+    # added, and a reader arriving to add one meets this comment first. Do not. Spec 007.
+    def _watch_parser(name: str, help_text: str):
         q = sub.add_parser(name, help=help_text)
         q.add_argument("--session", default="dev")
         q.add_argument("--since", type=int, default=-1)
@@ -3543,18 +3602,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="also return turns the wake gate judged were NOT for you (someone "
                             "else in the room). Off by default: those turns still advance the "
                             "cursor, they just stop ending the wait")
-        if deprecated:
-            q.add_argument("--waits", default=None, metavar="5,3,2",
-                           help=f"IGNORED — {deprecated}. Accepted so an invocation already in "
-                                f"circulation does not break; reported back in `ignored`")
-            q.add_argument("--max-seconds", type=float, default=None,
-                           help=f"IGNORED — {deprecated}. Reported back in `ignored`")
         return q
 
     _watch_parser("watch", "block until he has spoken AND stopped speaking")
-    _watch_parser("drain", "deprecated alias for `watch`, kept for one release",
-                 deprecated="the collapsing ladder it configured no longer exists; the wait is "
-                            "gated on the speech signals instead of on a schedule")
 
     y = sub.add_parser("say", help="speak text to the connected client")
     y.add_argument("--session", default="dev")
@@ -3630,6 +3680,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="move the read boundary by hand (watch does this for you)")
     c.add_argument("--session", default="dev")
     c.add_argument("--cursor", type=int, required=True)
+    c.add_argument("--not-responding", action="store_true",
+                   help="you read these and are deliberately NOT answering. Suppresses the "
+                        "acknowledgement cue — a sound that says 'I am on it' is a lie when "
+                        "nothing is coming — and returns the orb to Listening")
 
     t = sub.add_parser("status", help="live server state")
     t.add_argument("--session", default="dev")
@@ -3646,6 +3700,72 @@ def build_parser() -> argparse.ArgumentParser:
     tm.add_argument("--limit", type=int, default=10, help="last N exchanges (0 = all)")
 
     return p
+
+
+def _argv_value(argv: list[str], flag: str) -> str | None:
+    """The value a caller passed for `--flag`, from raw argv, before anything is parsed.
+
+    Used only to respell a retired invocation, which by definition cannot be parsed — so the
+    value has to be read off the tokens themselves. Handles both `--since 5` and `--since=5`, and
+    a negative number as a value (`--since -1`), which is why the lookahead tests for `--` rather
+    than for `-`.
+    """
+    for i, tok in enumerate(argv):
+        if tok == flag and i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+            return argv[i + 1]
+        if tok.startswith(flag + "="):
+            return tok.split("=", 1)[1]
+    return None
+
+
+def _unknown_command(argv: list[str], parser: argparse.ArgumentParser) -> dict[str, Any] | None:
+    """What an unrecognised command gets INSTEAD of argparse's `invalid choice`. None if known.
+
+    Two reasons this is worth intercepting rather than leaving to argparse:
+
+    * **Every other failure in this tool is JSON with a `code` and a `remedy`** (convention 8),
+      and an agent that branches on those fields meets bare prose on stderr for the one failure it
+      is most likely to hit during a rename.
+    * **A retired name can name its successor.** `invalid choice: 'drain'` followed by a list of
+      twenty commands does not say which one replaced it; see RETIRED_COMMANDS for why that
+      distinction is measured in interrupted conversations rather than in keystrokes.
+
+    The command is the first token that is not a flag, so global flags before it (`--human`) do
+    not confuse the lookup.
+    """
+    sub = next((a for a in parser._actions
+                if isinstance(a, argparse._SubParsersAction)), None)
+    if sub is None:
+        return None
+    cmd = next((a for a in argv if not a.startswith("-")), None)
+    if cmd is None or cmd in sub.choices:
+        return None
+    known = sorted(sub.choices)
+    if cmd not in RETIRED_COMMANDS:
+        return {
+            "error": f"unknown command {cmd!r}",
+            "code": "unknown_command",
+            "remedy": "voice-tunnel describe   # the live contract, and every command it offers",
+            "commands": known,
+        }
+    replacement, why = RETIRED_COMMANDS[cmd]
+    session = _argv_value(argv, "--session") or "dev"
+    since = _argv_value(argv, "--since")
+    # THE SAME CALL, RESPELLED. The caller already knows its session and its cursor and has just
+    # been told its command does not exist; making it reassemble the invocation from a list of
+    # names is the round trip this exists to save.
+    remedy = f"voice-tunnel {replacement} --session {session} " + (
+        f"--since {since}" if since is not None else
+        "--since <cursor>   # `voice-tunnel status` -> the LOWER of consumed_cursor and last_turn_id"
+    )
+    return {
+        "error": f"`{cmd}` is not a command. Run `{replacement}` instead — same job, one name.",
+        "code": "unknown_command",
+        "replaced_by": replacement,
+        "why": why,
+        "remedy": remedy,
+        "commands": known,
+    }
 
 
 def main(argv=None) -> int:
@@ -3666,18 +3786,28 @@ def main(argv=None) -> int:
         if flag in argv[1:]:
             argv = [flag] + [a for a in argv if a != flag]
 
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    # BEFORE `parse_args`, because argparse EXITS on an unknown command and takes the chance to
+    # say anything useful with it. A caller holding a retired spelling gets its replacement here.
+    unknown = _unknown_command(argv, parser)
+    if unknown:
+        # `ensure_ascii=False` to match every other payload this tool prints. A remedy is meant to
+        # be READ and then run, and `—` in the middle of the one sentence explaining what to
+        # run instead is friction at the exact moment there is none to spare.
+        print(json.dumps(unknown, ensure_ascii=False), file=sys.stderr)
+        return EXIT_USAGE
+    args = parser.parse_args(argv)
     handlers = {
         "describe": cmd_describe,
         "doctor": cmd_doctor,
         "setup": cmd_setup,
         "config": cmd_config,
         "serve": cmd_serve,
-        # ONE FUNCTION UNDER TWO NAMES. `drain` is the SAME object, not a wrapper, so the two
-        # cannot drift and a test can assert the collapse by identity. `watch` is the command;
-        # a scheduled watchdog invokes it every minute. See ALIASES.
+        # ONE NAME FOR THE ONE WAITING COMMAND. A second key pointing at this same function is
+        # what this spec removed; a caller holding the old spelling is answered by
+        # RETIRED_COMMANDS above, not by a row here. A scheduled watchdog invokes `watch` every
+        # minute, which is why the name that survived is the one already in circulation.
         "watch": cmd_watch,
-        "drain": cmd_watch,
         "say": cmd_say,
         "status": cmd_status,
         "stop": cmd_stop,
