@@ -1274,6 +1274,45 @@ def write_setting(key: str, value: str | None, path: str | None = None) -> dict:
     }
 
 
+# -------------------------------------------- the two tunables that live in cli.py
+#
+# `VOICE_TUNNEL_WATCH_MAX_S` and `VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S` are read by the watch
+# backoff, which lives in `cli.py` beside the constants it caps — and it belongs there, because
+# the ladder, the `describe` copy that publishes it and the arithmetic that generates that copy
+# are one unit. The registry below still has to resolve them, so the resolver DELEGATES rather
+# than reimplementing: it calls the very function the ladder calls, so `config show` cannot
+# publish a ceiling the code does not use. Three hand-written copies of one of these caps already
+# drifted three ways; a fourth living in the settings register would be the worst of them.
+#
+# The import is inside the functions because `cli` imports `config` — a module-scope import here
+# would be a cycle. Nothing calls these at import time (`describe` reads only the `what` strings),
+# so the deferred cost is paid once, by `config show` / `config get`.
+
+
+def watch_backoff_max_s() -> float:
+    """The `watch` backoff ceiling, override applied — READ FROM THE LADDER, not recomputed.
+
+    Reports the REACHABLE cap (`cli.WATCH_BACKOFF_MAX_S`), which is the path a normal quiet watch
+    takes. `VOICE_TUNNEL_WATCH_MAX_S` replaces the unreachable cap as well, and the two constants
+    are the same 540 s today, so one number answers for both — but they are separate constants on
+    purpose, and if they ever diverge this value is the connected one.
+    """
+    from . import cli
+
+    return cli._backoff_cap(reachable=True)
+
+
+def watch_disconnected_max_s() -> float:
+    """The FLAT ceiling used when no turn can arrive at all, override applied.
+
+    Same delegation, same reason: `cli._disconnected_ceiling` is what `_watch_ceiling` calls, so
+    this cannot describe a wait the watch does not take.
+    """
+    from . import cli
+
+    return cli._disconnected_ceiling()
+
+
 # ------------------------------------------------------------ settings registry
 
 
@@ -1338,6 +1377,13 @@ SETTINGS: tuple = (
              f"seconds of silence between sentences (0-{PAUSE_MAX}); the pause IS the "
              f"punctuation in speech. Set it live with `voice-tunnel rate --pause`",
              lambda: str(sentence_pause())),
+    _setting("VOICE_TUNNEL_CONSONANT_BOOST",
+             f"0-1 — how hard to lift consonants so they survive fast speech. Default "
+             f"{CONSONANT_BOOST}, i.e. OFF, and that is the sensible value: the broadband form "
+             f"lifts the model's noise floor along with the consonants, and at 0.6 it sounded "
+             f"'as if it's coming through an old speaker' without recovering the consonants it "
+             f"was aimed at. Leave it at 0 unless you are re-testing that measurement",
+             lambda: str(consonant_boost())),
     _setting("VOICE_TUNNEL_DEESS",
              "0-1 — tame the piercing 's'. Only attenuates frames where the high band dominates, "
              "so vowels and consonant attacks are untouched. 0 disables",
@@ -1373,6 +1419,43 @@ SETTINGS: tuple = (
     _setting("VOICE_TUNNEL_TURN_THREADS", "ONNX intra-op threads for the turn model (4 measured "
              "fastest on this machine; 1 and 8 are both slower)",
              lambda: str(turn_threads())),
+    # BARGE-IN WAS READ AND UNREGISTERED TOO, and the pair is worth stating rather than counting:
+    # a switch nobody can find and a threshold nobody can find are not one defect twice, they are
+    # a feature whose entire tuning surface was invisible. `barge_in_enabled` and
+    # `barge_in_threshold` have read the environment since the voiceprint gate landed.
+    _setting("VOICE_TUNNEL_BARGE_IN",
+             "1 | 0 — let his voice stop a reply mid-sentence. Default 1, and 1 is almost always "
+             "right: a tunnel you cannot interrupt makes you wait out an answer to the wrong "
+             "question. Set 0 only when a reply being cut short is worse than being talked over",
+             lambda: "1" if barge_in_enabled() else "0"),
+    _setting("VOICE_TUNNEL_BARGE_IN_THRESHOLD",
+             f"0-1 — the voiceprint cosine floor for 'this is a person, and NOT the agent's own "
+             f"voice coming back through the speakers'. Default {BARGE_IN_THRESHOLD}, measured: "
+             f"agent echo scores 0.000, other speakers 0.035-0.096, and his own worst one-second "
+             f"window 0.20. Raise it toward 0.2 if the room interrupts the agent; lower it if "
+             f"real interruptions are being missed. NOT the 0.50 attention threshold — that one "
+             f"decides whether to answer, this one decides whether to stop talking",
+             lambda: str(barge_in_threshold())),
+    # THE TWO WATCH CEILINGS. Read by `cli._backoff_cap` and `cli._disconnected_ceiling`, and
+    # unregistered until now — which is how VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S came to be
+    # hand-written into the owner's `.env` with an explanatory comment: editing the file was the
+    # only way to set a value `config set` called an unknown setting. The resolvers delegate to
+    # cli rather than recomputing; see `watch_backoff_max_s` above for why that is load-bearing.
+    _setting("VOICE_TUNNEL_WATCH_MAX_S",
+             "seconds — the ceiling the `watch` backoff ladder tops out at (30s doubling: "
+             "30 -> 60 -> 2min -> 4min -> 8min -> this). Default 540, i.e. 9min, which is the "
+             "largest value that still fits inside a 10-minute harness tool timeout and so keeps "
+             "the wait in the FOREGROUND. It replaces the unreachable cap as well; the value "
+             "shown here is the reachable one, the path a normal quiet watch takes",
+             lambda: str(watch_backoff_max_s())),
+    _setting("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S",
+             "seconds — the FLAT wait used when no turn can arrive at all: no page open, or the "
+             "orb switched off and the microphone released. No ladder, because there is no "
+             "evidence to accumulate. Default 28800, i.e. 8h, measured against a six-hour absence "
+             "that otherwise cost ~35 guaranteed-empty wakes. Lower it to 540 to match "
+             "VOICE_TUNNEL_WATCH_MAX_S when your harness pokes an idle agent on a timer — a "
+             "detached watch then costs more turns than a blocking one",
+             lambda: str(watch_disconnected_max_s())),
     _setting("VOICE_TUNNEL_CUES", "1 | 0 — short non-speech cues so a pause is audible",
              lambda: "1" if cues_enabled() else "0"),
     _setting("VOICE_TUNNEL_VERBOSE",

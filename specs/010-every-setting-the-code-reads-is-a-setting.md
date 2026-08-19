@@ -1,7 +1,7 @@
 ---
 id: "010"
 title: Every setting the code reads is a setting the CLI knows about
-status: in_progress
+status: complete
 blocked_by: []
 blocks: []
 ---
@@ -54,10 +54,10 @@ publish a setting that cannot be honoured — the exact inverse of this spec's g
 a documented knob that silently does nothing is less discoverable-as-broken than an undocumented one.
 
 **`VOICE_TUNNEL_HOME` is read, unregistered, and correctly so.** It selects where the settings file
-itself lives, so a value stored in that file could never be read in time to matter. `config set`
-refuses it by construction and `describe` already documents it under `env_process_only`. It is a
-second legitimate non-instance the metaspec did not anticipate, which means the guard needs **two**
-exclusion routes, not the one TC1 contemplated.
+itself lives, so a value stored in that file could never be read in time to matter, and `describe`
+already documents it under `env_process_only`. It is a second legitimate non-instance the metaspec did
+not anticipate, which means the guard needs **two** exclusion routes, not the one TC1 contemplated.
+(`describe` also claims `config set` refuses this key. It does not — see TC4.)
 
 **Non-literal reads exist and are legitimate.** Eight call sites read the environment through a
 variable rather than a literal — the `_env(name)` helper itself, `config get`/`config set` resolving
@@ -121,9 +121,18 @@ registry work; a guard that fails on them would be disabled within a day (TC3).
 - **TC3**: The guard walks source, so it must tolerate the legitimate ways a name can be constructed
   without producing false failures that get it disabled: a **non-literal** read is not a failure, and a
   name appearing only in **prose, a docstring, a comment or a dict key** is not a read.
-- **TC4**: **`VOICE_TUNNEL_HOME` must stay excluded** and must remain refused by `config set`. It is
-  documented in `describe.env_process_only`; that block is the declaration, and the guard reads it
-  rather than duplicating it.
+- **TC4**: **`VOICE_TUNNEL_HOME` must stay excluded.** It is documented in `describe.env_process_only`;
+  that block is the declaration, and the guard reads it rather than duplicating it.
+
+  ⚠ **This constraint originally read "and must remain refused by `config set`". That was measured and
+  is false.** `config set VOICE_TUNNEL_HOME <path>` succeeds today and writes the key into the settings
+  file, where it can never be honoured — the key matches the writable-namespace pattern and nothing
+  else checks it. `describe`'s own note on `config get VOICE_TUNNEL_HOME` states that "`config set` will
+  refuse it", so **the published contract asserts a refusal the tool does not perform.** This is
+  pre-existing and untouched by this spec. It is left unfixed here deliberately: adding the refusal is a
+  behaviour change, and this spec's NFR1 is that behaviour does not change. It is the same *class* of
+  defect this spec closes — a `describe` that cannot be trusted — pointing the other way, and it is
+  flagged to the strategist rather than silently absorbed.
 - **TC5**: The walk covers **`voice_tunnel/` only**. `tests/` deliberately sets variables the code does
   not read (that is how the retired bare-wake opt-in is proven inert), and `scripts/` are developer
   harnesses, not the running tool. Widening the walk to either would make the guard fail on correct code.
@@ -140,66 +149,66 @@ registry work; a guard that fails on them would be disabled within a day (TC3).
 
 ## Implementation Tasks
 
-- [ ] Register `VOICE_TUNNEL_BARGE_IN`, `VOICE_TUNNEL_BARGE_IN_THRESHOLD`, `VOICE_TUNNEL_CONSONANT_BOOST`,
+- [x] Register `VOICE_TUNNEL_BARGE_IN`, `VOICE_TUNNEL_BARGE_IN_THRESHOLD`, `VOICE_TUNNEL_CONSONANT_BOOST`,
       `VOICE_TUNNEL_WATCH_MAX_S`, `VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S` in `config.SETTINGS`, each with a
       live resolver and a `what` string in the register's existing voice.
-- [ ] Give the two `cli.py` watch ceilings resolvers the registry can call, without changing how the
+- [x] Give the two `cli.py` watch ceilings resolvers the registry can call, without changing how the
       backoff reads them.
-- [ ] Document the five in `.env.example` alongside their neighbours.
-- [ ] Add the source-walking guard as a pytest module, with the four-bucket classification of FR5.
-- [ ] Give the guard an exclusion table carrying one reason per entry.
-- [ ] Add the negative control: the guard fires on a constructed unregistered read, asserted in the suite.
-- [ ] Add the false-positive controls: a docstring mention and a non-literal read must not fire it.
-- [ ] Run the full suite.
+- [x] Document the five in `.env.example` alongside their neighbours.
+- [x] Add the source-walking guard as a pytest module, with the four-bucket classification of FR5.
+- [x] Give the guard an exclusion table carrying one reason per entry.
+- [x] Add the negative control: the guard fires on a constructed unregistered read, asserted in the suite.
+- [x] Add the false-positive controls: a docstring mention and a non-literal read must not fire it.
+- [x] Run the full suite.
 
 ## Acceptance Criteria
 
 ### The five settings are reachable through the CLI
 
-- [ ] **AC1** (`integration`): `config get <key>` returns a value — not "unknown setting" — for each of the
+- [x] **AC1** (`integration`): `config get <key>` returns a value — not "unknown setting" — for each of the
       five. Driven through the CLI entry point in-process, not by asserting on the registry tuple.
-- [ ] **AC2** (`unit`): `describe`'s `env` block lists all five, since it is generated from `SETTINGS`.
-- [ ] **AC3** (`unit`): `config show` includes all five with a `source` of `default` in a hermetic
+- [x] **AC2** (`unit`): `describe`'s `env` block lists all five, since it is generated from `SETTINGS`.
+- [x] **AC3** (`unit`): `config show` includes all five with a `source` of `default` in a hermetic
       environment.
-- [ ] **AC4** (`unit`): `.env.example` documents all five — the existing drift test covers this and must
+- [x] **AC4** (`unit`): `.env.example` documents all five — the existing drift test covers this and must
       pass unmodified.
-- [ ] **AC5** (`integration`): `config set` then `config get` round-trips each of the five through a
+- [x] **AC5** (`integration`): `config set` then `config get` round-trips each of the five through a
       temp settings file.
 
 ### Behaviour is unchanged (NFR1, TC2)
 
-- [ ] **AC6** (`unit`): with no environment set, each of the five resolves to its module default —
+- [x] **AC6** (`unit`): with no environment set, each of the five resolves to its module default —
       `BARGE_IN`, `BARGE_IN_THRESHOLD`, `CONSONANT_BOOST`, `WATCH_BACKOFF_MAX_S`, `WATCH_DISCONNECTED_MAX_S`.
-- [ ] **AC7** (`unit`): with `VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S=540` in the environment — the live
+- [x] **AC7** (`unit`): with `VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S=540` in the environment — the live
       value — the disconnected ceiling resolves to `540.0`, and the registry's resolver reports the same
       number the backoff actually uses. *One number, two readers, asserted equal: the failure this guards
       against is a registry that describes a value the code does not use.*
-- [ ] **AC8** (`unit`): the existing `tests/test_watch_backoff.py` cases that set
+- [x] **AC8** (`unit`): the existing `tests/test_watch_backoff.py` cases that set
       `VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S` (including the "not a number" case) still pass unmodified.
 
 ### The guard (FR2, FR3, FR5)
 
-- [ ] **AC9** (`unit`): run against `voice_tunnel/`, the guard reports **zero** unclassified reads.
-- [ ] **AC10** (`unit`): the guard's failure message for an unclassified read contains the variable name,
+- [x] **AC9** (`unit`): run against `voice_tunnel/`, the guard reports **zero** unclassified reads.
+- [x] **AC10** (`unit`): the guard's failure message for an unclassified read contains the variable name,
       the file path and the line number.
-- [ ] **AC11** (`unit`): `VOICE_TUNNEL_PIPER_LENGTH_SCALE` and `VOICE_TUNNEL_HOME` are classified as
+- [x] **AC11** (`unit`): `VOICE_TUNNEL_PIPER_LENGTH_SCALE` and `VOICE_TUNNEL_HOME` are classified as
       *excluded* and *process-only* respectively — asserted by name, so deleting a reason silently is a
       test failure rather than a quiet pass.
 
 ### The guard has been seen to fail (FR4)
 
-- [ ] **AC12** (`unit`, **negative control**): pointed at a constructed fixture module that reads
+- [x] **AC12** (`unit`, **negative control**): pointed at a constructed fixture module that reads
       `VOICE_TUNNEL_NOT_A_REAL_SETTING`, the guard reports exactly that name with its file and line. This
       runs on every suite run. *Without it, AC9's zero is indistinguishable from a walker that parses
       nothing.*
-- [ ] **AC13** (`unit`, **false-positive control**): pointed at a fixture whose only occurrences of an
+- [x] **AC13** (`unit`, **false-positive control**): pointed at a fixture whose only occurrences of an
       unregistered name are in a docstring, a comment and a dict key, the guard reports nothing.
-- [ ] **AC14** (`unit`, **false-positive control**): pointed at a fixture containing a non-literal read
+- [x] **AC14** (`unit`, **false-positive control**): pointed at a fixture containing a non-literal read
       (`_env(name)`), the guard reports nothing.
 
 ### Suite
 
-- [ ] **AC15** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped.
+- [x] **AC15** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped.
 
 ## Testing Approach
 
@@ -242,10 +251,48 @@ registry work; a guard that fails on them would be disabled within a day (TC3).
 - Project node: `Voice Tunnel` — the roadmap row this closes, and the Kokoro fix that surfaced the class.
 - `voice_tunnel/config.py` — `SETTINGS` and the `.env.example` drift test it already feeds.
 
-## Verified state
+## Verified state (2026-08-19)
 
-*Filled in by the implementer after verification, per the completion rule. Empty at the refined-spec
-gate: nothing here has been built yet.*
+Recorded by the team lead after **independent** verification. The checks below were re-run by the lead,
+not taken from a sub-agent's self-report.
 
-**Baseline before any change (2026-08-19):** `python -m pytest tests/` — 575 passed, 2 skipped
-(both platform-conventional), exit 0.
+**Suite.** Baseline before any change: 577 collected, 575 passed, 2 skipped (both platform-conventional).
+After: **618 collected, 616 passed, 2 skipped, 0 failed.** No existing test was modified, weakened or
+skipped — `tests/test_watch_backoff.py` in particular is byte-identical and all of its cases pass,
+including the unparseable-value one (AC8).
+
+**The guard was verified by making it fail on the real package, not only on a fixture.** An
+unregistered `os.environ.get("VOICE_TUNNEL_LEAD_MUTANT_CHECK")` was planted in `voice_tunnel/timing.py`,
+outside either slice's file set. The guard failed with:
+
+```
+The code reads VOICE_TUNNEL_* variables the CLI does not declare.
+  VOICE_TUNNEL_LEAD_MUTANT_CHECK  read at voice_tunnel/timing.py:183
+Fix exactly one of these for each name:
+  * register it in `config.SETTINGS` with a `what` and a live resolver — the usual answer;
+  * if it decides WHERE the settings file lives, declare it in `cli.DESCRIBE['env_process_only']`;
+  * if it is deliberately retired, add it to EXCLUDED in tests/test_settings_registry.py WITH ITS REASON.
+```
+
+The mutation was reverted and the file's checksum restored to its pre-mutation value. **This is what
+makes AC9's zero a measurement rather than an absence** — the guard has now been seen to fire on the
+real tree, at a call site neither slice authored, and to name the variable, the file and the line
+(AC3/AC10) with a remedy that does not require an investigation.
+
+**Registry membership, read off the live registry.** 31 settings before, **36 after**. The five are
+registered; `VOICE_TUNNEL_WAKE_BARE`, `VOICE_TUNNEL_HOME` and `VOICE_TUNNEL_PIPER_LENGTH_SCALE` are not.
+`describe.env` carries all 36 and `describe.env_process_only` carries `VOICE_TUNNEL_HOME` alone.
+
+**TC2 verified on the running configuration, not a fixture.** `config show` against JJ's live `.env`
+reports `VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S = 540.0`, `source: file` — the value the currently
+running server was started with, unchanged. The other four read their module defaults with
+`source: default`. The registry's resolver and the backoff's own `_backoff_ceiling` are asserted equal
+**to each other** rather than each against a literal, so a future edit that moves one and not the other
+fails rather than drifts.
+
+**A second, independent negative arm exists at the resolver level.** The delegating resolvers were
+temporarily replaced with hand-written copies that ignore the override — the exact drift the design
+prevents — and five tests failed with their intended messages before the mutation was reverted.
+
+**Not fixed, deliberately, and flagged up:** `config set VOICE_TUNNEL_HOME` succeeds where `describe`
+says it is refused. See TC4.

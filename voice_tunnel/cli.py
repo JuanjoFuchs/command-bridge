@@ -195,6 +195,26 @@ def _disconnected_ceiling() -> float:
         return WATCH_DISCONNECTED_MAX_S
 
 
+def _backoff_cap(reachable: bool = True) -> float:
+    """The number the ladder tops out at, with `VOICE_TUNNEL_WATCH_MAX_S` applied. One reader.
+
+    EXTRACTED SO THE SETTINGS REGISTRY CAN REPORT WHAT THE BACKOFF ACTUALLY USES. `config.SETTINGS`
+    has to resolve `VOICE_TUNNEL_WATCH_MAX_S` to a live value, and the only safe way to do that is
+    to call the function the ladder itself calls. Three hand-written copies of this one cap already
+    drifted three different ways (see `_human_seconds`), and a registry that publishes a
+    *recomputed* number would have been the fourth — worse than the others, because `config show`
+    is the document people check when they suspect the code of doing something else.
+
+    The override replaces BOTH caps, reachable and unreachable, which is why it takes the flag
+    rather than reading a constant: the fallback differs, the override does not.
+    """
+    cap = WATCH_BACKOFF_MAX_S if reachable else WATCH_BACKOFF_UNREACHABLE_MAX_S
+    try:
+        return float(os.environ.get("VOICE_TUNNEL_WATCH_MAX_S") or cap)
+    except ValueError:
+        return cap
+
+
 def _backoff_ceiling(base: float, streak: int, reachable: bool) -> float:
     """The wait an empty-streak of `streak` earns. `min(cap, base * 2**streak)`, and nothing else.
 
@@ -202,12 +222,7 @@ def _backoff_ceiling(base: float, streak: int, reachable: bool) -> float:
     called while DESCRIBE is being built — the document has to be generated from the arithmetic,
     not written alongside it.
     """
-    cap = WATCH_BACKOFF_MAX_S if reachable else WATCH_BACKOFF_UNREACHABLE_MAX_S
-    try:
-        cap = float(os.environ.get("VOICE_TUNNEL_WATCH_MAX_S") or cap)
-    except ValueError:
-        pass
-    return min(cap, base * (2 ** min(streak, 12)))
+    return min(_backoff_cap(reachable), base * (2 ** min(streak, 12)))
 
 
 def _backoff_ladder(base: float = WATCH_BASE_S, reachable: bool = True) -> list[float]:
