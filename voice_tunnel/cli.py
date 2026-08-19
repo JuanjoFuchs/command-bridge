@@ -760,7 +760,15 @@ DESCRIBE: dict[str, Any] = {
         "timing": {
             "args": {"--session": "session id", "--limit": "last N exchanges (default 10, 0=all)"},
             "returns": {"exchanges": "[{total_s, steps, slowest}]", "by_step": "aggregate",
-                        "worst_step": "str"},
+                        "worst_step": "str",
+                        "normalized": "str — on each `spoken` event, beside its `clip` id: THE "
+                                      "STRING THE ENGINE WAS ACTUALLY HANDED for that clip, "
+                                      "after speech normalisation. It is recorded rather than "
+                                      "re-derived because a clip that has already gone out "
+                                      "cannot be reconstructed once the rules change, so a wrong "
+                                      "reading would be unfalsifiable. To ask the same question "
+                                      "BEFORE speaking, and with no server, use "
+                                      "`voice-tunnel pronounce`."},
             "notes": "Where the time went, read from disk — works with no server running. "
                      "`consumed -> say_requested` is YOU thinking; every other step is the tool. "
                      "Check this before believing any hypothesis about slowness: the network was "
@@ -931,6 +939,27 @@ DESCRIBE: dict[str, Any] = {
         },
         "voices": {"args": [], "returns": "installed piper voices for `say --voice`",
                    "notes": "Lists what is ON DISK. To GET one, `voice-tunnel download voice`."},
+        "pronounce": {
+            "args": {"text": "positional; the text to inspect. Quote it"},
+            "returns": {
+                "text": "str — what you passed in, unchanged",
+                "spoken": "str — WHAT THE ENGINE IS ACTUALLY HANDED, after speech normalisation. "
+                          "Not a preview computed a second way: `say` runs the same function, so "
+                          "this is the string, not an impression of it.",
+            },
+            "notes": "WHY DID IT SAY THAT. Text is normalised for speech before synthesis, "
+                     "because the engines DROP the dot in a technical term rather than pausing "
+                     "on it — `0.2.6` was measured coming back as \"026\" and `1.0.0` as \"one "
+                     "hundred\", which is a term arriving WRONG with nothing in the sound to say "
+                     "anything was lost. So a dotted number is voiced with \"point\" (`0.2.6` -> "
+                     "\"zero point two point six\") and a dotted identifier, extension or domain "
+                     "with \"dot\" (`config.py` -> \"config dot py\"). An ellipsis, a "
+                     "sentence-final period and an abbreviation like `e.g.` are left alone — "
+                     "over-normalising is silent, so the rules are narrow by design. PURE and "
+                     "SERVER-FREE: this is the half you can run while a live session is going, "
+                     "where `timing` (see its `normalized` field) is the half that says what a "
+                     "clip already spoken was handed.",
+        },
         "download": {
             "args": {"what": "voice | kokoro | asr | voiceprint | turn (omit to list)",
                      "name": "voice name (default en_GB-alan-medium) or ASR model "
@@ -2500,6 +2529,24 @@ def cmd_voices(_args) -> dict[str, Any]:
     return {"voices": tts.list_voices(), "backend": tts.available()}
 
 
+def cmd_pronounce(args) -> dict[str, Any]:
+    """What the engine will ACTUALLY be handed for a given piece of text (spec 008, FR4a).
+
+    The ahead-of-time half of inspectability, and the one you reach for when the question is
+    "why did it say that". Pure and server-free on purpose: the per-clip record in the timing log
+    can only be read back through a running server, and there are sessions where starting one is
+    exactly what you must not do.
+
+    **It calls the same function synthesis calls.** Printing a second, parallel rendering of the
+    rules would be worse than printing nothing, because it would be believed — an inspector that
+    can disagree with the thing it inspects is a way to be confidently wrong about a bug you are
+    already confused by.
+    """
+    from . import speech
+
+    return {"text": args.text, "spoken": speech.normalize_for_speech(args.text)}
+
+
 def cmd_download(args) -> dict[str, Any]:
     """Fetch a model. The command that makes a fresh install usable at all.
 
@@ -3522,6 +3569,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("voices", help="list installed piper voices")
 
+    pn = sub.add_parser("pronounce",
+                        help="what the engine will actually be handed for this text (no server)")
+    pn.add_argument("text", help="the text to inspect; quote it")
+
     # Built from the vocabulary rather than typed out. `--help` said three cues and `describe`
     # documented four, and an agent has no way to know which one is stale.
     from . import cues as _cues
@@ -3632,6 +3683,7 @@ def main(argv=None) -> int:
         "stop": cmd_stop,
         "turns": cmd_turns,
         "voices": cmd_voices,
+        "pronounce": cmd_pronounce,
         "consumed": cmd_consumed,
         "voiceprint": cmd_voiceprint,
         "cue": cmd_cue,

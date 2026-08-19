@@ -27,7 +27,7 @@ import tempfile
 import threading
 import wave
 
-from . import config
+from . import config, speech
 
 
 class TTSError(RuntimeError):
@@ -253,6 +253,13 @@ class _ResidentVoice:
         Sentence silence is inserted BETWEEN chunks and never after the last one, matching
         `piper --sentence-silence` exactly — piper yields one audio chunk per sentence, so this
         is the same seam its CLI writes into, not an approximation of it.
+
+        **The text is handed over one `speech.segments` piece at a time** (spec 008, FR3), so a
+        clause break gets a real gap of its own instead of the 0 ms every comma measured. The
+        gap is a MULTIPLE of the same `pause` a sentence gets, never an independent number, which
+        is what guarantees a comma can never outlast the full stop it sits inside. Comma-free
+        text produces exactly one piece per sentence, so it is byte-for-byte what this did
+        before.
         """
         from piper import SynthesisConfig
 
@@ -272,10 +279,13 @@ class _ResidentVoice:
             # the first word of every sentence after the first inaudible on a sleeping sink.
             silence = quiet(int(sample_rate * pause))
             parts = []
-            for i, chunk in enumerate(voice.synthesize(text, syn)):
-                if i:
-                    parts.append(silence)
-                parts.append(chunk.audio_int16_bytes)
+            for piece, gap in speech.segments(text) or [(text, 0.0)]:
+                for i, chunk in enumerate(voice.synthesize(piece, syn)):
+                    if i:
+                        parts.append(silence)
+                    parts.append(chunk.audio_int16_bytes)
+                if gap:
+                    parts.append(quiet(int(sample_rate * pause * gap)))
         if not parts:
             raise TTSError("piper produced no audio")
         return b"".join(parts), sample_rate
@@ -353,7 +363,9 @@ class _ResidentKokoro:
 
         Sentences are synthesized separately and joined with silence, matching what the piper
         backend does, because Kokoro returns one array for the whole input and would otherwise run
-        every sentence together at whatever pace the model chose.
+        every sentence together at whatever pace the model chose. **Clause breaks are pieces too**
+        (spec 008, FR3) — a comma measured 0 ms of silence against a sentence's 990 ms, so a reply
+        only ever breathed where a full stop happened to fall. See `speech.segments`.
 
         **The speed is clamped to Kokoro's own ceiling here**, at the boundary, for the same
         reason `config.length_scale_for` contains piper's inverted unit at its boundary: the limit
@@ -363,8 +375,6 @@ class _ResidentKokoro:
         recorded on the instance, not swallowed: `available()` reports it so `status` says the
         voice is not running at the number the settings file shows.
         """
-        import re
-
         with self._lock:
             k = self._load()
             if k is None:
@@ -372,22 +382,26 @@ class _ResidentKokoro:
             asked, speed = speed, config.kokoro_speed(speed)
             self.speed_clamped_from = asked if speed != asked else None
             lang = config.kokoro_lang_for(voice)
-            # Split on sentence enders, keeping the punctuation — Kokoro's prosody depends on it.
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+            # Split on sentence enders AND clause breaks, keeping the punctuation on the piece
+            # before the gap — Kokoro's prosody depends on it, and a fragment stripped of its
+            # comma is read with a falling, finished tone. The split moved into `speech.segments`
+            # so both resident backends pace from one definition.
             parts: list[bytes] = []
             rate = config.KOKORO_SR
-            for i, sentence in enumerate(sentences or [text]):
+            for piece, gap in speech.segments(text) or [(text, 0.0)]:
                 try:
-                    samples, rate = k.create(sentence, voice=voice, speed=speed, lang=lang)
+                    samples, rate = k.create(piece, voice=voice, speed=speed, lang=lang)
                 except Exception as exc:
-                    raise TTSError(f"kokoro failed on {sentence[:40]!r}: {exc}") from exc
-                if i:
+                    raise TTSError(f"kokoro failed on {piece[:40]!r}: {exc}") from exc
+                parts.append(_float32_to_pcm16(_articulate(samples, rate)))
+                if gap:
                     # SAMPLES first — `quiet` does the x2 for 16-bit. Computing a BYTE count
                     # directly lands odd for some pauses and shifts every later sample by one
                     # byte, decoding the rest of the clip as broadband noise. Heard on the piper
                     # path, 2026-08-06.
-                    parts.append(quiet(int(rate * pause)))
-                parts.append(_float32_to_pcm16(_articulate(samples, rate)))
+                    # `gap` is 1.0 at a full stop and CLAUSE_PAUSE_RATIO at a comma, so the two
+                    # can never come out equal and the reply never ends on a trailing gap.
+                    parts.append(quiet(int(rate * pause * gap)))
         if not parts:
             raise TTSError("kokoro produced no audio")
         return b"".join(parts), rate
@@ -703,9 +717,19 @@ def synthesize(
     `speed` is a MULTIPLE OF NATIVE PACE: higher is faster. It is deliberately not piper's
     `length_scale`, which is inverted — that inversion leaked out once already and produced half
     speed when the owner asked for double.
+
+    **NORMALISATION HAPPENS HERE, ABOVE THE BACKEND DISPATCH** (spec 008, FR1/FR5). This is the
+    one place every backend goes through, and both installed engines were measured DROPPING the
+    dot in a technical term — `0.2.6` came back as "026" from piper and from kokoro alike — so
+    the fix belongs on the path rather than in one engine or, worse, in every caller. Asking each
+    agent to spell out its own version numbers is the same class of rule spec 007 exists to stop
+    relying on. `voice-tunnel pronounce` calls the same function, so what it prints is what the
+    engine is handed.
     """
     if not text or not text.strip():
         raise TTSError("nothing to speak")
+    # After the emptiness check, so "nothing to speak" still describes the caller's own input.
+    text = speech.normalize_for_speech(text)
     backend = (backend or config.tts_backend()).lower()
     # `sr`, not `rate`: the returned SAMPLE rate would shadow a speech-rate name — a trap that
     # would silently ignore the caller's speed the moment anyone reordered these lines.

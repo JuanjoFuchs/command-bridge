@@ -25,7 +25,7 @@ import numpy as np
 from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
-from . import config, cues, security, store, timing, tts, turndetect, voiceprint
+from . import config, cues, security, speech, store, timing, tts, turndetect, voiceprint
 from .wake import WakeGate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -624,6 +624,28 @@ async def handle_say(request: web.Request) -> web.Response:
     return web.json_response({**result, **unread})
 
 
+def record_spoken(session: str, clip_id: str, text: str, held_for: float) -> str:
+    """Stamp the clip AND the string the engine was actually handed (spec 008, FR4b).
+
+    **A transform nobody can inspect is a transform nobody can debug**, and a clip that has
+    already gone out cannot be re-derived from the reply text alone once the rules change. So the
+    normalised form is written down beside the clip id at the moment it is spoken, which is the
+    only moment both facts exist together.
+
+    This is the AFTER-THE-FACT half. It can only be read back through a session that ran, so it
+    is deliberately not the whole answer: `voice-tunnel pronounce` is the ahead-of-time half and
+    needs no server at all. Both call `speech.normalize_for_speech`, so neither can drift from
+    what synthesis actually used.
+
+    A separate function rather than an inline `timing.stamp` because it is the one part of FR4b
+    that can be verified without a running server — call it, then read the timing log.
+    """
+    normalized = speech.normalize_for_speech(text)
+    timing.stamp(session, "spoken", clip=clip_id, held_for=round(held_for, 1),
+                 normalized=normalized)
+    return normalized
+
+
 async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, Any]:
     """Synthesize, hold if the speaker is mid-sentence, then push the audio.
 
@@ -718,7 +740,7 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
         timing.stamp(state.session, "undelivered_queued", clip=clip_id,
                      depth=len(state.undelivered),
                      why="channel_closed" if state.clients else "no_client")
-    timing.stamp(state.session, "spoken", clip=clip_id, held_for=round(waited, 1))
+    record_spoken(state.session, clip_id, text, waited)
     return {
         "queued": True,
         "id": clip_id,

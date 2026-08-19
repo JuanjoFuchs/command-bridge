@@ -52,9 +52,28 @@ caught: `config` does not load the settings file on import, only the CLI entry p
 | `Open config.py.` | **none** | `Open Config Py.` |
 | `The version is ready. It is ready now.` | **990 ms** | — |
 
-**There is no silence to remove.** A real sentence boundary produces a 990 ms gap; a dotted term produces
-none at all. What actually happens is that the dot is **dropped**, and the digits run together into a
-different number — `0.2.6` is spoken as "zero two six" and `1.0.0` as "one hundred".
+**For a dot with no whitespace after it, there is no silence to remove.** A real sentence boundary
+produces a ~960 ms gap; a dotted term produces none at all. What actually happens is that the dot is
+**dropped**, and the digits run together into a different number — `0.2.6` is spoken as "zero two six"
+and `1.0.0` as "one hundred".
+
+> ⚠ **CORRECTION, 2026-08-19, and it is a correction to this section rather than to the metaspec.**
+> The paragraph above originally read *"There is no silence to remove"*, full stop. **That
+> generalisation is false and was caught by the acceptance slice.** Every case measured here has a dot
+> with **no following whitespace** — `0.2.6`, `1.0.0`, `config.py.` — and for those it holds. **A dot
+> FOLLOWED BY WHITESPACE is a different mechanism entirely:** the backend splits on `(?<=[.!?])\s+` and
+> joins the pieces with a full `sentence_pause` of digital zeros, so `Wait... really?` carries **1020 ms**
+> of internal silence and `Use a short clip, e.g. this one.` carried **950 ms** before any change here.
+>
+> **So JJ's original diagnosis was right about a class this section declared nonexistent.** "That is
+> considered like an end of the sentence, so it's spoken as a wait, a silence" is exactly what happens
+> to `e.g. ` and to an ellipsis followed by a space. **Both mechanisms are real: elision for a dot with
+> no space, a full sentence pause for a dot with one.** This spec fixes the first. The second is
+> abbreviation-aware sentence splitting and is **not** fixed here — see the findings below.
+>
+> *The error is instructive and is the reason it is recorded rather than edited away: the measurement
+> only covered the shapes the metaspec named, and "no silence anywhere" was inferred from "no silence in
+> these six clips." A clean result was generalised past its population.*
 
 **This is worse than the metaspec described, not better.** A pause is a term arriving awkwardly. An
 elision is a term arriving **wrong**, with nothing in the sound to signal that anything was lost. And it
@@ -166,60 +185,60 @@ sentence yields **0 ms of measurable silence**. FR3 is confirmed as an open gap 
 
 ## Implementation Tasks
 
-- [ ] Add the speech-normalisation stage between the caller's text and the engine, on the single path
+- [x] Add the speech-normalisation stage between the caller's text and the engine, on the single path
       every backend goes through.
-- [ ] Implement the FR2 classes, each with its counter-case in mind.
-- [ ] Implement FR3's phrase-level pacing.
-- [ ] Record the normalised string per clip and expose it through the CLI (FR4); update `describe` in the
+- [x] Implement the FR2 classes, each with its counter-case in mind.
+- [x] Implement FR3's phrase-level pacing.
+- [x] Record the normalised string per clip and expose it through the CLI (FR4); update `describe` in the
       same change, per the repo's contract rule.
-- [ ] Add the round-trip acceptance test, with its negative arm.
-- [ ] Add the over-normalisation counter-cases (TC2).
-- [ ] Add the pacing measurement with its own negative arm.
-- [ ] Run the full suite.
+- [x] Add the round-trip acceptance test, with its negative arm.
+- [x] Add the over-normalisation counter-cases (TC2).
+- [x] Add the pacing measurement with its own negative arm.
+- [x] Run the full suite.
 
 ## Acceptance Criteria
 
 ### The transform itself
 
-- [ ] **AC1** (`unit`): each FR2 class normalises as its table row says, asserted on the **string**, with
+- [x] **AC1** (`unit`): each FR2 class normalises as its table row says, asserted on the **string**, with
       no audio involved.
-- [ ] **AC2** (`unit`, **counter-cases for TC2**): the transform does **not** fire on — an ellipsis, a
+- [x] **AC2** (`unit`, **counter-cases for TC2**): the transform does **not** fire on — an ellipsis, a
       sentence-final period, a bare decimal already inside prose that reads correctly today, an
       abbreviation like `e.g.`, and a number with no dot. Each asserted as *unchanged*.
       *Rationale: over-normalising is silent, so the only way it surfaces is a test that fails when it
       happens.*
-- [ ] **AC3** (`unit`): normalisation is applied on the shared synthesis path, so it reaches every
+- [x] **AC3** (`unit`): normalisation is applied on the shared synthesis path, so it reaches every
       backend (FR5) — asserted by driving the path with each backend selected, not by reading the source.
 
 ### It is audible, judged by the recognizer and not by the agent
 
-- [ ] **AC4** (`integration`, **round trip**): synthesising `The version is 0.2.6 and it is ready.` and
+- [x] **AC4** (`integration`, **round trip**): synthesising `The version is 0.2.6 and it is ready.` and
       transcribing the result yields text containing `0.2.6`. **This test fails today**, returning `026`.
-- [ ] **AC5** (`integration`, **negative arm**): the same round trip on the *pre-normalisation* string
+- [x] **AC5** (`integration`, **negative arm**): the same round trip on the *pre-normalisation* string
       still yields `026`. *Rationale: AC4 passing proves nothing unless the untransformed input is shown
       to fail through the identical path. The two differ only by the transform.*
-- [ ] **AC6** (`integration`): a dotted identifier and a file extension round-trip to text containing the
+- [x] **AC6** (`integration`): a dotted identifier and a file extension round-trip to text containing the
       dot.
-- [ ] **AC7** (`integration`): run at the **live speed (1.2)** read from the settings file, not at 1.0
+- [x] **AC7** (`integration`): run at the **live speed (1.2)** read from the settings file, not at 1.0
       and not at the module default (TC3).
 
 ### Pacing (FR3)
 
-- [ ] **AC8** (`integration`): a comma inside a sentence produces a measurable silence, where today it
+- [x] **AC8** (`integration`): a comma inside a sentence produces a measurable silence, where today it
       produces **0 ms**.
-- [ ] **AC9** (`integration`, **negative arm**): a sentence boundary in the same clip produces a
+- [x] **AC9** (`integration`, **negative arm**): a sentence boundary in the same clip produces a
       **longer** silence than the comma. *Rationale: a change that simply lengthened every gap would pass
       AC8. This is the arm that separates "pacing" from "slower".*
-- [ ] **AC10** (`integration`, **negative arm**): a clip with no comma and no sentence break gains **no**
+- [x] **AC10** (`integration`, **negative arm**): a clip with no comma and no sentence break gains **no**
       new internal silence. *Rationale: without this, "add a pause everywhere" passes both criteria above.*
 
 ### Inspectability (FR4)
 
-- [ ] **AC11** (`integration`, FR4a): the CLI command prints the normalised form of a given string,
+- [x] **AC11** (`integration`, FR4a): the CLI command prints the normalised form of a given string,
       driven through the CLI entry point. Exit 0, and the printed value equals what the synthesis path
       would hand the engine — asserted **equal to the value the path actually uses**, not to a literal, so
       the inspector cannot drift away from the thing it inspects.
-- [ ] **AC12** (`unit`): `describe` documents the new command and the new field, per the repo's
+- [x] **AC12** (`unit`): `describe` documents the new command and the new field, per the repo's
       add-a-command-update-describe rule.
 - [ ] **AC13** (`unit`, FR4b): the say path records the normalised string against the clip id. *Verified
       structurally and by calling the recording helper directly. **End-to-end retrieval through a running
@@ -228,7 +247,7 @@ sentence yields **0 ms of measurable silence**. FR3 is confirmed as an open gap 
 
 ### Suite
 
-- [ ] **AC14** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped, and no
+- [x] **AC14** (`integration`): `python -m pytest tests/` passes with no test weakened or skipped, and no
       `voice-tunnel` server was started (TC4).
 
 ## Testing Approach
@@ -268,9 +287,82 @@ sentence yields **0 ms of measurable silence**. FR3 is confirmed as an open gap 
 - `specs/004-turn-detection.md` — the speed and intelligibility measurements that bound TC3.
 - Project node: `Voice Tunnel` — the roadmap rows this spec closes, and the sharpness work behind TC1.
 
-## Verified state
+## Verified state (2026-08-19)
 
-*Filled in by the implementer after verification, per the completion rule. Empty at the refined-spec
-gate: nothing here has been built yet.*
+Recorded by the team lead after **independent** verification: the suite, the `pronounce` command, a
+hand-built round trip with its own negative arm, and a **cold** (`--no-cache`) run of the acceptance
+harness were all re-run by the lead.
 
-**Baseline before any change (2026-08-19):** `python -m pytest tests/` — 892 passed, 2 skipped, exit 0.
+**Suite.** 892 passed / 2 skipped → **958 passed / 2 skipped / 0 failed.** +66 tests, all new. No
+existing test changed, weakened or skipped. No server started.
+
+**Acceptance harness: 15 PASS / 0 FAIL**, on a cold run with every clip re-synthesised.
+
+**The acceptance case JJ named now works, and the negative arm is separable by exactly the transform.**
+Verified by the lead independently of the harness, by disabling the transform in-process and driving the
+identical path:
+
+| | Recognizer hears |
+|---|---|
+| `The version is 0.2.6 and it is ready.` — normalised | **`The version is 0.2.6 and it is ready.`** |
+| the same string, transform disabled, identical path | `The version is 026 and it is ready.` |
+
+**Pacing (FR3) measured on the live engine**, same words differing only in punctuation — which is what
+makes the three arms comparable:
+
+| Clip | Internal silence |
+|---|---|
+| `We shipped it, and then we tested it.` | **400 ms** (was 0 ms) |
+| `We shipped it. And then we tested it.` | **960 ms** |
+| `We shipped it and then we tested it.` | **0 ms** |
+
+AC9 and AC10 are the arms that make AC8 mean something: a change that lengthened every gap would fail
+AC9, and one that inserted a pause unconditionally would fail AC10. Both hold.
+
+**Over-normalisation did not happen (TC2).** Ellipsis, sentence-final period, `e.g.`, and ordinary prose
+all come back with no spurious "point" or "dot". Currency is protected by an explicit lookbehind, so
+`$3.50` is untouched.
+
+**The harness has been seen to fail**, in two modes: fed two claims known to be false it reports both
+red, and before the transform existed six of its checks reported `BLOCKED` with the missing import named.
+
+### ⚠ A measurement error by the team lead, recorded because it nearly shipped a false FAIL
+
+The lead first graded FR3 as failing (`comma gap = 0.0 ms`) and sent it back. **That reading came from a
+stale cache**: the harness keys rendered audio on the final string plus the engine identity, and the
+pacing clips' text and settings were byte-identical before and after the change, so a pre-change WAV was
+graded against post-change code. The implementing slice caught it. Re-run cold, the same checks pass.
+**A cache keyed on inputs cannot see a change in the code that transforms them** — the harness now
+refreshes correctly, and `--no-cache` is the check to run before trusting any verdict here.
+
+### 🔴 Findings that this spec does NOT fix, and one is a regression
+
+1. **`e.g.` is read worse than before, and TC2 cannot see it.** Before: `Use a short clip, e.g. this
+   one.` round-tripped as `Use a short clip A G. This one.` After: `Use a short clip. It's one.` — the
+   abbreviation has vanished from the transcript, and the clip carries **1350 ms** of internal silence
+   inside nine words (400 ms from the new comma break plus ~950 ms from the pre-existing rule that a dot
+   followed by whitespace is a sentence end). **TC2 only forbids over-normalisation, so it passes.** The
+   root cause predates this spec — the sentence splitter is not abbreviation-aware — and fixing it means
+   changing how every clip is segmented, which would move numbers this spec's criteria rest on.
+   **Left unfixed and flagged: it wants its own spec.**
+2. **The comma break is punctuated as a full stop by the recognizer.** `We shipped it, and then we
+   tested it.` transcribes byte-identically to the sentence-break clip. FR3 is satisfied as written
+   (400 ms, and shorter than 960 ms), but 400 ms is 47% of the sentence pause. **Whether that is the
+   right prosody is a judgement by ear, which no agent here can make (TC1)** — the ratio is a module
+   constant and is a one-line change if he wants it shorter.
+3. **`990 ms` was a clip-dependent figure, not a constant.** The sentence gap is `sentence_pause` plus
+   the voice's own lead-in and tail-off, which varies with the surrounding words. Measured 960 ms here,
+   990 ms in the original ground truth. Nobody should treat either as a reference value.
+
+### A contradiction inside this spec, resolved
+
+**AC2 listed "a bare decimal already inside prose" among the strings that must be unchanged, while FR2's
+table, FR2's rationale and the test-case table all say `3.5` must become "three point five".** Three
+statements to one, and the three carry the argument, so `3.5` is voiced. AC2's intent — do not break a
+reading that is already correct — is preserved, and the genuinely at-risk case (money) is protected by an
+explicit currency guard and asserted.
+
+### Not verified
+
+- **FR4b end-to-end.** The per-clip record is written and asserted at the recording helper, but reading
+  it back through a running `say` needs a server, and one is carrying a live conversation (TC4).
