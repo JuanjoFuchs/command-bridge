@@ -7,11 +7,17 @@ everywhere a user or an agent would look for it — the same defect that made tu
 unreachable in 0.2.0, one backend later. Everything here is that gap, plus the latent crash
 sitting behind it.
 
-Four specs then landed on top of it (`007`–`010`), and they share a shape worth naming: **each one
+Five specs then landed on top of it (`007`–`011`), and they share a shape worth naming: **each one
 replaces a rule somebody had to remember with something the tool refuses to get wrong.** A build
 that fails on a setting the CLI cannot describe, rather than a note asking you to keep a list up to
 date. A picker that counts what it can actually offer, rather than a comment explaining when it is
 useless. A `say` that will not speak over you, rather than a guide asking the agent not to.
+
+`011` turns that same lens on the agent instead of the human. Every other spec here treats JJ's
+attention as the scarce resource; this one treats **the agent's context window** that way, because
+a CLI that restates its whole contract on every call spends exactly what talking was supposed to
+save. It also closes the sharpest defect found so far: a refusal an agent could enter and **not
+leave by reasoning**.
 
 ### Removed
 
@@ -29,7 +35,42 @@ useless. A `say` that will not speak over you, rather than a guide asking the ag
   reader could copy and run. The guard fired on the person who committed it, which is the only kind
   of evidence worth having.)*
 
+### Fixed
+
+- 🔴 **A refusal you could not escape by reasoning** (spec `011`). `say` refuses while a turn is
+  unread, and the refusal's `remedy` names the *server's* read cursor. But an agent holding its own,
+  higher cursor would run `watch --since <its own>`, get `quiet`, consume nothing, and be refused
+  again — identically, forever. Two cursors track one log and only one of them gates the refusal.
+  **`watch` now resumes from the LOWER of the `--since` it was given and the server's
+  `consumed_cursor`**, publishing `since_requested` and `resumed_from` when they differ. That is a
+  rule the tool already stated in prose, in two places, moved into the command — so the refusal is
+  now escapable whatever cursor the caller believed, not only by copying the remedy verbatim.
+  *Bounded downward: a negative `consumed_cursor` never drags a caller to the head of the log,
+  because "no read position" is not a read position of zero.*
+
 ### Added
+
+- **A refused batch carries the unread turn once, not once per clip** (spec `011`). Four `say --now`
+  clips fired back to back used to return four full copies of the same turn — so **the longer the
+  thought you were trying to deliver, the more you were charged for being interrupted**, which is
+  exactly backwards. A repeat refusal now carries the turn *ids* without their text and says so;
+  a new turn or a successful read makes the next one full again. **A repeat is a flat 590 characters
+  regardless of turn length**: at the ~700-character turn this was found on, a four-clip refused
+  batch drops **6,024 → 3,276 characters, 45.6%**.
+- **Procedural guidance is emitted when it changes something** (spec `011`). The multi-sentence
+  explanation of the loop used to arrive on every call. It now arrives when the branch *changed*
+  since that command's previous call in the session; a repeat carries the literal command alone plus
+  a pointer to `describe`, marked `next_repeated`. **`next` itself is untouched in what matters** —
+  every form, long or short, still carries a runnable command with the session and cursor already
+  substituted. *Which is more than was true before: the sweep this required found that the single
+  most-emitted string in the tool — the guidance that fires once per turn of every conversation —
+  was printing a literal `<cursor>` placeholder it already had the value for.*
+- **`voice-tunnel contextcost`'s script, and a CI gate under it** (spec `011`). `scripts/contextcost.py`
+  recomputes what the above actually saves — both columns from the live code, so the number cannot
+  rot into a stale constant — and `--gate` exits non-zero below the floors the spec pre-registered.
+  It measures the payload the agent really receives, including the 23 characters the repeat marker
+  costs. *It earned its keep immediately by failing: the first implementation of the short form came
+  in at 22.5% against a 25% floor, and the fix was to shorten the form rather than to move the floor.*
 
 - **`say` refuses when he has said something you never read** (spec `007`). It exits non-zero with
   `code: unread_turns`, synthesises nothing, queues nothing, and does not move the read cursor — so

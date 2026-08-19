@@ -40,6 +40,19 @@ jobs:
       - name: Test
         run: python -m pytest tests/ -q
 
+      # Spec 011, FR4/AC23. The saving this repo claims is recomputed here from the working tree —
+      # both the before and the after — and the step fails when a floor is missed. A number written
+      # into a document is true exactly once; this one cannot rot, because there is no recorded
+      # constant for a later payload change to falsify.
+      #
+      # In the matrix rather than in a job of its own, deliberately. It has to run on the CI FLOOR
+      # (TC6, AC26): core dependencies only, no piper, no model, no microphone. A gate that needed
+      # the extras would be a gate nobody could run, and running it on all three operating systems
+      # is what keeps it that way. It starts and contacts no server (TC1) — every payload is built
+      # in process.
+      - name: The context saving still clears its floors
+        run: python scripts/contextcost.py --gate
+
       - name: The CLI answers from an unrelated working directory
         shell: bash
         run: |

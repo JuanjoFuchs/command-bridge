@@ -67,7 +67,14 @@ ERROR_CODES = {
         "`watch` that delivers them, and its `--since` is your READ cursor, NOT the head of the "
         "log (resuming from the head returns nothing, moves no cursor, and leaves you refused on "
         "the same turns forever). Read them, then say your piece — restated if it no longer "
-        "answers him, unchanged if it still does. THERE IS NO FLAG THAT DISABLES THIS."
+        "answers him, unchanged if it still does. THERE IS NO FLAG THAT DISABLES THIS. "
+        "A REPEATED REFUSAL SENDS THE IDS WITHOUT THE TEXT: `refusal_repeat` counts the retries "
+        "against one unread set (0 = the first, and only the first carries `text`), and "
+        "`unread_text_omitted: true` marks the ones that do not. An answer is often several "
+        "`say --now` clips, and every clip after the first refusal is refused too — so the same "
+        "text was arriving once per clip for one event. Nothing is lost: the ids are still listed "
+        "and `remedy` is unchanged and still delivers those turns in full. A RISING "
+        "`refusal_repeat` MEANS YOU HAVE NOT RUN `remedy` — run it instead of retrying `say`."
     ),
 }
 """Every `code` an error payload can carry, and what to do about each.
@@ -660,7 +667,24 @@ DESCRIBE: dict[str, Any] = {
         "watch": {
             "args": {
                 "--session": "session id",
-                "--since": "cursor; use -1 for 'from the beginning'",
+                "--since": "cursor; use -1 for 'from the beginning'. **IT IS A CEILING, NOT AN "
+                           "ORDER.** This command resumes from the LOWER of your `--since` and "
+                           "the server's `consumed_cursor`, so a cursor that has run ahead of "
+                           "what the server believes you have read still delivers the turns you "
+                           "are missing. That is the rule the watchdog prompt states in prose, "
+                           "done for you — because the two ways a caller gets ahead need no "
+                           "mistake by anyone: a batch whose only new turns were UNADDRESSED "
+                           "advances your cursor while delivering nothing, and a failed "
+                           "`/consumed` post is swallowed. Left alone at both edges: `-1` is "
+                           "never altered, and with no server answering (or a server too old to "
+                           "publish `consumed_cursor`) your number is used exactly as given. "
+                           "**AND IT IS BOUNDED DOWNWARD AT `-1`**: a server reporting "
+                           "`consumed_cursor: -1` does NOT drag you to the head of the log, "
+                           "because that value means 'no read position' — a fresh session OR a "
+                           "lost cursor file — and honouring it would replay every turn in the "
+                           "session into your context. In that one state the tool cannot help "
+                           "you; if a `say` is refusing, run the `--since` its `remedy` names. "
+                           "When it IS lowered, `since_requested` and `resumed_from` say so.",
                 "--timeout": "OMIT IT. It bounds the IDLE HEARTBEAT ONLY — the wait when nothing "
                              "at all is happening — and it does NOT change when this call decides "
                              "he has stopped talking. Nothing does: that is gated on the speech "
@@ -704,7 +728,23 @@ DESCRIBE: dict[str, Any] = {
                          "gate judged were not for you are consumed but not returned "
                          "(`--all-turns` includes them), so a room talking around him cannot "
                          "hold the wait open and keep him waiting",
-                "cursor": "int — resume from this",
+                "cursor": "int — resume from this. It is measured from where this call ACTUALLY "
+                          "resumed, which is not always the `--since` you passed: see "
+                          "`resumed_from`.",
+                "since_requested": "int — the `--since` you passed. **PRESENT ONLY WHEN IT WAS "
+                                   "LOWERED**, so its absence is the normal case and its presence "
+                                   "is the tool telling you your cursor had run ahead of the "
+                                   "server's.",
+                "resumed_from": "int — the cursor this call actually resumed from: the LOWER of "
+                                "`since_requested` and the server's `consumed_cursor`. **PRESENT "
+                                "ONLY WHEN IT DIFFERS** from what you asked for. Lowering can "
+                                "only ever deliver MORE turns, never fewer — it cannot skip one "
+                                "and cannot suppress one — so the worst case is a re-read of "
+                                "something whose `/consumed` post was lost. Seeing this pair "
+                                "means your own cursor is stale: adopt the `cursor` this payload "
+                                "returns. **BOUNDED AT `-1`** — a server reporting no read "
+                                "position at all never lowers you, because that would replay the "
+                                "whole session; see `--since`.",
                 "count": "int",
                 "finished": "bool — THE FIELD TO BRANCH ON. True means he is not speaking and you "
                             "may speak. Nothing else in this payload answers that question. It is "
@@ -724,7 +764,28 @@ DESCRIBE: dict[str, Any] = {
                 "elapsed_s": "float",
                 "event": "'control' when a BUTTON moved; `changed` says which",
                 "changed": "which control moved, e.g. {'muted': true}",
-                "next": "the literal command to run next, session and cursor filled in",
+                "next": "the literal command to run next, session and cursor filled in — ALWAYS "
+                        "runnable verbatim, on every branch and in both forms. Its RATIONALE is "
+                        "emitted when it changes something, not on every call: the first time "
+                        "this command takes a given branch in a session you get the full "
+                        "guidance, and while the branch does not move you get the command alone "
+                        "followed by 'see `voice-tunnel describe`' — which is this entry, and "
+                        "is where the omitted rationale went — with `next_repeated: true` beside "
+                        "it. That pointer is a REFERENCE, never the action: the command to run is "
+                        "the one the field opens with. Branches are tracked PER COMMAND, "
+                        "so `watch` and `say` never suppress each other. Two exception payloads "
+                        "stay out of it and always arrive whole — `watch_open` and `ceiling` — "
+                        "because their prose warns AGAINST the obvious action rather than "
+                        "restating the loop.",
+                "next_repeated": "true ONLY when `next` is the short form — the command without "
+                                 "its rationale, because the branch has not moved since this "
+                                 "command's previous call in this session. ABSENT otherwise. The "
+                                 "reasoning it stands in for is here, in `describe`, and it comes "
+                                 "back in full the moment the branch changes. Measured "
+                                 "2026-08-19: the turns branch is 406 characters and repeats once "
+                                 "per turn of every conversation; a three-clip answer spent 68% "
+                                 "of its total payload on three byte-identical copies of one "
+                                 "`next`.",
             },
             "notes": "THE ONE WAITING COMMAND — there is no second name for it and no second "
                      "waiting command to choose between. THE RULE: **this returns only at a "
@@ -860,18 +921,59 @@ DESCRIBE: dict[str, Any] = {
                           "and text, so recovering costs no extra round trip. Empty on a reply "
                           "that went out, because a non-empty one is refused rather than spoken. "
                           "Reading them does NOT depend on this field: the read cursor is never "
-                          "advanced by `say`, so the `watch` in `remedy` delivers them properly.",
+                          "advanced by `say`, so the `watch` in `remedy` delivers them properly. "
+                          "**ONLY THE FIRST REFUSAL OF AN UNREAD SET CARRIES `text`.** A repeat — "
+                          "same `since` and same `last_turn_id`, i.e. you have read nothing and "
+                          "he has said nothing since — carries `[{id}, ...]` and sets "
+                          "`unread_text_omitted`. An answer is often several `say --now` clips, "
+                          "and every clip after the first is refused on the same turn, so the "
+                          "text was being re-sent once per clip for one event.",
                 "unread_count": "int — 0 on a reply that went out. Non-zero only on a refusal, "
-                                "where it is the number of things he said that you never read.",
+                                "where it is the number of things he said that you never read. "
+                                "**Counts TURNS, and is unchanged by the repeat trimming** — it "
+                                "still matches the length of `unread` on a repeat, where those "
+                                "objects carry an id and no text.",
+                "refusal_repeat": "int — ON A REFUSAL ONLY: how many times you have now been "
+                                  "refused on THIS unread set. 0 is the first, and the first is "
+                                  "the one that carries the turn text; 1, 2, 3 … are repeats and "
+                                  "carry ids alone. Any new turn, or any successful read, changes "
+                                  "the set and the next refusal is full again. **A rising number "
+                                  "means you have not run `remedy`** — you are retrying `say` "
+                                  "against a turn you still have not read.",
+                "unread_text_omitted": "bool — present and true ONLY on a repeat refusal, marking "
+                                       "that `unread` carries ids without `text` because the text "
+                                       "went out on the first refusal of this set. Absent on the "
+                                       "first refusal and on every reply that went out. Nothing "
+                                       "is unrecoverable: the ids are listed and `remedy` is "
+                                       "unchanged and still hands those turns back in full.",
                 "cursor": "int — the last turn id in the log, so `watch --since` can resume "
                           "exactly here without you tracking it yourself. **NOT the cursor to "
                           "use after a refusal** — that payload carries `since` instead, and the "
                           "difference is the difference between recovering and looping.",
-                "next": "the literal command to run next, branched on the facts above",
+                "next": "the literal command to run next, branched on the facts above — ALWAYS "
+                        "runnable verbatim, on every branch and in both forms. Its RATIONALE is "
+                        "emitted when it changes something, not on every call: the first time "
+                        "this command takes a given branch in a session you get the full "
+                        "guidance, and while the branch does not move you get the command alone "
+                        "followed by 'see `voice-tunnel describe`' — which is this entry, and "
+                        "is where the omitted rationale went — with `next_repeated: true` beside "
+                        "it. That pointer is a REFERENCE, never the action: the command to run is "
+                        "the one the field opens with. Branches are tracked PER COMMAND, "
+                        "so `say` and `watch` never suppress each other.",
+                "next_repeated": "true ONLY when `next` is the short form — the command without "
+                                 "its rationale, because the branch has not moved since the "
+                                 "previous `say` in this session. ABSENT otherwise. The reasoning "
+                                 "it stands in for is here, in `describe`, and it comes back in "
+                                 "full the moment the branch changes — a refusal turning into a "
+                                 "clean reply, or a clip that had to be held. The branch that "
+                                 "repeats most is `--now`: every clip of a multi-clip answer "
+                                 "takes it, seconds apart, with nothing to say that the clip "
+                                 "before it did not.",
                 "REFUSAL": "**`say` REFUSES, exit 1, when he has said something you have not "
                            f"read.** `code: {config.UNREAD_REFUSAL_CODE}`, and the payload is "
-                           "`{error, code, remedy, next, unread, unread_count, since, "
-                           "last_turn_id, spoke: false}` — no clip fields, because there is no "
+                           "`{error, code, remedy, next, unread, unread_count, refusal_repeat, "
+                           "since, last_turn_id, spoke: false}` (plus `unread_text_omitted: true` "
+                           "on a repeat) — no clip fields, because there is no "
                            "clip: nothing was synthesized, nothing was queued, nothing was "
                            "delivered, and the read cursor did not move. `remedy` is the literal "
                            "`watch` to run, with the session and YOUR READ CURSOR (`since`) "
@@ -1619,9 +1721,20 @@ shut down, taking three rounds of hard-won corrections with it. That is why it i
 """
 
 
-def _next_action(turns, live: dict[str, Any] | None,
-                 session: str = "dev", cursor: int | None = None) -> str:
+def _next_branch(turns, live: dict[str, Any] | None,
+                 session: str = "dev", cursor: int | None = None) -> tuple[str, str, str]:
     """What the agent should do RIGHT NOW, given the state this call just observed.
+
+    Returns `(branch, literal, full)` — the branch's stable id, the runnable command ALONE, and
+    the full guidance with its rationale. **This function is PURE**: it reads no disk, writes no
+    disk, and contacts nothing. Deciding which of `literal` and `full` to emit needs per-session
+    memory, and that memory lives in the caller (`_emit_next`) so that a test of the wording is
+    not also a test of the filesystem — and so that `cmd_say`, which persisted nothing before
+    spec 011, does not start writing session state from inside a helper anybody may call.
+
+    **`branch` is what the repeat rule keys on** (FR3). It carries every fact that changes the
+    WORDING, which is why the two `turns` branches are separate ids: the verbose toggle rewrites
+    the second half of that sentence, so an agent that flips it must be told again.
 
     Live, 2026-08-03: *"let's not only encode this in describe. I think on every command, for
     example in watch, whenever verbose is on, we should include a next attribute that... tells the
@@ -1667,9 +1780,12 @@ def _next_action(turns, live: dict[str, Any] | None,
     # recovery. `watch` now returns on a control change too (see cmd_watch), so waiting is not
     # merely allowed here — it is how the agent learns he came back.
     if live is None:
-        return f"say you stopped listening, then run `voice-tunnel serve --session {session}`"
+        serve = f"run `voice-tunnel serve --session {session}`"
+        return ("no_server", serve,
+                f"say you stopped listening, then {serve}")
     if not live.get("clients"):
-        return (f"say in text that nobody is connected, then run {watch} — "
+        return ("no_clients", f"run {watch}",
+                f"say in text that nobody is connected, then run {watch} — "
                 "it returns the moment a page reconnects, and holds for up to "
                 f"{_human_seconds(_disconnected_ceiling())} rather than backing off, so this is "
                 "ONE call and not a re-armed series. Detach it if your harness caps blocking "
@@ -1679,17 +1795,24 @@ def _next_action(turns, live: dict[str, Any] | None,
     # ended the conversation is answering a question he did not ask. Anything said now is queued
     # and reaches him when he reopens it, so there is no need to hold work.
     if "channel_open" in live and not live.get("channel_open"):
-        return (f"run {watch} — he closed the channel; anything you say is queued, and the watch "
+        return ("channel_closed", f"run {watch}",
+                f"run {watch} — he closed the channel; anything you say is queued, and the watch "
                 "returns the moment he reopens it. It holds for up to "
                 f"{_human_seconds(_disconnected_ceiling())} rather than backing off, because a "
                 "released microphone cannot produce a turn, so this is ONE call and not a "
                 "re-armed series. Detach it if your harness caps blocking calls; do NOT shorten "
                 "it with --timeout")
     if "capturing" in live and not live.get("capturing"):
-        return (f"run `voice-tunnel say --session {session} --now \"tap the orb to start\"`, "
-                f"then {watch}")
+        # ALREADY BARE — `literal` and `full` are the same string, because there is no rationale
+        # here to cut. `_emit_next` reads that equality as "nothing to suppress" and keeps sending
+        # it whole, which is how the cheap branches stay exactly as they are (FR4/AC25).
+        orb = (f"run `voice-tunnel say --session {session} --now \"tap the orb to start\"`, "
+               f"then {watch}")
+        return ("orb_off", orb, orb)
     if live.get("muted"):
-        return (f"run `voice-tunnel say --session {session} --now \"you are muted\"` (he can "
+        return ("muted",
+                f"run `voice-tunnel say --session {session} --now \"you are muted\"`, then {watch}",
+                f"run `voice-tunnel say --session {session} --now \"you are muted\"` (he can "
                 f"still hear you), then {watch} — it returns the instant he unmutes")
     if turns:
         # CONVERSATIONAL vs HEADS-DOWN, and OFF MEANS SILENCE IS THE DEFAULT. This comment used to
@@ -1714,11 +1837,36 @@ def _next_action(turns, live: dict[str, Any] | None,
         # NO RETIRED FLAGS HERE ANY MORE. It used to emit `--waits 5,3,2`, which is exactly how a
         # flag stays alive after the thing it configured is gone — the tool teaching agents a
         # spelling it no longer honours.
-        pre_say = (f"`voice-tunnel watch --session {session} --since <cursor>` in the FOREGROUND "
+        #
+        # THE CURSOR IS SUBSTITUTED HERE TOO, and it was not until spec 011. This one line spelled
+        # `--since <cursor>` while the function's own docstring promised "session and cursor
+        # already substituted" and `describe` promised "session and cursor filled in" — on the
+        # single most-emitted branch in the tool (406 chars, once per turn of every conversation).
+        # The value is known: it is the cursor this very watch resolved, and the agent does no
+        # reading between here and the pre-say wait, so nothing can move it. AC18 sweeps for it.
+        pre_say = (f"{watch} in the FOREGROUND "
                    "(never backgrounded — an unread wait protects nothing)")
-        return (f"do the work his turn asks for FIRST, then run {pre_say} immediately before any "
+        branch = "turns_verbose" if live.get("verbose") else "turns_quiet"
+        return (branch,
+                f"do the work his turn asks for FIRST, then run {watch} in the FOREGROUND before "
+                f"any say",
+                f"do the work his turn asks for FIRST, then run {pre_say} immediately before any "
                 f"say — if it returns turns, fold them in and wait again; then {mode}")
-    return f"run {watch}"
+    # THE CHEAPEST BRANCH IN THE TOOL, and spec 011 measured it and left it alone: 51 characters,
+    # all of them the command. `literal is full`, so it never shortens and never grows.
+    quiet = f"run {watch}"
+    return ("quiet", quiet, quiet)
+
+
+def _next_action(turns, live: dict[str, Any] | None,
+                 session: str = "dev", cursor: int | None = None) -> str:
+    """The FULL guidance for the branch these facts select — the whole `next`, rationale included.
+
+    Kept as its own name because it is what a reader (and a test) means by "what does the tool
+    tell the agent here": the branch id and the bare command are `_emit_next`'s business, not the
+    wording's. Pure, like `_next_branch`.
+    """
+    return _next_branch(turns, live, session, cursor)[2]
 
 
 # The facts a watch must wake up for, beyond a turn landing. Each is a button he presses, and
@@ -1736,7 +1884,43 @@ CONTROL_FACTS = ("muted", "channel_open", "capturing", "clients", "verbose")
 
 
 def _backoff_path(session: str) -> str:
+    """The one file the CLI keeps per session. Named for the backoff because that was its only
+    tenant; since spec 011 the `next` repeat memo lives here too. See `_update_session_state`."""
     return os.path.join(config.session_dir(), f"{session}.watch.json")
+
+
+def _session_state(session: str) -> dict[str, Any]:
+    """Everything this session has persisted, as one dict. Missing or garbled reads as empty."""
+    try:
+        with open(_backoff_path(session), encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _update_session_state(session: str, **fields: Any) -> None:
+    """READ, MODIFY, WRITE — never write this file whole.
+
+    🔴 TC5. Two independent facts share this file and neither owns it: the watch backoff's
+    `empty_streak`, and the per-command `next_branch` memo FR3 keys its repeat rule on. It used to
+    be written whole (`json.dump({"empty_streak": n})`), which was correct only while there was
+    exactly one tenant. The moment a second one appeared, a whole write became a SILENT DELETE of
+    whatever the other tenant had put there — and silently, in both directions: a branch write
+    would reset the backoff ladder to 30 s in the middle of a quiet night, and a watch would
+    forget every branch it had emitted and start sending full guidance again.
+
+    Neither failure raises anything or shows up in a payload. That is why the invariant is
+    asserted (AC20) rather than left to whoever adds the third key.
+    """
+    try:
+        state = _session_state(session)
+        state.update(fields)
+        os.makedirs(config.session_dir(), exist_ok=True)
+        with open(_backoff_path(session), "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+    except Exception:
+        pass          # a watch must never fail over its own bookkeeping
 
 
 def _empty_streak(session: str) -> int:
@@ -1747,19 +1931,97 @@ def _empty_streak(session: str) -> int:
     nothing at all.
     """
     try:
-        with open(_backoff_path(session), encoding="utf-8") as fh:
-            return max(0, int(json.load(fh).get("empty_streak", 0)))
+        return max(0, int(_session_state(session).get("empty_streak", 0)))
     except Exception:
         return 0
 
 
 def _set_empty_streak(session: str, value: int) -> None:
     try:
-        os.makedirs(config.session_dir(), exist_ok=True)
-        with open(_backoff_path(session), "w", encoding="utf-8") as fh:
-            json.dump({"empty_streak": max(0, int(value))}, fh)
+        _update_session_state(session, empty_streak=max(0, int(value)))
     except Exception:
         pass          # a watch must never fail over its own bookkeeping
+
+
+def _last_next_branch(session: str, command: str) -> str | None:
+    """Which `_next_branch` this command took the last time it ran in this session."""
+    branches = _session_state(session).get("next_branch")
+    if isinstance(branches, dict):
+        seen = branches.get(command)
+        return seen if isinstance(seen, str) else None
+    return None
+
+
+def _remember_next_branch(session: str, command: str, branch: str) -> None:
+    """KEYED PER COMMAND, and that is the whole design rather than a detail.
+
+    A conversation alternates `watch` -> `say` -> `watch` -> `say`, so a single global "last
+    branch" would see a change on literally every call and suppress nothing at all. Each command
+    compares against its OWN previous branch, which is what makes the second `watch` of a turn
+    cheap while the `say` between them is still judged on its own history.
+    """
+    branches = _session_state(session).get("next_branch")
+    branches = dict(branches) if isinstance(branches, dict) else {}
+    branches[command] = branch
+    _update_session_state(session, next_branch=branches)
+
+
+# The tail the short form carries in place of the rationale. ONE job, not two: NAME where the
+# reasoning went (AC21), so an agent that has only ever seen short forms — one whose context was
+# compacted between the first call and the fifth — is not stranded holding a command it cannot
+# justify.
+#
+# IT USED TO SAY "same reasoning;" AS WELL, AND THAT PHRASE WAS THIS SPEC'S OWN SUBJECT. It stated
+# in sixteen characters of English exactly what `next_repeated: true` states in the payload as a
+# machine-readable boolean — words that buy nothing on the second occurrence, arriving on every
+# second occurrence. It also cost a real gate: measured 2026-08-19, the three-clip answer came in
+# at 22.5% against FR4's pre-registered 25% floor, twenty-four characters short, and this phrase
+# was thirty-two of them across the two repeats.
+#
+# `see` earns its four characters and may not be dropped to save them. Without a verb the tail is
+# a second backticked command sitting beside the first with nothing to say which one to run, and
+# this field is READ TO BE EXECUTED — `describe` is a reference here, never the next action.
+NEXT_REPEAT_TAIL = "see `voice-tunnel describe`"
+
+# WHAT THE MARKER ITSELF COSTS, on the wire, as one more key on a payload that already has some.
+# Derived rather than typed so it cannot drift if the field is ever renamed.
+#
+# It is here because the guard needs it: measured 2026-08-19, the `muted` branch shortened by 14
+# characters and then paid 23 for the marker, so a payload that was supposed to get cheaper got 9
+# characters BIGGER. A saving smaller than its own bookkeeping is not a saving, and a rule that
+# only looks at the string cannot see that.
+NEXT_REPEAT_MARKER_COST = len(json.dumps({"next_repeated": True})) - len("{}") + len(", ")
+
+
+def _emit_next(result: dict[str, Any], session: str, command: str,
+               branch: str, literal: str, full: str) -> None:
+    """Set `result["next"]`, full or short, and remember the branch. FR3.
+
+    **The rule:** branch changed, or this is the command's first call in this session -> the FULL
+    guidance, unchanged from before spec 011. Same branch as this command's previous call -> the
+    LITERAL COMMAND ALONE plus `NEXT_REPEAT_TAIL`.
+
+    **What is never cut is the command.** Every `next` this tool emits, long form or short, still
+    carries a runnable invocation with the session and the cursor already substituted (AC18).
+    That property is the reason the field works at all — on 2026-08-19 it named the exact command
+    to run at a moment the agent's own reasoning was wrong, and following it was the only thing
+    that worked. Only the rationale prose repeats, and only the rationale prose is cut.
+
+    **A short form that does not pay for itself is not emitted**, and the test is the whole
+    payload rather than the string. Some branches are already nothing but their command (`quiet`
+    at 51 characters, `orb_off` at 119), which spec 011 measured and explicitly declined to
+    shrink; others save a little and then hand it all back as `next_repeated`. Guarding on the
+    measured saving rather than on a hand-maintained list of "cheap" branches means the next
+    branch somebody adds is handled correctly without anybody remembering to classify it.
+    """
+    previous = _last_next_branch(session, command)
+    _remember_next_branch(session, command, branch)
+    short = f"{literal} — {NEXT_REPEAT_TAIL}"
+    if previous == branch and len(full) - len(short) > NEXT_REPEAT_MARKER_COST:
+        result["next"] = short
+        result["next_repeated"] = True
+    else:
+        result["next"] = full
 
 
 def _controls(live: Any) -> dict[str, Any] | None:
@@ -1838,6 +2100,84 @@ def _watch_closed(session: str, empty: bool = False) -> None:
     _request(session, "/watching", {"open": False, "empty": bool(empty)})
 
 
+def _resume_cursor(since: int, status: Any) -> int:
+    """The cursor `watch` will ACTUALLY resume from: the LOWER of `--since` and `consumed_cursor`.
+
+    **THE TOOL DOING THE ARITHMETIC IT HAS BEEN ASKING THE AGENT TO DO.** "Take the LOWER of
+    `consumed_cursor` and `last_turn_id`" is stated in `describe` and again in the watchdog
+    prompt, as an instruction — and an instruction is exactly what routes (a) and (b) below defeat,
+    because in both of them the agent follows it perfectly and still ends up ahead.
+
+    THE TRAP THIS CLOSES. Two cursors track one log and only one of them gates the refusal: the
+    server's `consumed_cursor` decides whether `say` refuses, the caller's `--since` decides what
+    `watch` delivers. `/consumed` is posted only when turns are actually delivered, so a `watch`
+    that hands back nothing leaves the server's cursor exactly where it was while advancing the
+    caller's. Three routes put the caller ahead — (a) a batch whose only new turns were
+    UNADDRESSED, which `store.turns_since` consumes rather than defers, so the cursor moves and
+    nothing is delivered and no `/consumed` is posted; (b) a `/consumed` post that failed under
+    the watch loop's bare `except`; (c) a cursor derived from `last_turn_id`. From there
+    `watch --since <ahead>` returns `quiet` forever and the refusal it was run to clear never
+    clears. Observed live 2026-08-19: refusal says `--since 1353`, agent holds 1354, and no
+    sequence of correct-looking commands escapes.
+
+    **`min()` IS WHAT MAKES THIS SAFE TO SHIP MID-CONVERSATION** (spec 011, TC1/TC2). Lowering the
+    resume point can only ever deliver MORE turns, never fewer: it cannot skip a turn and cannot
+    suppress one. Its worst case is re-reading a turn whose `/consumed` post was lost, and this
+    repo has already ruled on that exact trade — double-delivery is a re-read, consuming too
+    eagerly is words silently dropped.
+
+    Four things are deliberately NOT clamped:
+
+    * **`--since -1`** — "from the beginning" is already below every cursor and means something
+      the arithmetic does not: replay the log. It is returned untouched.
+    * **an unreachable server** (NFR2) — no `/status`, or a `/status` carrying an `error`, means
+      there is no second opinion to take the lower of, so `--since` is used exactly as given.
+    * **a `/status` with no `consumed_cursor`** — a server predating the field publishes nothing
+      here, and ABSENT IS NOT ZERO. Reading a missing key as 0 would replay the entire log.
+    * **THE DOWNWARD BOUND: a `consumed_cursor` of `-1` against a non-negative `--since`.** See
+      below — this one is a ruling, not arithmetic.
+
+    **`-1` IS THE BOUND, AND IT IS THE ONE PLACE `min()` HAD TO BE OVERRULED** (spec 011, FR2,
+    "The clamp is bounded downward"). `min()` is unbounded downward, so a server reporting `-1`
+    turns `watch --since 1354` into a resume from the head of the log — every turn in the session,
+    1,391 of them on `dev` when this was written, with no equivalent of the refusal's
+    `UNREAD_ON_SAY_MAX` cap. **A change made to protect the agent's context budget cannot ship a
+    silent full-log replay as its fix.**
+
+    And `-1` is not an ordinary cursor: `store.read_consumed_cursor` returns it for two facts it
+    cannot tell apart — "nothing was ever read" and "the cursor file was missing or unreadable".
+    In the second the server's belief is the wrong one and the caller's is right, and it is the
+    only value that can convert a resume into a replay.
+
+    What the bound trades away, stated rather than left to be discovered: **in a genuinely fresh
+    session the deadlock survives**, and the escape there is the remedy string, which already
+    names `--since -1`. The underlying defect is the overloaded sentinel, which spec 011 records
+    in Out of Scope so this guard cannot be removed by someone who cannot see why it exists.
+
+    See specs/011-the-agents-context-is-a-budget.md, FR2.
+    """
+    since = int(since)
+    if since < 0:
+        return since
+    if not isinstance(status, dict) or status.get("error"):
+        return since
+    raw = status.get("consumed_cursor")
+    if raw is None or isinstance(raw, bool):
+        return since
+    try:
+        consumed = int(raw)
+    except (TypeError, ValueError):
+        return since
+    if consumed < 0:
+        # THE DOWNWARD BOUND. Written as "negative" rather than "== -1" because every negative
+        # carries the same fact — the server is not reporting a read position — and the ruling is
+        # about that fact, not about the literal. `-1` is the only one `read_consumed_cursor` can
+        # produce today, so the two spellings are identical in practice and this one cannot be
+        # walked past by a future sentinel.
+        return since
+    return min(since, consumed)
+
+
 def cmd_watch(args) -> dict[str, Any]:
     """THE ONE WAITING COMMAND. Block until he has something to say and has stopped saying it.
 
@@ -1913,12 +2253,31 @@ def cmd_watch(args) -> dict[str, Any]:
             "next": f"do nothing — the running wait has it. If you are certain it is dead: "
                     f"`voice-tunnel watch --session {args.session} --since {args.since} --force`",
         }
+    # THE CURSOR IS RESOLVED BEFORE ANYTHING READS THE LOG, and from `status_pre` — the /status
+    # this command already fetched for the concurrent-waiter guard, so the clamp costs no round
+    # trip (NFR1). A `--since` ahead of the server's read cursor is silently lowered to it;
+    # `_resume_cursor` carries the whole argument for why that is safe and why it is not an
+    # instruction to the agent.
+    since_requested = int(args.since)
+    resumed_from = _resume_cursor(since_requested, status_pre)
+    # PUBLISHED ONLY WHEN THEY DIFFER, under two names that cannot be read as each other. On the
+    # normal path neither appears, so a payload carrying them is itself the signal that the
+    # caller's cursor was wrong — the correction is visible rather than magic, and an agent whose
+    # state has drifted can see by how much instead of inferring it from turns it did not expect.
+    clamped: dict[str, Any] = (
+        {"since_requested": since_requested, "resumed_from": resumed_from}
+        if resumed_from != since_requested else {}
+    )
     _request(args.session, "/watching", {"open": True})
     # `--since -1` means "from the beginning", which by convention is the FIRST watch of a
     # session. That is the one moment an agent is oriented rather than mid-conversation, so it is
     # where the watchdog instruction belongs. `serve` says it too, but `serve` is run detached and
     # its banner is routinely never read — the loop is entered from here.
-    first_watch = int(args.since) < 0
+    #
+    # Keyed to what the CALLER asked for, not to the resolved cursor: the watchdog block belongs
+    # to an agent orienting itself at the start of a session, and a mid-conversation clamp down to
+    # a `consumed_cursor` of -1 is not that moment.
+    first_watch = since_requested < 0
     status0 = _request(args.session, "/status")
     baseline = _controls(status0)
     # AN EXPLICIT --timeout IS A CEILING, NOT A BASE. Omit it and the wait backs off from 30s;
@@ -1972,7 +2331,7 @@ def cmd_watch(args) -> dict[str, Any]:
     deadline = started + waited_ceiling
     turns: list[dict[str, Any]] = []
     collected: list[dict[str, Any]] = []
-    cursor = args.since
+    cursor = resumed_from
     rounds = 0
     changed: dict[str, Any] | None = None
     talking = _still_talking(status0)
@@ -2056,13 +2415,15 @@ def cmd_watch(args) -> dict[str, Any]:
                 next=f"run `voice-tunnel watch --session {args.session} --since {cursor}` again — "
                      f"the {_human_seconds(WATCH_SPEECH_MAX_S)} ceiling ended this, not silence, "
                      f"so it is NOT permission to reply. `voice-tunnel cue --session "
-                     f"{args.session} heard` tells him you are there without talking over him.")
+                     f"{args.session} heard` tells him you are there without talking over him.",
+                **clamped)
     turns = collected
     # ONE PAYLOAD BUILDER FOR EVERY EXIT. Five different ways out of the old pre-reply loop was
     # five chances for the `turns` an agent is waiting on to be missing from whichever branch took
     # a shortcut, so nothing returns without them — not even the failures.
     reason = "turns" if turns else ("control" if changed else "quiet")
-    result = _watch_payload(args, reason, turns, cursor, rounds, started, talking, live)
+    result = _watch_payload(args, reason, turns, cursor, rounds, started, talking, live,
+                            **clamped)
     if changed:
         # The EVENT is named, not merely implied by a diff, because "he unmuted" and "he muted"
         # call for opposite responses and an agent should not have to reconstruct which happened
@@ -2130,13 +2491,22 @@ def cmd_watch(args) -> dict[str, Any]:
             result["hint"] = "he has muted his own microphone; he will not be heard until he unmutes"
         else:
             result["listening"] = True
-    result["next"] = _next_action(
+    # THE RATIONALE IS EMITTED WHEN IT CHANGES SOMETHING, NOT ON EVERY CALL (FR3). The branch is
+    # what repeats, not the call: a thirty-turn conversation pays the 406-character turns branch
+    # thirty times for guidance identical to the last one. `_emit_next` sends it whole the first
+    # time and whenever the branch moves, and the bare command in between.
+    #
+    # The two EARLY returns above — `watch_open` and `ceiling` — deliberately stay out of this.
+    # Their prose is a warning AGAINST the obvious action ("do nothing"; "NOT permission to
+    # reply"), not a restatement of the loop, so a bare command with the warning cut would say the
+    # opposite of what the branch means. They are exceptions, not repeats.
+    _emit_next(result, args.session, "watch", *_next_branch(
         turns,
         live if isinstance(live, dict) and live.get("running") is not False
         and not live.get("error") else None,
         args.session,
         cursor,
-    )
+    ))
     if first_watch:
         result["watchdog"] = _watchdog_block(args.session)
     if reason == "quiet" and holding_reply:
@@ -2273,11 +2643,14 @@ def cmd_say(args) -> dict[str, Any]:
         n = int(result.get("unread_count") or 0)
         resume = result.get("since")
         resume = resume if resume is not None else "<cursor>"
-        result["next"] = (
+        _emit_next(
+            result, args.session, "say", "refused",
+            f"run `voice-tunnel watch --session {args.session} --since {resume}`, then say your "
+            f"piece",
             f"HE DID NOT HEAR THAT — nothing was spoken. Read the {n} turn(s) in `unread` first: "
             f"run `voice-tunnel watch --session {args.session} --since {resume}`, fold them in, "
             f"then say your piece — restated if it no longer answers what he actually asked, "
-            f"unchanged if it still does. There is nothing to take back."
+            f"unchanged if it still does. There is nothing to take back.",
         )
         return result
     if isinstance(result, dict) and result.get("running") is not False:
@@ -2310,11 +2683,18 @@ def cmd_say(args) -> dict[str, Any]:
                    f"while you composed it" if held_speech else
                    "the clip was not held, so these were already waiting before you started — "
                    "the check before speaking was skipped")
-            result["next"] = (
+            # TWO BRANCH IDS, not one. `why` says which failure this is — a race against him, or
+            # a check that was skipped — and they call for different corrections, so an agent that
+            # moves from one to the other must be told again rather than handed a repeat marker.
+            _emit_next(
+                result, args.session, "say",
+                "unread_race" if held_speech else "unread_skipped",
+                f"READ THE {unread} TURN(S) IN `unread` NOW, then run "
+                f"`voice-tunnel watch --session {args.session} --since {resume}`",
                 f"READ THE {unread} TURN(S) IN `unread` NOW — you spoke without them. {why}. "
                 f"Your reply may be answering something he has moved past, so treat it as stale: "
                 f"fold these in and respond to them, do not add to what you just said. Then run "
-                f"`voice-tunnel watch --session {args.session} --since {resume}`."
+                f"`voice-tunnel watch --session {args.session} --since {resume}`.",
             )
         elif result.get("async"):
             # A --now call returns before the hold-loop runs, so held_for/delivered do not
@@ -2324,31 +2704,46 @@ def cmd_say(args) -> dict[str, Any]:
             # `unread` DOES come back on this path, which is why it is checked above: it is
             # sampled before synthesis, so the one branch that used to have no evidence at all
             # now has the evidence that matters most.
-            result["next"] = (
+            # THE MOST EXPENSIVE REPEAT IN AN ANSWER. Measured 2026-08-19: a three-clip answer
+            # spends 678 characters on `next`, and 452 of them are two byte-identical copies of
+            # this branch arriving seconds apart. Nothing in it changes between clip one and clip
+            # three — which is precisely FR3's definition of prose worth cutting.
+            _emit_next(
+                result, args.session, "say", "async",
+                f"run `voice-tunnel watch --session {args.session} --since {resume}`",
                 f"run `voice-tunnel watch --session {args.session} --since {resume}` now — "
                 f"this was fire-and-forget, so no held_for/delivered came back; nothing was "
                 f"unread when it went out, and `voice-tunnel timing` will show whether the "
-                f"server had to hold it"
+                f"server had to hold it",
             )
         elif not result.get("delivered", True):
             # NOBODY HEARD IT outranks everything else: there is no stale reply to worry about
             # when there was no listener.
-            result["next"] = (
+            #
+            # ALREADY BARE. Both halves are instructions — tell him in text, then wait — so there
+            # is nothing here that is only rationale. `literal` carries both, which makes the
+            # short form longer than the full one, and `_emit_next` declines to spend it.
+            unreachable = (
                 f"say in text that he is unreachable; this clip is held until he reconnects, then "
                 f"run `voice-tunnel watch --session {args.session} --since {resume}`"
             )
+            _emit_next(result, args.session, "say", "undelivered", unreachable, unreachable)
         elif held_speech:
-            result["next"] = (
+            _emit_next(
+                result, args.session, "say", "held_speech",
+                f"run `voice-tunnel watch --session {args.session} --since {resume}` NOW",
                 f"run `voice-tunnel watch --session {args.session} --since {resume}` NOW — the "
                 f"server held this clip {held:g}s because he was still speaking while you were "
                 f"composing it, so what you just said may be answering a question he has already "
                 f"moved past. Nothing was unread when it went out, but he may have started again "
-                f"since — read what comes back before adding anything to it."
+                f"since — read what comes back before adding anything to it.",
             )
         else:
-            result["next"] = (
+            _emit_next(
+                result, args.session, "say", "clean",
+                f"run `voice-tunnel watch --session {args.session} --since {resume}`",
                 f"run `voice-tunnel watch --session {args.session} --since {resume}` now — "
-                "nothing was unread and the clip was not held, so this one was clean"
+                "nothing was unread and the clip was not held, so this one was clean",
             )
     return result
 

@@ -221,6 +221,32 @@ class TunnelState:
         Same principle as `agent_state` itself: *"a status the agent announces is a claim, and a
         claim is wrong exactly when it matters."* Nothing here is a flag the caller passes, which
         is the point — an option is a decision an agent makes wrong under time pressure."""
+        self.last_refusal: tuple[int, int] | None = None
+        """The identity `(since, last_turn_id)` of the refusal most recently built, or None.
+
+        **THE MEMO THAT MAKES A REFUSED BATCH COST ONE COPY OF THE TURN INSTEAD OF N** (spec 011,
+        FR1). Measured 2026-08-19: four `say --now` clips fired back to back, all four refused, and
+        each refusal carried the full text of the same ~700-character turn — 6,268 characters to
+        report one event. **The longer the thought the agent was trying to deliver, the more clips
+        it takes, and the more it is charged for being interrupted.** That is exactly backwards.
+
+        The pair is the whole identity, and both halves are load-bearing: `since` is where the
+        agent has read to, `last_turn_id` is the head of the log. **A new turn moves the head; a
+        successful read moves the cursor.** So either of the two things that could make the omitted
+        text newly relevant changes the identity by itself, and the next refusal is full again —
+        without this needing a hook on `/consumed` or on the append path, where it would rot.
+
+        Kept HERE rather than in a module global because a global is shared by every session in a
+        process and cannot be driven by a test, and because the refusal builder must be reproducible
+        in-process: two calls with the same state and the same unread set produce first-then-repeat
+        with no server and no HTTP."""
+        self.refusal_repeat: int = 0
+        """How many refusals have already been answered on the CURRENT `last_refusal` identity.
+
+        0 on the first (which carries the turn text in full), then 1, 2, 3 … on the repeats (which
+        carry the ids alone). Published as `refusal_repeat` so the agent can see how many times it
+        has now tried to speak over the same unread turn — a number that is itself a signal, since
+        a rising count means the recovery `watch` is not being run."""
         self.speech_pending: int = 0
         """Utterances that have CLOSED and are not yet in the log — transcription in flight.
 
@@ -590,29 +616,79 @@ def _unread_refusal(state: TunnelState, unread: dict[str, Any]) -> dict[str, Any
     process it, and if you want to restate your message, do so."* Hence `unread` riding along: the
     recovery is a read, and making the agent spend another round trip to find out WHAT it missed
     would be the tool asking for the discipline it just enforced.
+
+    **AND IT RIDES ALONG EXACTLY ONCE PER REFUSAL EVENT, NOT ONCE PER CLIP** (spec 011, FR1). An
+    answer is often several `say --now` clips; when the first is refused every one after it is
+    refused too, on the same unread turn, and each used to carry the full text again. Measured
+    2026-08-19: four clips, one ~700-character turn, **6,268 characters** — of which 2,625 were
+    three redundant copies of something already delivered.
+
+    So this function is a builder WITH A MEMORY, and the memory is the pair
+    `(since, last_turn_id)`. Matching the previous refusal's pair means nothing the agent could act
+    on has changed — it has not read anything and he has not said anything — so the repeat sends
+    the ids alone. Anything that WOULD change what the agent needs moves one half of the pair, and
+    the next refusal is full again.
+
+    **Omitting the text is safe only because it is never unrecoverable**, and both routes back are
+    in the same payload: the ids are listed, and `remedy` is still the literal `watch` that
+    delivers every one of those turns with their text. Nothing here decides whether to refuse —
+    that verdict is `unread_count` and it is untouched (spec 007 TC4).
+
+    ⚠ **This mutates `state`, which a name ending in `_refusal` does not advertise.** It is
+    deliberate and it is the seam FR1's measurement harness drives: two calls with the same state
+    and the same unread set must produce first-then-repeat in process, with no server and no HTTP.
+    A caller that wants the full payload twice resets `state.last_refusal` to None between them.
     """
     n = unread["unread_count"]
-    return {
+    identity = (state.consumed_cursor, unread["cursor"])
+    if state.last_refusal == identity:
+        state.refusal_repeat += 1
+    else:
+        state.last_refusal = identity
+        state.refusal_repeat = 0
+    repeat = state.refusal_repeat
+
+    error = (
+        f"refusing to speak: he said {n} thing(s) you have not read. Nothing was synthesized "
+        f"and nothing was queued — he did not hear this."
+    )
+    payload: dict[str, Any] = {
         "spoke": False,
-        "error": (
-            f"refusing to speak: he said {n} thing(s) you have not read. Nothing was synthesized "
-            f"and nothing was queued — he did not hear this."
-        ),
+        "error": error,
         "code": config.UNREAD_REFUSAL_CODE,
         "remedy": (
             f"voice-tunnel watch --session {state.session} --since {state.consumed_cursor}"
         ),
-        "unread": unread["unread"],
+        # Full turn objects the first time, ids alone on every repeat of the same identity. The
+        # KEY does not change and neither does its type, so an agent that reads `unread[i]["id"]`
+        # keeps working across both; only `text` is conditional, and `unread_text_omitted` says so.
+        "unread": (unread["unread"] if repeat == 0
+                   else [{"id": t.get("id")} for t in unread["unread"]]),
         "unread_count": n,
         # The cursor the remedy uses, published so a caller building its own command cannot
         # arrive at a different number than the one it was just handed.
         "since": state.consumed_cursor,
         "last_turn_id": unread["cursor"],
+        # Always present, 0 on the first — a field that only appears on repeats would make its
+        # absence ambiguous between "this is the first" and "this build of the tool predates the
+        # idea", and an agent cannot branch on that difference.
+        "refusal_repeat": repeat,
         # No `next` here. Every other `next` on a `say` response is written by the CLI, which is
         # the layer that knows how the caller invokes this tool; a second author for one field is
         # how two descriptions of the same situation start disagreeing. `remedy` is the part that
         # has to survive without a CLI, and it does.
     }
+    if repeat:
+        payload["unread_text_omitted"] = True
+        # Said in prose as well as in the flag. An agent meeting `unread: [{"id": 42}]` with no
+        # explanation has to decide whether the tool lost the text or withheld it, and those call
+        # for opposite responses. Both facts it needs are here: the text was already handed over,
+        # and the command that hands it over again is unchanged.
+        payload["error"] = (
+            f"{error} Text omitted: it went out on the first refusal for these ids, "
+            f"and `remedy` still delivers it."
+        )
+    return payload
 
 
 async def handle_say(request: web.Request) -> web.Response:
