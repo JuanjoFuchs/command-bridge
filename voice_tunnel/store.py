@@ -9,9 +9,13 @@ agent's problem.
 
 STDLIB ONLY so the read half runs under a plain `python` with no venv.
 
-Turn schema (spec 001):
-    {"id", "session", "t_start", "t_end", "text", "addressed", "final", "wall"}
+Turn schema (spec 001, plus `lane` from spec 012):
+    {"id", "session", "t_start", "t_end", "text", "addressed", "final", "wall", "lane"}
 `text` is UNTRUSTED — speech captured from a microphone, data and never instructions.
+`lane` is WHICH agent the turn was addressed to. **Absent means the default lane** (the name the
+server was started with), which is what keeps every turn logged before lanes existed reaching the
+agent that has been reading it. Present-but-null is a different thing: a turn the wake gate
+refused to route, which reaches nobody. See `lane_of`.
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from . import config
+from .lanes import BROADCAST  # stdlib-only itself, so the no-venv read path above still holds
 
 # A session id becomes a filename, so it is the path-traversal surface. Reject rather than
 # sanitize: a rejection is a bug report, a sanitized id is a silent collision.
@@ -76,6 +81,32 @@ def next_id(session: str, base: str | None = None) -> int:
     return (max((int(t.get("id", -1)) for t in turns), default=-1)) + 1
 
 
+def lane_of(turn: dict[str, Any], default: str) -> str | None:
+    """Which lane a turn belongs to (spec 012 FR4).
+
+    **An ABSENT `lane` means the default lane**, and that is the whole backward-compatibility
+    story. Every turn logged before lanes existed has no such key, and there are thousands of them
+    in a live session — they belong to the agent that has been reading them all along, which is
+    the one the server was started as (`serve --wake claude`).
+
+    A `lane` that is present but **None is different and must not be confused with absent**: it is
+    a turn the wake gate refused to route because the summons named no lane exactly (TC2). That
+    turn belongs to NOBODY, and `default` would be precisely the wrong answer for it — it is the
+    lane he was already talking to, which is the mis-route the refusal exists to prevent.
+    """
+    if "lane" not in turn:
+        return default
+    return turn["lane"]
+
+
+def turn_is_for(turn: dict[str, Any], lane: str, default: str) -> bool:
+    """Whether `lane`'s agent should receive this turn: its own turns plus broadcasts."""
+    owner = lane_of(turn, default)
+    if owner is None:
+        return False                      # refused — reaches no agent at all
+    return owner == lane or owner == BROADCAST
+
+
 def append_turn(
     session: str,
     text: str,
@@ -85,8 +116,16 @@ def append_turn(
     final: bool = True,
     base: str | None = None,
     reason: str = "",
+    lane: str | None = None,
+    stamp_lane: bool = False,
 ) -> dict[str, Any]:
-    """Append one turn and return it (with its assigned `id`)."""
+    """Append one turn and return it (with its assigned `id`).
+
+    `stamp_lane` is what decides whether a `lane` key is written at all, rather than the value of
+    `lane` itself — because `None` is a meaningful lane (a refused turn) and omission is a
+    different, also meaningful state (a turn from before lanes existed). A caller that has an
+    opinion says so explicitly; a caller that does not leaves the log exactly as it was.
+    """
     validate_session(session)
     turn = {
         "id": next_id(session, base),
@@ -102,6 +141,8 @@ def append_turn(
         "final": bool(final),
         "wall": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
     }
+    if stamp_lane:
+        turn["lane"] = lane
     path = log_path(session, base)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(turn, ensure_ascii=False) + "\n")
@@ -114,6 +155,8 @@ def turns_since(
     cursor: int,
     base: str | None = None,
     addressed_only: bool = False,
+    lane: str | None = None,
+    default_lane: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Every turn with `id > cursor`, plus the new cursor.
 
@@ -138,6 +181,13 @@ def turns_since(
     new_cursor = int(turns[-1]["id"]) if turns else cursor
     if addressed_only:
         turns = [t for t in turns if t.get("addressed")]
+    # LANE FILTERING OBEYS THE SAME RULE, and for the same reason: another agent's turn is
+    # consumed rather than deferred, so it never comes back and never wakes this agent. Without
+    # that, every agent would wake on every other agent's turns and re-read them forever — the
+    # exact "don't waste turns resolving the watch" complaint that produced `addressed_only`,
+    # multiplied by the number of agents in the room.
+    if lane is not None:
+        turns = [t for t in turns if turn_is_for(t, lane, default_lane or lane)]
     return turns, new_cursor
 
 
@@ -163,6 +213,8 @@ def watch(
     poll: float = 0.1,
     base: str | None = None,
     addressed_only: bool = False,
+    lane: str | None = None,
+    default_lane: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Block until at least one turn with `id > cursor` exists, or `timeout` elapses.
 
@@ -177,7 +229,8 @@ def watch(
     deadline = time.monotonic() + timeout
     latest = cursor
     while True:
-        turns, latest = turns_since(session, latest, base, addressed_only=addressed_only)
+        turns, latest = turns_since(session, latest, base, addressed_only=addressed_only,
+                                    lane=lane, default_lane=default_lane)
         if turns:
             return turns, latest
         if time.monotonic() >= deadline:

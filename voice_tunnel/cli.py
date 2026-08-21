@@ -19,6 +19,7 @@ import urllib.request
 from typing import Any
 
 from . import __version__, config, store
+from . import lanes as lanes_mod
 
 RUNTIME_SUFFIX = ".server.json"
 
@@ -667,6 +668,12 @@ DESCRIBE: dict[str, Any] = {
         "watch": {
             "args": {
                 "--session": "session id",
+                "--lane": "WHICH AGENT YOU ARE. Returns only the turns addressed to this lane, "
+                          "plus broadcasts; another agent's turns still advance your cursor, so "
+                          "they are consumed rather than re-read forever. Only needed once a "
+                          "second agent has joined (`voice-tunnel lane add <name>`) -- omit it in "
+                          "a single-agent session and you get every turn, exactly as before. It "
+                          "changes WHICH turns come back and never WHEN this call returns.",
                 "--since": "cursor; use -1 for 'from the beginning'. **IT IS A CEILING, NOT AN "
                            "ORDER.** This command resumes from the LOWER of your `--since` and "
                            "the server's `consumed_cursor`, so a cursor that has run ahead of "
@@ -749,7 +756,18 @@ DESCRIBE: dict[str, Any] = {
                 "finished": "bool — THE FIELD TO BRANCH ON. True means he is not speaking and you "
                             "may speak. Nothing else in this payload answers that question. It is "
                             "false for `ceiling`, `no_server` and `watch_open`.",
-                "reason": "turns | control | quiet | ceiling | no_server | watch_open",
+                "reason": "turns | control | lane | ambiguous | quiet | ceiling | no_server | "
+                          "watch_open",
+                "live_lane": "str — WHO HE IS TALKING TO, present whenever the lane moved or a "
+                             "summons could not be routed. Only ever set on a `--lane` watch",
+                "on_lane": "bool — present and FALSE when he has switched to another agent. This "
+                           "is NOT `listening`: the microphone is fine, you are simply not the "
+                           "one being addressed. Say so out loud before you go quiet, then wait "
+                           "on this same watch — it returns when he comes back to you",
+                "candidates": "[str, ...] — on `reason: ambiguous`, the lanes his summons was "
+                              "torn between. He said a name and it matched nobody exactly, so "
+                              "NOBODY heard it. You are being told because you are the lane he "
+                              "was already talking to: ask him which he meant, naming these",
                 "user_speaking": "bool — was he mid-sentence at the last look, COMBINED across "
                                  "both speech signals and pending transcription (not the raw "
                                  "client flag of the same name on `status`). **null means this "
@@ -888,6 +906,39 @@ DESCRIBE: dict[str, Any] = {
                      "Check this before believing any hypothesis about slowness: the network was "
                      "blamed twice and was under 0.1 s both times.",
         },
+        "lane": {
+            "args": {
+                "--session": "session id",
+                "list": "positional subcommand; every lane, which one is live, who is watching",
+                "add": "positional subcommand + <name>; register another agent so he can switch "
+                       "to it by saying its name. A name is ONE lowercase word -- it is matched "
+                       "as the single token after the greeting, so a space or a hyphen makes it "
+                       "unsayable and is refused",
+                "remove": "positional subcommand + <name>; drop a lane. If it was live, the "
+                          "conversation falls back to the default lane -- there is always "
+                          "exactly one live lane",
+                "switch": "positional subcommand + <name>; make a lane live without him saying "
+                          "its name. `everyone` is accepted and broadcasts to every lane",
+            },
+            "returns": {
+                "lane": "str -- the live lane, the one he is talking to right now",
+                "lanes": "[str, ...] -- every registered agent lane",
+                "default_lane": "str -- the lane this server was started as (`serve --wake`). "
+                                "Every turn logged before lanes existed belongs to it, and it "
+                                "cannot be removed",
+                "broadcast": "str -- the reserved name that addresses every lane at once",
+                "watching_lanes": "[str, ...] -- lanes with a wait open right now",
+                "note": "present only when a name you just added sounds like ordinary speech, "
+                        "with the words it collides with. REPORTED, NEVER ENFORCED",
+            },
+            "notes": "SEVERAL AGENTS, ONE MICROPHONE, ONE TRANSCRIPT. Saying a lane's name makes "
+                     "it live and it STAYS live -- he does not name an agent every turn. **Only "
+                     "an EXACT name switches.** A summons that merely sounds like a lane is "
+                     "refused rather than guessed at, because a mis-switch puts an instruction "
+                     "into the wrong agent's context where it cannot be recalled; the refusal "
+                     "costs one repeat. When that happens the LIVE lane's `watch` returns with "
+                     "`reason: ambiguous` and the candidates, so it can ask him which he meant.",
+        },
         "say": {
             "args": {"--session": "session id", "text": "positional; what to speak",
                      "--now": "FIRE-AND-FORGET: return immediately while the clip synthesizes "
@@ -896,7 +947,13 @@ DESCRIBE: dict[str, Any] = {
                               "response carries no real held_for/delivered, so those fields "
                               "cannot be trusted on a --now call; `voice-tunnel timing` has "
                               "the true numbers afterwards",
-                     "--voice": "piper voice NAME for this one line (see `voice-tunnel voices`)"},
+                     "--voice": "piper voice NAME for this one line (see `voice-tunnel voices`)",
+                     "--lane": "WHICH AGENT YOU ARE. Only needed once a second agent has joined "
+                               "(`voice-tunnel lane add <name>`); omit it in a single-agent "
+                               "session and nothing changes. Refused with code `off_lane` when "
+                               "he is talking to somebody else -- nothing is synthesized and "
+                               "nothing is queued, and the remedy is the watch that returns when "
+                               "he comes back to you"},
             "returns": {
                 "queued": "bool — the clip was synthesized and handed to the transport",
                 "id": "str — clip id",
@@ -2036,6 +2093,26 @@ def _controls(live: Any) -> dict[str, Any] | None:
     return {k: bool(live.get(k)) for k in CONTROL_FACTS}
 
 
+def _lane_signal(live: Any) -> dict[str, Any] | None:
+    """Who is being talked to, and how many summons could not be routed (spec 012).
+
+    **Deliberately NOT part of `_controls`**, which coerces every fact to a bool so that a client
+    COUNT cannot wake a watch. That coercion is right there and fatal here: every lane name is
+    truthy, so `bool("codex") == bool("claude")` and a switch would be invisible. These two facts
+    are compared by VALUE.
+
+    `ambiguous` is a monotonic counter rather than a flag for the same reason it is one on the
+    server: a flag that goes up and down between two polls is a flag that can be missed, and the
+    agent would see the same value twice and conclude nothing happened.
+
+    Absent keys read as None and compare equal to themselves, so a server that predates lanes
+    never fires this path — the same absent-is-not-false rule `watch_open` had to learn.
+    """
+    if not isinstance(live, dict) or live.get("error"):
+        return None
+    return {"lane": live.get("lane"), "ambiguous": live.get("ambiguous")}
+
+
 # `_ignored_flags` LIVED HERE AND IS GONE WITH THE COMMAND IT SERVED.
 #
 # It reported `--waits` and `--max-seconds` back to a caller as configuring nothing — accepted so
@@ -2083,7 +2160,7 @@ def _watch_payload(args, reason: str, turns: list, cursor: int, rounds: int, sta
     return out
 
 
-def _watch_closed(session: str, empty: bool = False) -> None:
+def _watch_closed(session: str, empty: bool = False, lane: str | None = None) -> None:
     """A watch has returned, so the agent is no longer listening — it is thinking.
 
     Called on EVERY exit from `cmd_watch`, including the empty heartbeat, because the moment the
@@ -2097,7 +2174,10 @@ def _watch_closed(session: str, empty: bool = False) -> None:
     before I speak?" and the answer was no — which is what lets the next call go back to blocking
     instead of returning instantly forever. See TunnelState.agent_holds_turns.
     """
-    _request(session, "/watching", {"open": False, "empty": bool(empty)})
+    payload: dict[str, Any] = {"open": False, "empty": bool(empty)}
+    if lane:
+        payload["lane"] = lane
+    _request(session, "/watching", payload)
 
 
 def _resume_cursor(since: int, status: Any) -> int:
@@ -2241,17 +2321,35 @@ def cmd_watch(args) -> dict[str, Any]:
     # Refused rather than reported, because the caller here is usually a watchdog following a
     # rule, and a rule that returns a warning gets followed anyway.
     status_pre = _request(args.session, "/status")
-    if (isinstance(status_pre, dict) and status_pre.get("watch_open") is True
-            and not getattr(args, "force", False)):
+    # THE GUARD IS PER LANE, NOT PER SESSION (spec 012 TC7). The reason for it is unchanged and
+    # still right: two waits on one log race for the same turns, so one cursor silently falls
+    # behind. But N agents watching N lanes is the NORMAL case now, and a session-wide flag would
+    # refuse every agent after the first — the feature would not work at all for its second user.
+    #
+    # `watching_lanes` ABSENT means a server that predates lanes, which is NOT the same as a
+    # server reporting nobody is waiting. Fall back to the session-wide flag there, the same
+    # distinction `watch_open` itself had to learn.
+    my_lane = getattr(args, "lane", None)
+    watching_lanes = status_pre.get("watching_lanes") if isinstance(status_pre, dict) else None
+    if my_lane and isinstance(watching_lanes, list):
+        already = my_lane in watching_lanes
+        contested = f"lane {my_lane!r}"
+    else:
+        already = isinstance(status_pre, dict) and status_pre.get("watch_open") is True
+        contested = "this session"
+    if already and not getattr(args, "force", False):
+        lane_flag = f" --lane {my_lane}" if my_lane else ""
         return {
             "turns": [], "cursor": args.since, "count": 0,
             "finished": False, "reason": "watch_open",
-            "error": "a wait is already open on this session",
+            "error": f"a wait is already open on {contested}",
             "watch_open": True,
+            "lane": my_lane,
             "hint": "another process is already blocking on this log; a second would race it "
                     "for turns and leave one of the two cursors behind",
             "next": f"do nothing — the running wait has it. If you are certain it is dead: "
-                    f"`voice-tunnel watch --session {args.session} --since {args.since} --force`",
+                    f"`voice-tunnel watch --session {args.session}{lane_flag} "
+                    f"--since {args.since} --force`",
         }
     # THE CURSOR IS RESOLVED BEFORE ANYTHING READS THE LOG, and from `status_pre` — the /status
     # this command already fetched for the concurrent-waiter guard, so the clamp costs no round
@@ -2268,7 +2366,8 @@ def cmd_watch(args) -> dict[str, Any]:
         {"since_requested": since_requested, "resumed_from": resumed_from}
         if resumed_from != since_requested else {}
     )
-    _request(args.session, "/watching", {"open": True})
+    _request(args.session, "/watching",
+             {"open": True, **({"lane": args.lane} if getattr(args, "lane", None) else {})})
     # `--since -1` means "from the beginning", which by convention is the FIRST watch of a
     # session. That is the one moment an agent is oriented rather than mid-conversation, so it is
     # where the watchdog instruction belongs. `serve` says it too, but `serve` is run detached and
@@ -2334,6 +2433,9 @@ def cmd_watch(args) -> dict[str, Any]:
     cursor = resumed_from
     rounds = 0
     changed: dict[str, Any] | None = None
+    lane_event: dict[str, Any] | None = None
+    lane_baseline = _lane_signal(status0)
+    default_lane = status0.get("default_lane") if isinstance(status0, dict) else None
     talking = _still_talking(status0)
     ack: Any = None
     while True:
@@ -2358,7 +2460,8 @@ def cmd_watch(args) -> dict[str, Any]:
             slice_s = max(0.0, min(WATCH_POLL_IDLE_S, remaining))
         turns, cursor = store.watch(
             args.session, cursor, timeout=slice_s,
-            addressed_only=not getattr(args, "all_turns", False))
+            addressed_only=not getattr(args, "all_turns", False),
+            lane=my_lane, default_lane=default_lane)
         if turns:
             # HE IS STILL GOING, or he has just started. Either way this is not a reason to
             # return — one thought routinely arrives as several turns, and answering the first
@@ -2389,11 +2492,21 @@ def cmd_watch(args) -> dict[str, Any]:
             # muted" call for opposite responses and an agent should not have to reconstruct
             # which happened from two dictionaries.
             changed = {k: now[k] for k in now if now[k] != baseline[k]}
+        # THE LANE MOVED, so this agent is no longer the one being talked to (spec 012). It goes
+        # through the existing control-change seam rather than a new one — a lane switch is a
+        # button he pressed, whether by voice or by tap, exactly like mute. Handled separately
+        # from `_controls` only because that helper coerces every fact to a bool, which would make
+        # every lane name compare equal to every other.
+        lane_now = _lane_signal(live)
+        if lane_baseline is not None and lane_now is not None and lane_now != lane_baseline:
+            lane_event = {
+                k: lane_now[k] for k in lane_now if lane_now[k] != lane_baseline[k]
+            }
         # THE ONE RULE. Everything above gathers; this decides. A return is only permitted at a
         # quiet moment, whatever it is returning — and after the FR1 fix a muted, released or
         # disconnected microphone reads as quiet at the source, so none of those can wedge it.
         if not talking:
-            if collected or changed:
+            if collected or changed or lane_event:
                 break
             # HE IS NOT SPEAKING AND THERE IS NOTHING TO REPORT. His own design statement is the
             # rule here: *"the watch was going to hold if the client detected that I was sending
@@ -2409,7 +2522,7 @@ def cmd_watch(args) -> dict[str, Any]:
             # disguised as silence: `finished: false` says he was STILL TALKING when time ran
             # out, which is not the same fact as him having stopped.
             _set_empty_streak(args.session, 0)
-            _watch_closed(args.session, empty=False)
+            _watch_closed(args.session, empty=False, lane=getattr(args, "lane", None))
             return _watch_payload(
                 args, "ceiling", collected, cursor, rounds, started, talking, live,
                 next=f"run `voice-tunnel watch --session {args.session} --since {cursor}` again — "
@@ -2421,9 +2534,51 @@ def cmd_watch(args) -> dict[str, Any]:
     # ONE PAYLOAD BUILDER FOR EVERY EXIT. Five different ways out of the old pre-reply loop was
     # five chances for the `turns` an agent is waiting on to be missing from whichever branch took
     # a shortcut, so nothing returns without them — not even the failures.
-    reason = "turns" if turns else ("control" if changed else "quiet")
+    # A LANE EVENT OUTRANKS `quiet` AND NEVER OUTRANKS `turns`. Turns are what he said, and they
+    # are always the more important thing in the payload; a lane change explains why there are no
+    # more of them coming to this agent.
+    lane_reason = None
+    if lane_event:
+        # An unroutable summons and a switch are different events and get different names. Both
+        # are checked, and `ambiguous` wins, because it is the one that needs somebody to speak.
+        if lane_event.get("ambiguous") is not None:
+            lane_reason = "ambiguous"
+        elif "lane" in lane_event:
+            lane_reason = "lane"
+    reason = "turns" if turns else (lane_reason or ("control" if changed else "quiet"))
     result = _watch_payload(args, reason, turns, cursor, rounds, started, talking, live,
                             **clamped)
+    if lane_event and isinstance(live, dict):
+        # WHO HE IS TALKING TO NOW, always — not only when it changed. An agent that has just been
+        # told the conversation moved needs to know where it moved TO in order to say anything
+        # sensible about it, and making it fetch that separately is a round trip at the one moment
+        # it is trying to get out of the way.
+        result["live_lane"] = live.get("lane")
+        result["lane"] = my_lane
+        if lane_reason == "ambiguous":
+            # He said a name and it matched nobody exactly, so the turn reached no agent at all.
+            # This lane is being told because it is the one he was already talking to, and it is
+            # therefore the one that can sensibly ask him which he meant.
+            result["event"] = "ambiguous"
+            result["candidates"] = live.get("last_ambiguous") or []
+            result["hint"] = (
+                "he summoned somebody and it matched no lane exactly, so nothing was routed and "
+                "nobody heard it. Ask him which he meant — naming the candidates is faster for "
+                "him than starting over"
+            )
+        else:
+            result["event"] = "lane"
+            if live.get("lane") != my_lane and my_lane:
+                # NOT `listening`. That field answers "can he be HEARD" — the microphone, the orb,
+                # the mute — and all of that is still true here. Conflating it with "he is not
+                # talking to YOU" would destroy both facts, which is the same defect as publishing
+                # mute through `agent_state`. A different question gets a different field.
+                result["on_lane"] = False
+                result["hint"] = (
+                    f"he is talking to {live.get('lane')!r} now, not to you. Nothing more will "
+                    f"arrive on this lane until he comes back; say so out loud before you go "
+                    f"quiet, then wait on this same watch"
+                )
     if changed:
         # The EVENT is named, not merely implied by a diff, because "he unmuted" and "he muted"
         # call for opposite responses and an agent should not have to reconstruct which happened
@@ -2542,7 +2697,7 @@ def cmd_watch(args) -> dict[str, Any]:
         _set_empty_streak(args.session, 0)
     # `empty` ends the batch of unanswered turns on the server, so the NEXT call goes back to
     # blocking instead of answering instantly forever. See TunnelState.agent_holds_turns.
-    _watch_closed(args.session, empty=not turns)
+    _watch_closed(args.session, empty=not turns, lane=getattr(args, "lane", None))
     return result
 
 
@@ -2629,7 +2784,24 @@ def cmd_say(args) -> dict[str, Any]:
         payload["voice"] = args.voice
     if getattr(args, "now", False):
         payload["async"] = True
+    if getattr(args, "lane", None):
+        payload["lane"] = args.lane
     result = _request(args.session, "/say", payload)
+    if isinstance(result, dict) and result.get("code") == "off_lane":
+        # HE IS TALKING TO SOMEBODY ELSE, so nothing was spoken and nothing was queued. Same shape
+        # as the unread refusal below and for the same reason — a refusal that has already played
+        # audio is not a refusal, it is an interruption with an apology attached.
+        live = result.get("live_lane")
+        _emit_next(
+            result, args.session, "say", "off_lane",
+            f"run `voice-tunnel watch --session {args.session} "
+            f"--lane {getattr(args, 'lane', '') or ''} --since <cursor>`",
+            f"NOT SPOKEN — he is talking to '{live}' right now, and cutting in would be talking "
+            f"over that conversation. Wait for him: the watch above returns the moment he comes "
+            f"back to you. Your reply is not lost; it was never said, so restate it then if it "
+            f"has gone stale.",
+        )
+        return result
     if isinstance(result, dict) and result.get("code") == config.UNREAD_REFUSAL_CODE:
         # THE REFUSAL, AND NOTHING ELSE RUNS. The server did not speak, so every branch below —
         # each of which is about the fate of a clip that exists — would be describing an event
@@ -2813,6 +2985,53 @@ def cmd_rate(args) -> dict[str, Any]:
             f"— no server is running to change right now"
         ),
     }
+
+
+def cmd_lane(args) -> dict[str, Any]:
+    """Who is in the meeting, and who he is talking to (spec 012).
+
+    Several agents can share one microphone and one transcript. Exactly one lane is **live**, and
+    saying its name switches to it — *"hey Codex"* moves the conversation to Codex and it stays
+    there until something moves it again. A turn is stamped with the lane it was addressed to, and
+    `watch --lane` returns only that lane's turns plus broadcasts, so an off-lane agent does not
+    receive the turn at all rather than receiving it and being asked to ignore it.
+
+    **Only an EXACT lane name switches a lane.** A summons that sounds close to a lane but is not
+    one is refused rather than guessed at, because a mis-switch puts an instruction into the wrong
+    agent's context where it cannot be recalled — see spec 012 TC2 for the measurements that
+    settled it. A refusal costs one repeat, which is the cheaper of the two errors by a wide
+    margin.
+
+    Registering a lane is how a second agent joins. There is no lane for an agent that never says
+    so, deliberately: an implicit registration on first use would make a typo into a silent
+    third participant that nothing ever speaks to.
+    """
+    action = getattr(args, "lane_action", None) or "list"
+    name = getattr(args, "name", None)
+    payload: dict[str, Any] = {"action": action}
+    if name:
+        payload["name"] = name
+    result = _request(args.session, "/lane", payload)
+    if not isinstance(result, dict) or result.get("error"):
+        return result
+
+    # WHAT A NAME COSTS, reported at the moment it is chosen and never enforced. Proximity to
+    # ORDINARY SPEECH is what predicts a refused summons — measured, every one was `grok` against
+    # `go`, `got` and `god`. Proximity to another LANE predicts nothing: `claude` and `codex`
+    # score 0.55 against each other and cost nothing at all. So this is a number he can act on,
+    # not a rule that would have rejected the primary pair at registration.
+    if action == "add" and name:
+        collides = lanes_mod.confusability(str(name), config.ORDINARY_WORDS)
+        if collides:
+            result["note"] = (
+                f"'{name}' sounds like ordinary speech ({', '.join(collides)}), so a summons "
+                f"meant for it will sometimes be refused and need repeating. Kept, not refused — "
+                f"a name that costs an occasional repeat is your call"
+            )
+    result["next"] = (
+        f"voice-tunnel watch --session {args.session} --lane {result.get('lane')} --since -1"
+    )
+    return result
 
 
 def cmd_wake(args) -> dict[str, Any]:
@@ -3993,6 +4212,10 @@ def build_parser() -> argparse.ArgumentParser:
                             "change when the wait decides he has stopped talking — nothing does")
         q.add_argument("--force", action="store_true",
                        help="start even if another wait is already open on this session")
+        q.add_argument("--lane", default=None,
+                       help="only return turns addressed to this lane, plus broadcasts. Omit it "
+                            "and you get every turn, which is right for a single-agent session "
+                            "and wrong the moment a second agent joins")
         q.add_argument("--all-turns", action="store_true",
                        help="also return turns the wake gate judged were NOT for you (someone "
                             "else in the room). Off by default: those turns still advance the "
@@ -4004,6 +4227,9 @@ def build_parser() -> argparse.ArgumentParser:
     y = sub.add_parser("say", help="speak text to the connected client")
     y.add_argument("--session", default="dev")
     y.add_argument("--voice", default=None, help="piper voice NAME (see `voice-tunnel voices`)")
+    y.add_argument("--lane", default=None,
+                   help="which lane you are speaking as. Refused with `off_lane` when he is "
+                        "talking to somebody else -- nothing is synthesized and nothing is queued")
     y.add_argument(
         "--now",
         action="store_true",
@@ -4063,6 +4289,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help="voice name (default en_GB-alan-medium) or ASR model (default parakeet)")
     dw.add_argument("--list", action="store_true", help="list without downloading anything")
     dw.add_argument("--force", action="store_true", help="re-download even if already present")
+
+    ln = sub.add_parser("lane", help="several agents on one microphone: who is in, who is live")
+    ln.add_argument("--session", default="dev")
+    lns = ln.add_subparsers(dest="lane_action", required=False)
+    lns.add_parser("list", help="every lane, which one is live, and which are being watched")
+    lna = lns.add_parser("add", help="register another agent's lane")
+    lna.add_argument("name")
+    lnr = lns.add_parser("remove", help="drop a lane; the live one falls back to the default")
+    lnr.add_argument("name")
+    lnw = lns.add_parser("switch", help="make a lane live without saying its name out loud")
+    lnw.add_argument("name")
 
     wk = sub.add_parser("wake", help="what the agent answers to after 'hey'; persists, live")
     wk.add_argument("--session", default="dev")
@@ -4204,6 +4441,7 @@ def main(argv=None) -> int:
         # minute, which is why the name that survived is the one already in circulation.
         "watch": cmd_watch,
         "say": cmd_say,
+        "lane": cmd_lane,
         "status": cmd_status,
         "stop": cmd_stop,
         "turns": cmd_turns,

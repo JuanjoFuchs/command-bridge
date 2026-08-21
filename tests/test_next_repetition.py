@@ -107,7 +107,7 @@ def _watch(monkeypatch, live, turns=(), session=SESSION):
                         lambda s, path, payload=None: dict(live) if path == "/status" else {})
     handed = {"done": False}
 
-    def log(sess, cursor, timeout=0.0, addressed_only=True):
+    def log(sess, cursor, timeout=0.0, addressed_only=True, lane=None, default_lane=None):
         if turns and not handed["done"]:
             handed["done"] = True
             return list(turns), turns[-1]["id"]

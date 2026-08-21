@@ -216,7 +216,8 @@ def watch(session: str, live: dict, since: int) -> dict:
     """One `watch` against a scripted `/status` and an empty log — the quiet steady state."""
     saved_request, saved_watch = cli._request, cli.store.watch
     cli._request = lambda _s, path, payload=None: dict(live) if path == "/status" else {}
-    cli.store.watch = lambda _sess, cursor, timeout=0.0, addressed_only=True: ([], cursor)
+    cli.store.watch = (lambda _sess, cursor, timeout=0.0, addressed_only=True,
+                      lane=None, default_lane=None: ([], cursor))
     try:
         return cli.cmd_watch(types.SimpleNamespace(
             session=session, since=since, timeout=0.0, force=False, all_turns=False))

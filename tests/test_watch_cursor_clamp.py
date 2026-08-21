@@ -118,8 +118,14 @@ class Fake:
             return {}
         return dict(self.status)
 
-    def watch(self, session, cursor, timeout=0.0, addressed_only=True):
+    def watch(self, session, cursor, timeout=0.0, addressed_only=True,
+              lane=None, default_lane=None):
+        # The new lane parameters are named EXPLICITLY rather than swallowed by a **kwargs
+        # catch-all. This stub's value is that it fails loudly when the real signature moves under
+        # it — which is exactly what it just did — and a catch-all would trade that for silence.
         self.cursors.append(cursor)
+        self.lanes_seen = getattr(self, "lanes_seen", [])
+        self.lanes_seen.append(lane)
         self.polls += 1
         if self.log is not None:
             fresh = [t for t in self.log if t["id"] > cursor]

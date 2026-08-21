@@ -256,6 +256,18 @@ the drop the cursor contract exists to prevent:** `watch --since <cursor>` alrea
 agent loses nothing while it thinks, so busy-ness is *already solved* and does not need a second, worse
 mechanism. Every lane gets the turn; each reads it when it next watches.
 
+**The refusal is announced by the AGENT, not by a sound — and my own implementation task was wrong about
+this.** TC2 asks that a refusal be "said audibly", and the obvious reading is a new cue. The repo has
+already refused that, in an executable guard whose docstring is explicit: *"a fifth (a quieter capture
+tick, to buy back the liveness signal) is his call, not the implementer's."* I had written the fifth cue
+and the test caught it, which is the guard doing precisely its job.
+
+**It is right for a better reason than vocabulary size.** A cue can only say that *something* went wrong.
+An agent can say *"did you mean Claude or Codex?"* — so the signal goes to the layer that owns words, and
+the tunnel keeps holding none. The wait of the **live lane** returns with `reason: "ambiguous"` and the
+candidates; that lane is the one he was already talking to, so it is a lookup rather than a guess about
+who should ask. Whether a sound is *also* wanted stays open, and stays his.
+
 **An agent IS told it went off-lane, on the wait it is already sitting in.** `watch` already returns for a
 turn *or a control change*, whichever comes first — that is how pressing mute becomes visible to the agent.
 A lane switch is a control change, so this is registration in an existing seam and not new machinery. The
@@ -291,6 +303,16 @@ window grant, which is why 954 of the 1,056 wake-granted turns in the corpus mat
 Any analysis that reads `reason == "wake"` as "a summons was spoken" over-counts by roughly 10×. The
 routing code must branch on the *grant* (`WakeGate.last_grant`), which already distinguishes them, and not
 on the persisted reason.
+
+**Findings — tests this spec changed, and why none of them was weakened.** AC-15 forbids weakening a
+test to accommodate lanes, so every existing test that moved is listed here with its justification.
+
+| Test | Change | Why it is not a weakening |
+|---|---|---|
+| `test_no_flag_anywhere_on_say_disables_the_check` | `--lane` added to the allowed flag set | The guard exists to force a deliberate look at any new flag, and asks outright whether it is a way around the refusal. **It is not, structurally:** every branch `--lane` opens on the server *returns an error* (`unknown_lane` or `off_lane`), so it can only ADD a way to be refused, and the unread check still runs on every path that reaches speech. It makes `say` strictly harder to use |
+| `test_the_wait_has_no_flag_that_changes_when_it_returns` | `--lane` added to the allowed flag set | `--lane` changes WHICH turns come back, never WHEN the wait returns — the same kind of flag as `--all-turns`, which the set already allowed for the same reason. No value of it reaches the speech signals the return is gated on |
+| Four `store.watch` stubs (`test_watch`, `test_watch_backoff`, `test_watch_cursor_clamp`, `test_next_repetition`) and one in `scripts/contextcost.py` | new parameters named explicitly | A test double whose signature has drifted from the real one. Named explicitly rather than swallowed by a `**kwargs` catch-all, because the value of these stubs is that they fail loudly when the real signature moves — which is exactly what they just did |
+| `test_spawning_piper_is_reported_as_degraded` | assertion narrowed to its own stated claim | Committed separately, since it is nobody's feature. Strictly **stronger** where it previously fired; see that commit |
 
 **Findings — TC3.** The existing undelivered queue has two flush triggers — client reconnect and channel
 reopen — and both are present and look correct, so the reported total loss of nine clips is not a missing
@@ -354,22 +376,21 @@ New error codes, per convention 8 (`{error, code, remedy}`):
 
 ### Slice A — routing (FR1–FR5, FR9)
 
-- [ ] A lane registry on the server: N lanes, one live, the `--wake` lane registered as default at startup.
-- [ ] `lane` subcommand — `list` / `add` / `remove` / `switch`. `add` refuses a malformed, duplicate or
+- [x] A lane registry on the server: N lanes, one live, the `--wake` lane registered as default at startup.
+- [x] `lane` subcommand — `list` / `add` / `remove` / `switch`. `add` refuses a malformed, duplicate or
       reserved name and REPORTS confusability rather than refusing on it (TC8).
-- [ ] Resolve the lane in the wake gate per the TC2 table; return the resolved lane and the grant alongside
+- [x] Resolve the lane in the wake gate per the TC2 table; return the resolved lane and the grant alongside
       the existing `(addressed, text)` verdict.
-- [ ] Stamp the turn with its lane at append time, once, at the point of the gate decision (NFR2).
-- [ ] `store.turns_since` / `store.watch` filter by lane the way they already filter by `addressed_only`,
+- [x] Stamp the turn with its lane at append time, once, at the point of the gate decision (NFR2).
+- [x] `store.turns_since` / `store.watch` filter by lane the way they already filter by `addressed_only`,
       with the same rule that a skipped turn still advances the cursor.
-- [ ] `watch --lane`; the single-waiter guard keyed on `(session, lane)` (TC7).
-- [ ] `say --lane`; refuse a foreign lane with `off_lane`.
-- [ ] Live lane published in `/status` and broadcast to clients on change.
-- [ ] `watch` returns on a lane change with `reason: "lane"` and the new `live_lane`.
-- [ ] An audible signal on an ambiguous refusal. ⚠ **This adds a fifth sound to a four-sound vocabulary,
-      which the repo records as JJ's call to make** — ship it behind the existing cue mechanism, name it in
-      the handoff, and let him remove it if he does not want it.
-- [ ] `describe` updated in the same commit (convention 3); `ai-docs/reference/turn-log.md` updated with the
+- [x] `watch --lane`; the single-waiter guard keyed on `(session, lane)` (TC7).
+- [x] `say --lane`; refuse a foreign lane with `off_lane`.
+- [x] Live lane published in `/status` and broadcast to clients on change.
+- [x] `watch` returns on a lane change with `reason: "lane"` and the new `live_lane`.
+- [x] Tell somebody about an ambiguous refusal — see *the refusal is announced by the agent, not by a
+      sound* below. The wait of the LIVE lane returns with `reason: "ambiguous"` and the candidates.
+- [x] `describe` updated in the same commit (convention 3); `ai-docs/reference/turn-log.md` updated with the
       `lane` field and the absent-means-default rule.
 
 ### Slice B — lanes UI (FR6, FR7, FR8) — does not begin until AC-16 passes
@@ -387,43 +408,45 @@ Every criterion names its validation method. `corpus` means replayed against the
 
 ### Slice A — routing
 
-- [ ] **AC-1** `unit` — **TC1, TC2.** The TC2 table is a pure function of `(token, lanes, current)`. All five rows are
+- [x] **AC-1** `unit` — **TC1, TC2.** The TC2 table is a pure function of `(token, lanes, current)`. All five rows are
       covered, including both tie cases, and it returns one of `switch` / `stay` / `refuse` and never
       raises on an empty or non-ASCII token.
-- [ ] **AC-2** `corpus` — **NFR3, the regression guard.** Every turn in `sessions/*.jsonl` replayed through
+- [x] **AC-2** `corpus` — **NFR3, the regression guard.** Every turn in `sessions/*.jsonl` replayed through
       the new gate with a single registered lane produces a byte-identical `(addressed, reason)` verdict to
       today's. Any difference fails.
-- [ ] **AC-3** `corpus` — **FR2, TC1.** With lane set `{claude, codex}`, replaying the corpus produces **zero** switches to
+- [x] **AC-3** `corpus` — **FR2, TC1.** With lane set `{claude, codex}`, replaying the corpus produces **zero** switches to
       a lane the token did not name exactly. The mis-route count is asserted at 0, not merely reported.
-- [ ] **AC-4** `unit` — `"hey codex run the tests"` yields ONE turn stamped `lane: "codex"` whose text is
+- [x] **AC-4** `unit` — `"hey codex run the tests"` yields ONE turn stamped `lane: "codex"` whose text is
       unmodified and still contains the wake phrase (FR3, and the existing never-strip rule).
-- [ ] **AC-5** `unit` — **FR2, NFR2.** A turn with no wake phrase, inside the conversation window, is stamped with the
+- [x] **AC-5** `unit` — **FR2, NFR2.** A turn with no wake phrase, inside the conversation window, is stamped with the
       **current** lane and does not switch it (stickiness).
-- [ ] **AC-6** `unit` — **TC2.** An ambiguous token yields `addressed: false`, `lane: null`, and a `reason` beginning
+- [x] **AC-6** `unit` — **TC2.** An ambiguous token yields `addressed: false`, `lane: null`, and a `reason` beginning
       `ambiguous:` that names the candidates. It is returned to **no** lane's `watch`.
-- [ ] **AC-7** `integration` — **FR4, FR5, TC6.** `watch --lane codex` returns codex turns and `everyone` turns, never a
+- [x] **AC-7** `integration` — **FR4, FR5, TC6.** `watch --lane codex` returns codex turns and `everyone` turns, never a
       `claude` turn, and the cursor advances past the turns it filtered out (the existing skipped-turns-are-
       consumed rule).
-- [ ] **AC-8** `integration` — **FR4, TC6.** A turn with **no** `lane` field is returned to the default lane's watch and to
+- [x] **AC-8** `integration` — **FR4, TC6.** A turn with **no** `lane` field is returned to the default lane's watch and to
       no other, proving the 1,866 turns already on disk keep working.
-- [ ] **AC-9** `integration` — Two waits on the SAME `(session, lane)`: the second is refused with
+- [x] **AC-9** `integration` — Two waits on the SAME `(session, lane)`: the second is refused with
       `watch_open`. Two waits on DIFFERENT lanes of the same session: **both run** (TC7).
-- [ ] **AC-10** `integration` — **FR9.** `say --lane <not mine>` returns `{error, code: "off_lane", remedy}`, exit 1,
+- [x] **AC-10** `integration` — **FR9.** `say --lane <not mine>` returns `{error, code: "off_lane", remedy}`, exit 1,
       and **nothing is synthesized and nothing is queued** — verified by the absence of a spoken record, the
       same way the spec 007 refusal is verified.
-- [ ] **AC-11** `integration` — **FR1, FR9.** A lane switch returns an open `watch` on the lane that just lost the
+- [x] **AC-11** `integration` — **FR1, FR9.** A lane switch returns an open `watch` on the lane that just lost the
       conversation, with `reason: "lane"` and the new `live_lane`.
-- [ ] **AC-12** `unit` — **FR1, TC8.** `lane add everyone` is refused with `lane_exists`, as is a duplicate
+- [x] **AC-12** `unit` — **FR1, TC8.** `lane add everyone` is refused with `lane_exists`, as is a duplicate
       and a name that is not a single word token. **`lane add codex` alongside `claude` SUCCEEDS** — the
       pair scores 0.55 against each other and must not be treated as a collision, which is the specific
       regression this criterion exists to prevent.
-- [ ] **AC-13** `unit` — **NFR1.** Lane resolution is a pure function of state already in memory:
+- [x] **AC-13** `unit` — **NFR1.** Lane resolution is a pure function of state already in memory:
       it takes the lane set and the live lane as arguments, performs no I/O, and is called in the same
       pass as the wake verdict. Asserted by calling it with no server, no socket and no session directory.
-- [ ] **AC-14** `unit` — `describe` lists `lane`, every new flag, and all four new error codes, and the
+- [x] **AC-14** `unit` — `describe` lists `lane`, every new flag, and all four new error codes, and the
       existing describe-agrees-with-itself test passes unchanged.
-- [ ] **AC-15** `unit` — The full existing suite still passes: **1,083 passed, 2 skipped**, no test deleted or
-      weakened to accommodate lanes.
+- [x] **AC-15** `unit` — The full existing suite still passes. **Baseline 1,083 passed / 2 skipped; now
+      1,172 passed / 3 skipped** (89 added; the extra skip is the worktree having no piper voice on disk).
+      No test deleted. Four were TOUCHED and each is recorded in *Findings — tests this spec changed*;
+      none was weakened.
 
 ### Slice B — the UI and the hold
 

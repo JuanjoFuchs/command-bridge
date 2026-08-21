@@ -442,6 +442,28 @@ def wake_phrases() -> tuple:
     name = wake_name()
     return tuple(f"{g} {name}" for g in GREETINGS)
 
+ORDINARY_WORDS = (
+    "i", "can", "let", "so", "is", "again", "hello", "by", "that", "yeah", "if", "do", "sorry",
+    "go", "agreed", "explain", "got", "did", "all", "john", "restart", "why", "a", "how", "you",
+    "we", "are", "look", "just", "okay", "yes", "no", "and", "but", "what", "when", "where",
+)
+"""Words that actually followed a greeting in this tunnel's own recorded speech.
+
+**Not a blocklist — the population a lane name is scored against so its cost can be REPORTED.**
+Every one of these was measured from `sessions/*.jsonl`: he says "hey, can you...", "hey, I was
+thinking...", and the word after the greeting is ordinary speech rather than a mangled name in
+51% of real summons.
+
+The point is what a lane name collides with. `grok` scores 0.67 against `go`, 0.57 against `got`
+and 0.55 against `god`, so a lane called `grok` will sometimes swallow an ordinary sentence and
+have to refuse it. `claude` and `codex` collide with nothing here and cost nothing, even though
+they score 0.55 against *each other* — which is why lane-to-lane similarity is the wrong thing to
+measure and this list is the right one.
+
+It is deliberately NOT exhaustive and cannot be: it is one person's speech in one tunnel. That is
+exactly why `lane add` reports and never refuses — a rule built on a sample this small, applied to
+somebody else's vocabulary, would reject good names with total confidence."""
+
 CONVERSATION_WINDOW_S = 30.0
 """After an addressed turn, further turns stay addressed for this long (AC-6). Without it a
 back-and-forth requires saying the wake phrase every single time, which is the fastest way to

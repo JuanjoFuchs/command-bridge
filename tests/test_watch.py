@@ -84,7 +84,8 @@ class Fake:
             return {}
         return self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
 
-    def watch(self, session, cursor, timeout=0.0, addressed_only=True):
+    def watch(self, session, cursor, timeout=0.0, addressed_only=True,
+              lane=None, default_lane=None):
         self.timeouts.append(round(timeout, 3))
         turns = self.turns_at.get(self.polls, [])
         self.polls += 1
@@ -371,8 +372,13 @@ def test_the_wait_has_no_flag_that_changes_when_it_returns():
     flags = {o for a in sub.choices["watch"]._actions for o in a.option_strings}
 
     assert "--waits" not in flags and "--max-seconds" not in flags
+    # `--lane` (spec 012) changes WHICH turns come back, never WHEN the wait returns. It is the
+    # same kind of flag as `--all-turns`, which this set already allows for the same reason: both
+    # filter the result, and neither touches the speech signals the return is gated on. The defect
+    # this guard exists to prevent is a caller being able to tune the stopped-talking decision,
+    # and no value of `--lane` reaches it.
     assert flags == {"-h", "--help", "--session", "--since", "--timeout", "--force",
-                     "--all-turns"}
+                     "--all-turns", "--lane"}
 
 
 def test_the_retired_name_is_not_dispatchable_at_all(capsys):

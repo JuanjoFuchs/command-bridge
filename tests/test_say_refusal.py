@@ -229,7 +229,13 @@ def test_no_flag_anywhere_on_say_disables_the_check():
                if isinstance(a, _argparse._SubParsersAction))
     flags = {o for a in sub.choices["say"]._actions for o in a.option_strings}
 
-    assert flags == {"-h", "--help", "--session", "--voice", "--now"}, (
+    # `--lane` (spec 012) was added and given exactly the deliberate look this guard demands.
+    # It is NOT a way around the refusal, and the reason is structural rather than a promise:
+    # every branch it opens on the server RETURNS AN ERROR — `unknown_lane` or `off_lane` — so it
+    # can only ever ADD a way to be refused. No value of it reaches synthesis, and the unread
+    # check below it still runs on every path that does. It makes `say` strictly harder to use,
+    # which is the opposite of the thing this test is guarding against.
+    assert flags == {"-h", "--help", "--session", "--voice", "--now", "--lane"}, (
         "a new flag on `say` needs a deliberate look: is it a way around the refusal?"
     )
     for banned in ("--force", "--anyway", "--no-check", "--skip-unread", "--ignore-unread",

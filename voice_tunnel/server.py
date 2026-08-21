@@ -26,6 +26,7 @@ from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
 from . import config, cues, security, speech, store, timing, tts, turndetect, voiceprint
+from . import lanes as lanes_mod
 from .wake import WakeGate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -46,6 +47,13 @@ class TunnelState:
         self.started_at = time.time()
         self.clients: set[web.WebSocketResponse] = set()
         self.wake = WakeGate(enabled=gate_enabled)
+        self.lanes = lanes_mod.LaneRegistry(lanes_mod.lane_name_for_wake(config.wake_name()))
+        """Who is in the meeting, and who is being talked to (spec 012 FR1).
+
+        The server's own `--wake` name is the DEFAULT lane, and it is the lane every turn already
+        on disk belongs to — those turns carry no `lane` key, and a live session has thousands of
+        them. Until a second lane is registered this is a one-element registry that can neither
+        switch nor refuse, which is what makes NFR3 true by construction rather than by care."""
         self.recognizer = asr_mod.Recognizer()
         # The one place the model meets the pure segmenter. Injected rather than imported
         # so UtteranceBuffer stays testable without an 8 MB download — see its docstring.
@@ -182,7 +190,32 @@ class TunnelState:
 
         Needed because a watch run DETACHED leaves the harness idle, which is what triggers the
         watchdog — so without this the net fires every minute against a watch that is already
-        running, and each firing starts another one."""
+        running, and each firing starts another one.
+
+        **Session-wide, and it stays that way**: it means literally "some agent is waiting here".
+        With lanes that is no longer the question a second agent needs answered, so it is joined
+        by `watching_lanes` rather than redefined. Redefining it would have silently changed the
+        answer given to every existing caller (spec 012 TC7)."""
+
+        self.ambiguous: int = 0
+        """How many summons this session could not route (TC2). Monotonic, never reset.
+
+        A COUNTER rather than a flag, because the wait compares snapshots and a flag that goes up
+        and down can be missed entirely between two polls — the agent would see the same `false`
+        twice and conclude nothing happened. A number that only ever increases cannot hide an
+        event that occurred between two reads of it."""
+
+        self.last_ambiguous: list[str] = []
+        """Which lanes the last unroutable summons was torn between, so the agent asking "did you
+        mean Claude or Codex?" can name them instead of asking him to start over."""
+
+        self.watching_lanes: set[str] = set()
+        """WHICH lanes have a wait open. The single-waiter guard is per lane, not per session.
+
+        The guard itself is right and stays: two waits on one log race for the same turns, so one
+        cursor silently falls behind. But N agents watching N lanes is the NORMAL case here, and a
+        session-wide flag would refuse every agent after the first — the feature would not work at
+        all for its second user."""
         self.barges: int = 0
         self.last_barge_score: float = 0.0
         self.user_speaking: bool = False
@@ -423,6 +456,13 @@ class TunnelState:
             # is zero") was a one-pass no-op. See `pending_turns`.
             "pending_turns": self.pending_turns(last_id),
             "agent_state": self.agent_state,
+            # WHO is being talked to (spec 012 FR1). Published even when there is only one lane:
+            # a field that appears once a feature is in use is a field nothing can rely on, and
+            # `watch` has to be able to tell "no lanes here" from "an old server that never had
+            # them" — the same absent-versus-false distinction `watch_open` was bitten by.
+            "lane": self.lanes.current,
+            "lanes": list(self.lanes.names),
+            "default_lane": self.lanes.default,
             # THE THREE SPEECH FACTS COME FROM ONE PLACE. `speech_active` used to be published
             # straight off the buffer, which is true and misleading the moment frames stop: a
             # muted or backgrounded page leaves an utterance open forever and the flag sticks
@@ -440,6 +480,9 @@ class TunnelState:
             "capturing": self.capturing,
             "channel_open": self.channel_open,
             "watch_open": self.watch_open,
+            "watching_lanes": sorted(self.watching_lanes),
+            "ambiguous": self.ambiguous,
+            "last_ambiguous": list(self.last_ambiguous),
             "agent_holds_turns": self.agent_holds_turns,
             "barges": self.barges,
             "last_barge_score": self.last_barge_score,
@@ -500,6 +543,24 @@ async def _set_agent_state(state: TunnelState, value: str) -> None:
     """
     state.agent_state = value
     await _broadcast_json(state, {"type": "agent_state", "state": value})
+
+
+async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
+    """Make `lane` the one being talked to, and tell everybody (spec 012 FR1).
+
+    Idempotent, so the two callers that reach it — the wake gate and an explicit switch — do not
+    have to agree about who moved the registry first.
+
+    **`why` is carried because the two reasons are not interchangeable to a reader.** A switch he
+    spoke and a switch he tapped look identical in the state and mean different things when a
+    transcript is read back later, or when he asks why the conversation moved.
+    """
+    state.lanes.current = lane
+    timing.stamp(state.session, "lane", lane=lane, why=why)
+    await _broadcast_json(
+        state,
+        {"type": "lane", "lane": lane, "lanes": list(state.lanes.names), "why": why},
+    )
 
 
 async def _broadcast_json(state: TunnelState, payload: dict[str, Any]) -> None:
@@ -710,6 +771,45 @@ async def handle_say(request: web.Request) -> web.Response:
     fire_and_forget = bool((body or {}).get("async"))
     if not isinstance(text, str) or not text.strip():
         return web.json_response({"error": "text is required"}, status=400)
+
+    # AN AGENT MAY NOT SPEAK WHILE HE IS TALKING TO SOMEBODY ELSE (spec 012 FR9).
+    #
+    # ⚠ **How FR9 is enforceable at all, ruled here because the spec could not settle it.** It
+    # says an agent "cannot speak into a lane that is not its own", but there is no agent identity
+    # in this tool and adding one would be a design change — `--lane` IS the caller's claim about
+    # itself, so a check of the claim against itself enforces nothing. What IS enforceable, and is
+    # what he actually asked for, is the LIVE lane: if he is talking to Codex, Claude does not get
+    # to play audio at him.
+    #
+    # Refused BEFORE synthesis, so nothing is generated and nothing is queued — the same shape as
+    # the unread refusal below, and for the same reason: a refusal that has already produced audio
+    # is not a refusal.
+    #
+    # **In Slice B this refusal becomes a HOLD** (FR7): the clip waits and plays when its lane goes
+    # live. Refusing is the correct behaviour until the hold is built and proven to deliver (TC3) —
+    # the one thing that must not happen in the meantime is speaking over the conversation he is
+    # actually having.
+    lane = (body or {}).get("lane") or None
+    if lane is not None:
+        if not isinstance(lane, str) or not state.lanes.knows(lane):
+            return web.json_response(
+                {"error": f"no lane named '{lane}'", "code": "unknown_lane",
+                 "remedy": "voice-tunnel lane list",
+                 "lanes": list(state.lanes.names)},
+                status=400,
+            )
+        if lane != state.lanes.current and lane != lanes_mod.BROADCAST:
+            return web.json_response(
+                {"error": f"lane '{lane}' is not live — he is talking to "
+                          f"'{state.lanes.current}'",
+                 "code": "off_lane",
+                 "lane": lane,
+                 "live_lane": state.lanes.current,
+                 "remedy": f"voice-tunnel watch --session {state.session} --lane {lane} "
+                           f"--since <cursor>   # returns when he comes back to you"},
+                status=409,
+            )
+
     # No 409 when nobody is connected. The reply is synthesized and held; see
     # TunnelState.undelivered. Refusing here is what made a locked phone eat answers silently.
 
@@ -1090,6 +1190,72 @@ async def handle_verbose(request: web.Request) -> web.Response:
     return web.json_response({"verbose": state.verbose, "previous": previous})
 
 
+async def handle_lane(request: web.Request) -> web.Response:
+    """Who is in the meeting, and who is being talked to (spec 012 FR1, FR5, FR6).
+
+    One endpoint for add / remove / switch because they are one piece of state, and every reply
+    returns the WHOLE registry rather than just what changed — a caller that has to accumulate
+    deltas to know the current lane set is a caller that will eventually disagree with the server.
+
+    A refusal returns `{error, code, remedy}` and never a bare 400, so an agent can branch on
+    `code` and run `remedy` instead of parsing prose (AGENTS.md convention 8).
+    """
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    action = str((body or {}).get("action") or "list")
+    name = (body or {}).get("name")
+
+    try:
+        if action == "list":
+            pass
+        elif action in ("add", "remove", "switch"):
+            if not isinstance(name, str) or not name.strip():
+                return web.json_response(
+                    {"error": "name must be a non-empty string", "code": "bad_request",
+                     "remedy": f"voice-tunnel lane {action} <name>"},
+                    status=400,
+                )
+            if action == "add":
+                state.lanes.add(name)
+            elif action == "remove":
+                gone = state.lanes.remove(name)
+                state.watching_lanes.discard(gone)
+                state.watch_open = bool(state.watching_lanes)
+            else:
+                # Switching by tap is the hands-free path's twin, not a lesser one — he asked for
+                # both. It goes through the same publish as the spoken switch so a page, a second
+                # device and a waiting agent all learn about it the same way.
+                await _set_lane(state, state.lanes.require(name), why="tap")
+        else:
+            return web.json_response(
+                {"error": f"unknown action '{action}'", "code": "bad_request",
+                 "remedy": "voice-tunnel lane list"},
+                status=400,
+            )
+    except lanes_mod.LaneError as exc:
+        return web.json_response(
+            {"error": str(exc), "code": exc.code, "remedy": exc.remedy}, status=400
+        )
+
+    if action in ("add", "remove"):
+        # The set changed even though the live lane may not have. Publish it, or the page keeps
+        # offering a lane that is gone.
+        await _set_lane(state, state.lanes.current, why=action)
+    return web.json_response({
+        "lane": state.lanes.current,
+        "lanes": list(state.lanes.names),
+        "default_lane": state.lanes.default,
+        "broadcast": lanes_mod.BROADCAST,
+        "watching_lanes": sorted(state.watching_lanes),
+    })
+
+
 async def handle_wake(request: web.Request) -> web.Response:
     """Change what the agent answers to, live.
 
@@ -1184,13 +1350,22 @@ async def handle_watching(request: web.Request) -> web.Response:
     # that consumed turns and then never replied.
     if not watching and bool((body or {}).get("empty")):
         state.agent_holds_turns = False
-    state.watch_open = watching
+    # WHICH lane is waiting, so a second agent on a second lane is not refused (TC7). A caller
+    # that names no lane is the single-agent case and is recorded against the default lane, which
+    # is the lane it is in fact watching.
+    lane = str((body or {}).get("lane") or state.lanes.default)
+    if watching:
+        state.watching_lanes.add(lane)
+    else:
+        state.watching_lanes.discard(lane)
+    state.watch_open = bool(state.watching_lanes)
     if watching:
         if state.agent_state == "thinking":
             await _set_agent_state(state, "idle")
     elif state.agent_state == "idle":
         await _set_agent_state(state, "thinking")
-    return web.json_response({"agent_state": state.agent_state, "verbose": state.verbose})
+    return web.json_response({"agent_state": state.agent_state, "verbose": state.verbose,
+                              "lane": lane, "watching_lanes": sorted(state.watching_lanes)})
 
 
 def _will_respond(agent_state: str) -> bool:
@@ -1616,6 +1791,32 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         wake_said, speaker, similarity, owner=config.owner_name(),
         grant=grant, scored=scored,
     )
+
+    # WHICH agent was this for (spec 012). Resolved here, ONCE, on the same pass as the wake
+    # verdict — before the window bookkeeping below, because a refusal has to wind the window back
+    # exactly like any other unaddressed turn. A refused turn that left the window open would hold
+    # the conversation on behalf of a summons nobody could route.
+    routing = state.lanes.resolve(text)
+    if routing.action == "refuse":
+        # He named somebody, and it was not exactly anybody. Deliver to NO ONE rather than to the
+        # lane already live: that lane is precisely the wrong guess, since a summons is only
+        # ambiguous when it looks like an attempt to leave it. Costs one repeat (TC2).
+        addressed, reason = False, (routing.reason or "ambiguous")
+        # AND HE IS TOLD, BUT NOT BY THIS PROCESS MAKING A NOISE.
+        #
+        # TC2 asks for the refusal to be "said audibly", and the obvious implementation — a fifth
+        # cue — is one this repo has already refused in an executable guard: *"a fifth is his call,
+        # not the implementer's"* (tests/test_acknowledgement_cue.py). That guard is right, and it
+        # is right for a better reason than vocabulary size. **A cue could only say that something
+        # went wrong. The agent can ask "did you mean Claude or Codex?"** — so the signal goes to
+        # the layer that owns words, which is the whole dumb-tool/smart-agent split.
+        #
+        # It wakes the LIVE lane's wait, because that is the agent he was already talking to and
+        # therefore the one who can sensibly ask. A lookup, not a guess.
+        state.ambiguous += 1
+        state.last_ambiguous = list(routing.candidates)
+    lane = routing.lane
+
     if not addressed:
         state.wake.mark_addressed(window_anchor)
     if addressed and not wake_said:
@@ -1623,6 +1824,13 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         # conversation only ever continues from phrases, and short follow-ups (too brief for the
         # embedder to score) drop out mid-exchange. See WakeGate.mark_addressed.
         state.wake.mark_addressed(t_end)
+    # A SWITCH ONLY LANDS ON AN ADDRESSED TURN. The wake gate can reject a greeting-led utterance
+    # it heard from a confident stranger, and a stranger must not be able to move his conversation
+    # to a different agent by saying a name out loud in the room.
+    moved = state.lanes.apply(routing) if addressed else False
+    if moved:
+        await _set_lane(state, state.lanes.current, why="wake")
+
     turn = store.append_turn(
         session=state.session,
         text=agent_text,
@@ -1630,6 +1838,10 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         t_end=t_end,
         addressed=addressed,
         reason=reason,
+        # FR3: the turn carrying the wake word belongs to the NEW lane, instruction and all —
+        # switching on turn N and routing on N+1 would lose the sentence he cared about.
+        lane=lane,
+        stamp_lane=True,
     )
     state.turns_logged += 1
     timing.stamp(state.session, "turn_logged", turn=turn.get("id"),
@@ -1693,6 +1905,7 @@ def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web
             web.post("/rate", handle_rate),
             web.post("/verbose", handle_verbose),
             web.post("/wake", handle_wake),
+            web.post("/lane", handle_lane),
             web.get("/ws", handle_ws),
         ]
     )

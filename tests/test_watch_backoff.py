@@ -165,7 +165,7 @@ def _run(monkeypatch, tmp_path, first, later, ceiling):
     monkeypatch.setattr(cli, "_request", request)
     # Honours its own timeout, so the loop advances in real time instead of spinning. A stub that
     # returned instantly would busy-wait the whole ceiling and time nothing.
-    def watch(session, cursor, timeout=0.0, addressed_only=True):
+    def watch(session, cursor, timeout=0.0, addressed_only=True, lane=None, default_lane=None):
         time.sleep(min(timeout, 1.0))
         return [], cursor
 
