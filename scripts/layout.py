@@ -50,8 +50,21 @@ VIEWPORTS = [
 # Build rows exactly as `addRow` does — a .row is a TWO-COLUMN grid (3.5rem tag | 1fr text), so a
 # fixture with a single span drops the text into the 3.5rem column and wraps it one word per
 # line. That inflates every height and measures a page nobody will ever see.
-POPULATE = """(layout) => {
+POPULATE = """([layout, laneCount]) => {
   const log = document.getElementById('log');
+  // THE LANE STRIP, when the fixture asks for it (spec 012). It is `hidden` below two agent lanes,
+  // so a run that never registers a second agent measures the page exactly as it was before the
+  // feature existed — true, and not what that case is for. Driven through the page's own message
+  // handler rather than by writing chips, so what gets measured is what the painter produces.
+  if (laneCount >= 2) {
+    const names = ['claude', 'codex', 'grok'].slice(0, laneCount);
+    window.__voiceTunnel.deliver({ type: 'ready', lanes: names, lane: names[0],
+      broadcast: 'everyone',
+      // The WORST case on purpose: one lane holding a two-digit count and another mid-work, so the
+      // row is measured at its widest and tallest rather than at rest.
+      waiting: { [names[names.length - 1]]: 12 },
+      lane_states: { [names[1]]: 'synthesizing' } });
+  }
   document.getElementById('mute').setAttribute('aria-checked', 'false');
   // TWO LAYOUTS, AND EXACTLY ONE OF THEM IS EVER ON SCREEN. `grouped` is the normal case: one
   // pill for one physical device, because `enumerateDevices()` reports the two halves of a headset
@@ -133,6 +146,19 @@ MEASURE = """() => {
     spkTouchHeight: pill('spkpick', 'spk'),
     muteTouchHeight: Math.round(ub.height),
     pillsShown: wraps.filter((id) => !document.getElementById(id).hidden).length,
+    laneStripShown: !document.getElementById('lanes').hidden,
+    laneChips: document.querySelectorAll('#lanes button').length,
+    laneTouchHeight: (() => {
+      const b = document.querySelector('#lanes button');
+      return b ? Math.round(b.getBoundingClientRect().height) : 0;
+    })(),
+    // Does the row stay ONE row? Wrapping is allowed and costs height; reporting it means a
+    // silent second line shows up as a number rather than as a mystery inside the overflow check.
+    laneRows: (() => {
+      const tops = new Set(Array.from(document.querySelectorAll('#lanes button'))
+                                .map((b) => Math.round(b.getBoundingClientRect().top)));
+      return tops.size;
+    })(),
   };
 }"""
 
@@ -160,6 +186,18 @@ def problems(m: dict) -> list:
     # every touch check by measuring none of them.
     if not m["pillsShown"]:
         out.append("no device picker is on screen at all — the fixture measured nothing")
+    # THE SAME GUARD, FOR THE LANE STRIP. A case that asked for lanes and measured a hidden row
+    # would pass every geometry check below by measuring a page the feature is not on — which is
+    # the shape of "18 of 18 clean" against a selector that no longer exists.
+    if m.get("wantLanes") and not m["laneStripShown"]:
+        out.append("the lane strip was asked for and is not on screen — the fixture measured "
+                   "nothing")
+    if not m.get("wantLanes") and m["laneStripShown"]:
+        out.append("the lane strip is on screen with fewer than two agent lanes")
+    if m["laneStripShown"] and m["laneTouchHeight"] < 44:
+        out.append(f"lane chips are {m['laneTouchHeight']}px tall, under the 44px touch minimum — "
+                   f"the same standard the device pickers are held to, and a control he has to "
+                   f"aim at is worse than one costing a few pixels")
     # 0 means "not rendered in this layout", which is correct — see POPULATE. Only a pill that IS
     # on screen has to be tappable.
     for name, key in (("device picker", "devTouchHeight"),
@@ -200,21 +238,31 @@ def main() -> int:
             # EVERY VIEWPORT IN BOTH LAYOUTS. The grouped pill is what the page normally renders;
             # the split pair is the fallback and the wider of the two. Measuring only one of them
             # is how the two-picker row came to fit while the cluster check it broke went unrun.
-            cases = [(lay, lab, w, h) for lay in ("grouped", "split") for lab, w, h in VIEWPORTS]
-            for layout, label, w, h in cases:
+            # AND EVERY ONE OF THEM TWICE: once as a single-agent session, which is the page as it
+            # has always been, and once with THREE lanes so the strip is actually on screen. A
+            # sweep that only ran the first would report the whole feature green while measuring a
+            # row that is `hidden` — which is a harness passing against something that is not
+            # there, the quietest failure this repo knows.
+            cases = [(lay, n, lab, w, h)
+                     for lay in ("grouped", "split")
+                     for n in (0, 3)
+                     for lab, w, h in VIEWPORTS]
+            for layout, lane_count, label, w, h in cases:
                 page = browser.new_page(viewport={"width": w, "height": h})
                 page.goto(f"http://127.0.0.1:{PORT}/?token={TOKEN}", wait_until="load")
                 page.wait_for_timeout(700)
-                page.evaluate(POPULATE, layout)
+                page.evaluate(POPULATE, [layout, lane_count])
                 page.wait_for_timeout(400)
                 m = page.evaluate(MEASURE)
+                m["wantLanes"] = lane_count >= 2
                 found = problems(m)
 
-                print(f"{'PASS' if not found else 'FAIL'}  {layout:8} {label} ({w}x{h})")
+                tag = f"{layout:8} {'lanes' if lane_count >= 2 else 'solo '}"
+                print(f"{'PASS' if not found else 'FAIL'}  {tag} {label} ({w}x{h})")
                 print(f"      {json.dumps(m)}")
                 for f in found:
                     print(f"      -> {f}")
-                    failures.append(f"{layout} {label}: {f}")
+                    failures.append(f"{tag} {label}: {f}")
 
                 if args.shots:
                     page.screenshot(

@@ -467,12 +467,12 @@ Every criterion names its validation method. `corpus` means replayed against the
 - [x] **AC-17** `harness:scripts/devicepills.py` — **FR6.** The lane strip does not break the device pickers.
       Run during his live session and green, including that harness's own proof that the session was
       untouched (`pids on 8765: [17868]` before and after).
-- [ ] **AC-18** `harness:scripts/layout.py` **and** `scripts/orbstate.py` — **FR6.** The strip fits at all five
-      viewports with the newest transcript row still on screen, and the orb is unchanged by per-lane state
-      (the agent-state handler now ignores a background agent, so the orb's golden must still match).
-      ⚠ **BLOCKED, not failing:** both bind a port or drive the real socket, and his session has been live
-      throughout. The risk is bounded — the strip is `hidden` below two agent lanes, so a solo session's
-      geometry is unchanged by construction, which is what `layout.py` measures.
+- [x] **AC-18** `harness:scripts/layout.py` **and** `scripts/orbstate.py` — **FR6.** ALL PASS, and both ran
+      with his session still live, because neither ever needed it down. `layout.py` was **extended to sweep
+      the lane dimension**: 20 cases now (5 viewports x grouped/split pickers x solo/three-lane), because a
+      run that never registers a second agent measures a strip that is `hidden` — green while measuring
+      nothing. `orbstate.py` matches its golden across 480 cases, so the orb is provably unchanged by
+      per-lane state.
 - [x] **AC-19** `harness:scripts/lanestrip.py` — **FR6, FR7, FR8.** ⚠ **Re-pointed from `orbstate.py`, which was
       the wrong harness for it.** Per-lane state does not flow through the orb's reducer at all — it flows
       through a new one, and pointing the criterion at the orb's golden would have measured nothing. The
@@ -491,8 +491,27 @@ and neither is failing — one is blocked and one is irreducibly human.
 
 | Open | What is missing | Who owns clearing it |
 |---|---|---|
-| **AC-18** — `layout.py` + `orbstate.py` | ~~A tunnel that is not in use.~~ **THAT WAS WRONG — see the audit below.** Neither harness touches the live tunnel. What is actually missing is permission to run them: they spawn a server subprocess, which this session's tooling declines to start without an explicit grant. | **JJ** — one approval, then they run. No code change is expected: the strip is `hidden` below two agent lanes, so a solo session's geometry is unchanged by construction, and the orb ignores a background agent's state by an explicit guard |
+| ~~**AC-18**~~ | **CLOSED.** Both harnesses ran green with his session still live, because neither ever needed it down. ⚠ **And "no code change is expected" was wrong too** — see below | — |
 | **AC-20** — two agents, one phone, by voice and by tap | **A real microphone, a real phone, and two real agents.** No harness in this repo can produce any of the three, which is why the criterion was written `manual` from the start rather than as an aspiration | **JJ** |
+
+### The lane chips were 27px, and only the extended harness could see it
+
+**I predicted AC-18 would need no code change. It needed one, and it was a real defect.** The lane
+chips shipped at **27px tall**, against the **44px touch minimum** every other tappable control on
+this page is held to. `layout.py` failed them at all ten lane cases the moment it could see them,
+and the fix is `min-height:44px` — the text stays small, the target grew.
+
+**The reason this is worth writing down is not the defect, it is why it was invisible.** The first
+run of `layout.py` after the strip was built reported **ALL PASS** — and it was measuring a strip
+that was `hidden`, because the harness starts a one-lane session and the strip only appears at two.
+A green run against a feature that is not on the page is the same failure as a sweep passing against
+a retired selector, and it was one command away from being reported as verification.
+
+So the harness now sweeps a **lane dimension**: 20 cases, every viewport in both picker layouts,
+**solo and three-lane**, with a guard that fails when a case asked for the strip and measured a
+hidden one. The cost of the strip is now a measured number rather than an assumption: on the
+smallest phone the transcript goes from 204px to 160px, the row stays one row of four chips, and
+nothing overflows at any viewport.
 
 ### Harness port audit — the premise behind AC-18's blocker was wrong, mine included
 

@@ -367,8 +367,12 @@
     width:min(100%,29rem); margin:.5rem auto 0;
   }
   #lanes button {
-    display:inline-flex; align-items:center; gap:.3rem;
-    padding:.2rem .55rem; border-radius:999px;
+    display:inline-flex; align-items:center; justify-content:center; gap:.3rem;
+    /* 44px, the same touch minimum the device pickers are held to. It is NOT a typographic
+       choice: the chips read fine at 27px and `scripts/layout.py` failed them at every viewport,
+       because a control he has to aim at while walking is worse than one costing a few pixels.
+       The text stays small; the TARGET is what grew. */
+    min-height:44px; padding:.2rem .7rem; border-radius:999px;
     border:1px solid var(--edge-2); background:transparent; color:var(--dim);
     font:inherit; font-size:.78rem; line-height:1.5; cursor:pointer;
   }
