@@ -1,7 +1,7 @@
 ---
 id: "012"
 title: Addressing is a lane, not a decision
-status: pending
+status: in_progress
 blocked_by: []
 blocks: []
 kind: metaspec
@@ -9,13 +9,14 @@ kind: metaspec
 
 # Addressing is a lane
 
-> **This is a METASPEC**, written by the strategist. It carries intent, the decisions
-> already taken, and the constraints the implementer must not rediscover. **The repo implementer
-> refines it in place** against the live code, adds implementation tasks and acceptance criteria with
-> validation methods, then builds.
+> **This began as a METASPEC** written by the strategist, carrying intent, the
+> decisions already taken, and the constraints the implementer must not rediscover. **It has been
+> refined in place** by `voice-tunnel:architect` against the live code: the rulings it left open are
+> made below with their evidence, implementation tasks and acceptance criteria are added, and the
+> work is split at the seam the metaspec named.
 >
-> **Completion rule:** not complete until every acceptance criterion the implementer writes is verified
-> by the method named on it. Build-only verification is insufficient. Iterate until verification passes.
+> **Completion rule:** not complete until every acceptance criterion below is verified by the method
+> named on it. Build-only verification is insufficient. Iterate until verification passes.
 
 ## Overview
 
@@ -110,12 +111,19 @@ the switch and the transcript is already shared. FR6–FR8 are a second slice.
 ⚠ **This spec is too big for one session as a whole** (Spec Writing Rules for Agents); the
 implementer should split it at that seam rather than starting everywhere.
 
+**Split taken:** **Slice A = FR1–FR5 + FR9** (routing, CLI, server, turn schema — no page changes).
+**Slice B = FR6–FR8** (the lanes UI, the hold, per-lane state). Slice B does not begin until AC-16 has
+passed, per TC3.
+
 ### Non-functional
 
 - **NFR1** — **A lane switch is not perceptible.** It happens in the same path as the wake gate, on state
   the server already holds. If switching costs a round trip he will feel it on every subject change.
 - **NFR2** — **Nothing is lost at a switch.** A turn in flight when the lane changes belongs to whichever
   lane it was addressed to, decided once, at the wake gate.
+- **NFR3** — **A single-lane session behaves EXACTLY as it does today.** Not approximately: the verdict
+  (`addressed`, `reason`) for every turn in the recorded corpus must be unchanged. This is what makes the
+  feature safe to ship into a live daily-driver tunnel, and it is verifiable rather than asserted (AC-2).
 
 ### Technical constraints
 
@@ -129,16 +137,147 @@ implementer should split it at that seam rather than starting everywhere.
   window**, where it cannot be recalled and may be acted on. **The implementer must rule on the ambiguous
   case; the recommendation is to refuse to switch and say so audibly**, because a refusal costs one repeat
   and a mis-switch costs an unwanted action plus a polluted context.
+  → **Ruled below** in *The TC2 ruling*, with two of this constraint's own premises corrected by measurement.
 - **TC3** — ⚠ **Held speech must not reuse the queue path that already loses clips.** Measured 2026-08-20:
   nine clips issued while the channel was closed each returned `queued: true`, and **none played when the
   channel reopened**. The lane hold is a *different* case — the channel is open, another lane is live — so
   it is new code rather than the broken path, but FR7's entire value is that the waiting agent is not
   silently dropped. **Confirm the hold delivers before building the UI mark that promises it does.**
+  → **Mechanism identified below** in *Findings — TC3*. It gates Slice B via AC-16.
 - **TC4** — **Barge-in is gated on JJ's voiceprint**, so no agent can interrupt another through the room.
   Suppression in FR7 is therefore about **playback**, not about the microphone.
 - **TC5** — **Android Chrome, foreground tab only.** More lanes does not change the platform rule.
+  *Inherited platform ceiling — nothing here can test it, and nothing here can violate it.*
 - **TC6** — **One transcript.** He was explicit: *"the transcript is just one."* Lanes are a view over a
   single log, not several logs — which is also what makes the shared context readable to him afterwards.
+- **TC7** — **The single-waiter guard is per SESSION today and must become per LANE.** `watch` refuses to
+  start when `status.watch_open` is true, because two waits on one log race for turns and one cursor
+  silently falls behind. That guard is correct and must be kept — but N agents watching N lanes is the
+  normal case here, so a session-wide flag would refuse every agent after the first. It becomes one wait
+  per `(session, lane)`.
+- **TC8** — **A lane name must be exact-matchable and must not collide with another lane.** The switch is
+  an exact string match (see the ruling), so a name the recognizer never renders exactly is a name he can
+  never switch to by voice. Name confusability is a property of the *lane set*, decided at registration
+  time, where it is cheap — not at recognition time, where it is a guess.
+
+## The TC2 ruling — only an exact lane name switches a lane
+
+**Ruling.** With the live lane as `current` and the registered lane set as `lanes`, the outcome for an
+utterance that opens with a greeting is decided by this table, evaluated top to bottom. Nothing else
+switches a lane.
+
+| The token after the greeting | Outcome |
+|---|---|
+| **exactly** a registered lane name `L`, and `L != current` | **SWITCH to `L`.** This turn belongs to `L` (FR3) |
+| **exactly** `current` | stay on `current` |
+| scores < 0.55 against **every** lane | stay on `current` — it is just the next word of a sentence |
+| scores ≥ 0.55, and the **strict top scorer is `current`** | stay on `current` — a mangled form of the name already live changes nothing |
+| scores ≥ 0.55, top scorer is **not** `current` (or ties) | **REFUSE.** No lane. `addressed: false`, `lane: null`, `reason: "ambiguous:<candidates>"`. Not delivered to anyone, and audibly signalled |
+
+**Why refusal and not a best guess:** the two errors are not symmetrical and the metaspec is right about
+the asymmetry. A refusal costs one repeat. A mis-switch puts an instruction into an agent's context where
+it cannot be recalled and may be acted on. The table is ordered so that **the only irreversible act —
+moving the conversation to a different agent — requires the strongest possible evidence, an exact match**,
+while every weaker signal resolves to the *status quo*, which is free to be wrong because it changes nothing.
+
+**Why this is a lookup and not an inference (TC1):** every row is string equality or a fixed-threshold
+comparison against a stored set. Nothing consults context, content, or history.
+
+**Why it needs no special case for a single lane:** with `N == 1` the only lane *is* `current`, so rows 1
+and 5 can never fire and the table collapses to today's behaviour exactly. NFR3 is therefore a property of
+the design rather than a compatibility layer, and AC-2 proves it against the real corpus.
+
+### Two premises of TC2 corrected by measurement
+
+Both were true when written and are no longer. Measured over **every turn in `sessions/*.jsonl` — 2,460
+turns, 2026-07-29 to 2026-08-21** — replaying the live matcher.
+
+**1. "Parakeet has never once transcribed Claude correctly from his headset" is no longer true, and the
+change is sharp.** Of 109 greeting-led utterances, the name was rendered **exactly** in 45:
+
+| Period | greeting-led utterances | name exact | rate |
+|---|---|---|---|
+| 2026-07-29 → 08-06 | 29 | 0 | **0.0%** |
+| 2026-08-07 → 08-21 | 80 | 45 | **56.3%** |
+| best single day (08-18) | 15 | 13 | **86.7%** |
+
+The corpus does not establish *why* it changed and this spec does not guess; what the ruling needs is the
+current rate, not the cause. **The consequence is the ruling itself:** exact-only switching was
+unthinkable at 0% and is the safe default at 56%.
+
+**2. The real hazard is not a fuzzy match picking the wrong name — it is a summons carrying NO name at
+all.** The matcher's third rule accepts *a greeting followed by anything*, and that rule is **51% of all
+phrase-granted summons** (52 of 102; exact 45, fuzzy 3, elsewhere-in-sentence 2). The tokens it accepts are
+ordinary next-words, not manglings — `i` ×12, `can` ×9, `let` ×3, `so` ×2. **With one agent that rule is
+correct and load-bearing. With N lanes it names nobody**, and any attempt to score those tokens against a
+lane set produces confident nonsense: `go` → `grok` **0.67**, `got` → `grok` 0.57, `sorry` → `cursor` 0.55,
+`again` → `gemini` 0.55 — all above the 0.55 threshold that exists to rescue real manglings. **A margin
+rule does not catch these**, because they have no competitor: they are unambiguous and wrong. That is what
+rules fuzzy matching out across lanes rather than merely tuning it.
+
+### Measured cost of the ruling
+
+Same corpus, replayed through the table above with `current = claude`:
+
+| Lane set | corpus | mis-routes | false refusals |
+|---|---|---|---|
+| `claude, codex` | all 109 | **0 (0.0%)** | **0 (0.0%)** |
+| `claude, codex` | 84 since 08-07 | **0 (0.0%)** | **0 (0.0%)** |
+| `claude, codex, grok` | all 109 | **0 (0.0%)** | 5 (4.6%) — `go`, `got`, `god`×2, `grog` |
+| `claude, codex, grok` | 84 since 08-07 | **0 (0.0%)** | 2 (2.4%) — `go`, `got` |
+
+**Mis-routes are structurally zero** for any lane set, because only an exact name switches. **False
+refusals are a property of the NAMES, not of the rule** — every one of them is `grok`, a short name close
+to ordinary speech (`go`, `got`, `god`). This is what TC8 acts on: confusability is decided when a lane is
+registered, where the answer is cheap and explainable, and `lane add` refuses a name that collides with an
+existing lane. It does not gate on the ordinary-speech corpus, which would be a rule nobody could predict;
+`lane list` reports the measured false-refusal cost of the current set instead.
+
+## The two remaining rulings
+
+**A broadcast enters EVERY agent's context, unconditionally — never "only the idle ones."** Filtering on
+idleness would mean routing on `agent_state`, which is a *claim an agent makes about itself*, and this repo
+already holds that a status the agent announces is a claim rather than a fact. It would also make delivery
+unexplainable ("why did Codex not get that?" — "it said it was thinking"). **And it re-introduces exactly
+the drop the cursor contract exists to prevent:** `watch --since <cursor>` already guarantees that a busy
+agent loses nothing while it thinks, so busy-ness is *already solved* and does not need a second, worse
+mechanism. Every lane gets the turn; each reads it when it next watches.
+
+**An agent IS told it went off-lane, on the wait it is already sitting in.** `watch` already returns for a
+turn *or a control change*, whichever comes first — that is how pressing mute becomes visible to the agent.
+A lane switch is a control change, so this is registration in an existing seam and not new machinery. The
+wait returns `reason: "lane"` with the new `live_lane`, and the agent can say so before going quiet. **The
+alternative — silently stopping — is unacceptable here** because an agent cannot then distinguish "he is not
+talking" from "he is talking to someone else", and the whole operating discipline of this repo is that an
+agent must never leave him talking to nobody.
+
+## Findings — architect
+
+**A live session was running throughout this work** (`dev`, uptime 86 min, 1 client, `channel_open: true`,
+1,866 turns) and is JJ's daily driver. Two consequences, both binding on Slice A: **every harness in
+`scripts/` except `devicepills.py` starts a server or drives the real socket and must not be run**, and
+`rate` / `wake` / `config set` apply live and must not be touched. Slice A is verified entirely by `unit`,
+`integration` and `corpus` methods, which need neither a port nor a microphone. This is a constraint on
+*when* Slice B's harness work can run, not on whether.
+
+**Baseline before any change: 1,083 tests pass, 2 skipped** (both platform-specific: macOS and XDG path
+conventions).
+
+**`reason: "wake"` does not mean "he said the phrase".** It covers both a phrase grant and a conversation-
+window grant, which is why 954 of the 1,056 wake-granted turns in the corpus match no phrase rule at all.
+Any analysis that reads `reason == "wake"` as "a summons was spoken" over-counts by roughly 10×. The
+routing code must branch on the *grant* (`WakeGate.last_grant`), which already distinguishes them, and not
+on the persisted reason.
+
+**Findings — TC3.** The existing undelivered queue has two flush triggers — client reconnect and channel
+reopen — and both are present and look correct, so the reported total loss of nine clips is not a missing
+flush. Two mechanisms are capable of it and one is capable of losing *all* of them: **barge-in clears the
+entire queue unconditionally** (`state.undelivered.clear()`), on the reasoning that playing the next clip
+at a man who just interrupted is the same interruption wearing a different hat. That reasoning is right for
+the lane he is *on* and wrong for a lane he is *not* on. The cap (`UNDELIVERED_MAX = 8`) explains exactly
+one of the nine and cannot explain the rest. **Binding on Slice B: the lane hold is a separate store from
+`undelivered`, is flushed when its lane becomes live, and is NOT cleared by barge-in** — barge-in silences
+the live lane, it does not discard another lane's pending speech.
 
 ## Decisions already taken
 
@@ -147,16 +286,159 @@ implementer should split it at that seam rather than starting everywhere.
 | **This stays in `voice-tunnel`; it is not a new project** | JJ asked directly whether it should be "Agent Meeting" instead. It should not: a lane touches the wake matcher, the playback queue, the turn log and the page — all inside this server — so a separate repo would have to fork it to reach them. This is a new **arc**, not a new product |
 | **The wake name is the switch** | it already exists, is already per-agent and already persisted |
 | **Off-lane agents are suppressed at playback, not muted at the microphone** | one microphone, one transcript |
+| **Only an exact lane name switches a lane** | ruled above, on measured evidence: mis-routes are structurally zero, and fuzzy scoring across a lane set produces confident wrong answers a margin rule cannot catch |
+| **A broadcast reaches every lane** | ruled above: the cursor already solves busy-ness, and routing on a self-reported state is not a lookup |
+| **An off-lane agent is told, on the wait it is already in** | ruled above: reuses the existing control-change return |
+| **The broadcast lane is spelled `everyone`, everywhere** | one name on the wire, in the CLI, in the turn field, and in what he says out loud. Spec 007 removed a second spelling of one concept for a reason; this does not add one back. `everyone` is reserved and cannot be registered as an agent lane |
 
-## Open for the implementer to rule on
+## Contract
 
-- **The ambiguous wake match** (TC2). The recommendation is in the constraint; the ruling is the
-  implementer's, and it belongs in this spec once made.
-- **Whether a broadcast enters every agent's context or only idle ones.** Both are defensible; the spec
-  should say which and why.
-- **Whether an agent is told it went off-lane**, or simply stops receiving turns.
+The shapes an agent depends on. Everything else is implementation and is derived from the live code.
 
-## Out of scope
+```
+voice-tunnel lane list                       # every lane, which is live, per-lane pending counts
+voice-tunnel lane add <name>                 # register; refuses a reserved or colliding name
+voice-tunnel lane remove <name>
+voice-tunnel lane switch <name>              # the deterministic seam the tests drive; `everyone` allowed
+voice-tunnel watch --session dev --lane codex --since <cursor>
+voice-tunnel say   --session dev --lane codex "All green."
+```
+
+Turn schema gains ONE field:
+
+```json
+{"id": 1867, "session": "dev", "lane": "codex", "text": "hey codex run the tests",
+ "addressed": true, "reason": "wake", "final": true, "wall": "..."}
+```
+
+- **`lane`** — the lane this turn was addressed to; `"everyone"` for a broadcast; `null` when the wake
+  gate refused to resolve one (TC2 row 5). **Absent means the default lane** — the `--wake` lane the server
+  was started with — so every one of the 1,866 turns already on disk keeps routing to the single agent that
+  has been reading them.
+- `watch --lane L` returns turns where `lane` is `L`, `everyone`, or absent-and-`L`-is-default. It never
+  returns another lane's turns and never returns `lane: null`.
+
+New error codes, per convention 8 (`{error, code, remedy}`):
+
+| `code` | When |
+|---|---|
+| `off_lane` | `say --lane L` where `L` is not the caller's lane (FR9) |
+| `unknown_lane` | any command naming a lane that is not registered |
+| `lane_exists` | `lane add` for a name already registered, reserved, or colliding under TC8 |
+| `watch_open` | unchanged in meaning, now scoped to `(session, lane)` (TC7) |
+
+## Implementation Tasks
+
+### Slice A — routing (FR1–FR5, FR9)
+
+- [ ] A lane registry on the server: N lanes, one live, the `--wake` lane registered as default at startup.
+- [ ] `lane` subcommand — `list` / `add` / `remove` / `switch`, with TC8 collision refusal on `add`.
+- [ ] Resolve the lane in the wake gate per the TC2 table; return the resolved lane and the grant alongside
+      the existing `(addressed, text)` verdict.
+- [ ] Stamp the turn with its lane at append time, once, at the point of the gate decision (NFR2).
+- [ ] `store.turns_since` / `store.watch` filter by lane the way they already filter by `addressed_only`,
+      with the same rule that a skipped turn still advances the cursor.
+- [ ] `watch --lane`; the single-waiter guard keyed on `(session, lane)` (TC7).
+- [ ] `say --lane`; refuse a foreign lane with `off_lane`.
+- [ ] Live lane published in `/status` and broadcast to clients on change.
+- [ ] `watch` returns on a lane change with `reason: "lane"` and the new `live_lane`.
+- [ ] An audible signal on an ambiguous refusal. ⚠ **This adds a fifth sound to a four-sound vocabulary,
+      which the repo records as JJ's call to make** — ship it behind the existing cue mechanism, name it in
+      the handoff, and let him remove it if he does not want it.
+- [ ] `describe` updated in the same commit (convention 3); `ai-docs/reference/turn-log.md` updated with the
+      `lane` field and the absent-means-default rule.
+
+### Slice B — lanes UI (FR6, FR7, FR8) — does not begin until AC-16 passes
+
+- [ ] Confirm the hold delivers (AC-16), per TC3.
+- [ ] A per-lane hold store, flushed when its lane becomes live, not cleared by barge-in.
+- [ ] The lane strip in `web/index.html`: one row per lane, the live one marked, a tap switches it.
+- [ ] The "has something to say" mark on a held lane.
+- [ ] Per-lane agent state (thinking / transcribing / synthesizing / speaking).
+
+## Acceptance Criteria
+
+Every criterion names its validation method. `corpus` means replayed against the recorded turn logs in
+`sessions/*.jsonl` — this repo's habit of measuring rather than asserting, made into a test method.
+
+### Slice A — routing
+
+- [ ] **AC-1** `unit` — **TC1, TC2.** The TC2 table is a pure function of `(token, lanes, current)`. All five rows are
+      covered, including both tie cases, and it returns one of `switch` / `stay` / `refuse` and never
+      raises on an empty or non-ASCII token.
+- [ ] **AC-2** `corpus` — **NFR3, the regression guard.** Every turn in `sessions/*.jsonl` replayed through
+      the new gate with a single registered lane produces a byte-identical `(addressed, reason)` verdict to
+      today's. Any difference fails.
+- [ ] **AC-3** `corpus` — **FR2, TC1.** With lane set `{claude, codex}`, replaying the corpus produces **zero** switches to
+      a lane the token did not name exactly. The mis-route count is asserted at 0, not merely reported.
+- [ ] **AC-4** `unit` — `"hey codex run the tests"` yields ONE turn stamped `lane: "codex"` whose text is
+      unmodified and still contains the wake phrase (FR3, and the existing never-strip rule).
+- [ ] **AC-5** `unit` — **FR2, NFR2.** A turn with no wake phrase, inside the conversation window, is stamped with the
+      **current** lane and does not switch it (stickiness).
+- [ ] **AC-6** `unit` — **TC2.** An ambiguous token yields `addressed: false`, `lane: null`, and a `reason` beginning
+      `ambiguous:` that names the candidates. It is returned to **no** lane's `watch`.
+- [ ] **AC-7** `integration` — **FR4, FR5, TC6.** `watch --lane codex` returns codex turns and `everyone` turns, never a
+      `claude` turn, and the cursor advances past the turns it filtered out (the existing skipped-turns-are-
+      consumed rule).
+- [ ] **AC-8** `integration` — **FR4, TC6.** A turn with **no** `lane` field is returned to the default lane's watch and to
+      no other, proving the 1,866 turns already on disk keep working.
+- [ ] **AC-9** `integration` — Two waits on the SAME `(session, lane)`: the second is refused with
+      `watch_open`. Two waits on DIFFERENT lanes of the same session: **both run** (TC7).
+- [ ] **AC-10** `integration` — **FR9.** `say --lane <not mine>` returns `{error, code: "off_lane", remedy}`, exit 1,
+      and **nothing is synthesized and nothing is queued** — verified by the absence of a spoken record, the
+      same way the spec 007 refusal is verified.
+- [ ] **AC-11** `integration` — **FR1, FR9.** A lane switch returns an open `watch` on the lane that just lost the
+      conversation, with `reason: "lane"` and the new `live_lane`.
+- [ ] **AC-12** `unit` — **FR1, TC8.** `lane add everyone` is refused with `lane_exists`; `lane add` of a name colliding
+      with a registered lane under TC8 is refused; `lane list` reports the set's measured false-refusal cost.
+- [ ] **AC-13** `unit` — **NFR1.** Lane resolution is a pure function of state already in memory:
+      it takes the lane set and the live lane as arguments, performs no I/O, and is called in the same
+      pass as the wake verdict. Asserted by calling it with no server, no socket and no session directory.
+- [ ] **AC-14** `unit` — `describe` lists `lane`, every new flag, and all four new error codes, and the
+      existing describe-agrees-with-itself test passes unchanged.
+- [ ] **AC-15** `unit` — The full existing suite still passes: **1,083 passed, 2 skipped**, no test deleted or
+      weakened to accommodate lanes.
+
+### Slice B — the UI and the hold
+
+- [ ] **AC-16** `integration` — **The TC3 gate, and Slice B does not start until it passes.** A clip issued
+      to an off-lane agent is held, and **delivers in full when that lane becomes live** — asserted on the
+      bytes arriving, not on `queued: true`. Repeated with a barge-in between the hold and the switch: the
+      held clip **still delivers** (**FR7, TC4**), because barge-in silences the live lane and must not discard another
+      lane's pending speech.
+- [ ] **AC-17** `harness:scripts/devicepills.py` — **FR6.** The lane strip does not break the device pickers. This is
+      the one page harness that starts no server and is safe to run during a live session.
+- [ ] **AC-18** `harness:scripts/layout.py` — **FR6.** The lane strip fits at all five viewports and the newest
+      transcript row is still on screen. ⚠ Requires no live session.
+- [ ] **AC-19** `harness:scripts/orbstate.py` — **FR8.** Per-lane state flows through the pure reducer; the golden
+      snapshot is re-blessed deliberately and the diff is read, not accepted blind.
+- [ ] **AC-20** `manual` — **FR6, FR7.** Two agents, one phone, one session: he switches by voice and by tap, both are
+      heard, and the off-lane one is visibly waiting. **Irreducibly manual** — it needs a real microphone, a
+      real phone and two real agents, which is the one thing no harness in this repo can produce.
+
+## Testing Approach
+
+### Validation steps
+
+1. `venv/Scripts/python -m pytest tests/ -q` — must stay at 1,083 passed / 2 skipped plus the new tests.
+2. The `corpus` tests read `sessions/*.jsonl` read-only. They must **skip, not fail**, when the corpus is
+   absent, so a fresh clone and CI stay green — the corpus is JJ's speech and is not in the repo.
+3. Slice B harnesses only when no live session is running (`voice-tunnel status` exits 3).
+
+### Test cases
+
+| Input (lane set `{claude, codex}`, live `claude`) | Expected |
+|---|---|
+| `"hey codex run the tests"` | switch to `codex`; turn stamped `codex` |
+| `"hey claude run the tests"` | stay `claude`; turn stamped `claude` |
+| `"hey can you run the tests"` | stay `claude` (`can` scores 0.44 — below threshold) |
+| `"hey cloud run the tests"` | stay `claude` (`cloud`→claude 0.73 is the strict top scorer and IS current) |
+| `"hey cloud run the tests"`, live `codex` | **refuse**; `lane: null`, `reason: "ambiguous:claude"` |
+| `"run the tests"` inside the window | stay `claude` |
+| `"hey everyone stand down"` | `lane: "everyone"`; returned to every lane's watch |
+| a turn on disk with no `lane` field | returned to the default lane only |
+
+## Out of Scope
 
 - **Routing work between agents, monitoring them, or steering them.** That is
   Voice Tunnel's written anti-goal and is already served by `sb sessions`, `agent-mail` and
@@ -165,7 +447,10 @@ implementer should split it at that seam rather than starting everywhere.
 - **A distinct voice per agent.** `say --voice` already exists; whether each lane pins one is a separate,
   cheaper question.
 - **Fixing the closed-channel clip loss.** Tracked in Voice Tunnel; this spec must not build on it
-  (TC3), but it does not fix it either.
+  (TC3), but it does not fix it either. The mechanism identified in *Findings — TC3* is recorded there for
+  whoever picks that up, and is used here only to keep the lane hold clear of it.
+- **Improving the recognizer's rendering of a name.** The exact-match rate is measured and used; raising it
+  is a different piece of work.
 
 ## References
 
@@ -175,3 +460,4 @@ implementer should split it at that seam rather than starting everywhere.
 - `specs/005` — the one wait gated on speech, which `watch --lane` must not break.
 - Voice Tunnel Guide — the standing rules for how an agent behaves in a session, all of which become
   per-lane rules.
+- `ai-docs/reference/turn-log.md` — the cursor contract the `lane` filter extends.
