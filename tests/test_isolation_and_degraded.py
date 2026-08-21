@@ -81,8 +81,16 @@ def test_spawning_piper_is_reported_as_degraded(capsys, tmp_sessions, monkeypatc
     _, payload, _ = run(["doctor"], capsys)
     tts = next(c for c in payload["checks"] if c["name"] == "tts")
     if "spawning" in tts["detail"]:
-        assert tts["status"] == "degraded", "a spawning engine is a fallback, not a clean pass"
+        # The claim being made is that spawning is never a CLEAN PASS. Assert exactly that.
+        assert tts["status"] != "ok", "a spawning engine is a fallback, not a clean pass"
         assert tts["remedy"], "and it must say how to get the resident one"
+        # `degraded` specifically means "it works, but slowly". That requires a voice to exist.
+        # With the engine present and NO voice, `failed` is the right answer and pinning this to
+        # `degraded` was wrong — it just never fired, because a developer machine has a voice and
+        # CI has no piper.exe, so neither produces the one combination that reveals it. An
+        # isolated worktree does: it inherits the venv and none of the downloaded models.
+        if "(none installed)" not in tts["detail"]:
+            assert tts["status"] == "degraded", "a voice IS installed, so this is slow, not broken"
 
 
 def test_the_voiceprint_check_is_always_present(capsys, tmp_sessions):
