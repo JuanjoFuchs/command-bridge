@@ -491,8 +491,45 @@ and neither is failing — one is blocked and one is irreducibly human.
 
 | Open | What is missing | Who owns clearing it |
 |---|---|---|
-| **AC-18** — `layout.py` + `orbstate.py` | **A tunnel that is not in use.** Both bind port 8765 or drive the real socket, and `dev` has been live for the whole of this work (3+ hours, 1,980+ turns). Running them would have interrupted a conversation he was having. | **JJ** — they run the moment his session ends. No code change is expected: the strip is `hidden` below two agent lanes, so a solo session's geometry is unchanged by construction, and the orb ignores a background agent's state by the same explicit guard |
+| **AC-18** — `layout.py` + `orbstate.py` | ~~A tunnel that is not in use.~~ **THAT WAS WRONG — see the audit below.** Neither harness touches the live tunnel. What is actually missing is permission to run them: they spawn a server subprocess, which this session's tooling declines to start without an explicit grant. | **JJ** — one approval, then they run. No code change is expected: the strip is `hidden` below two agent lanes, so a solo session's geometry is unchanged by construction, and the orb ignores a background agent's state by an explicit guard |
 | **AC-20** — two agents, one phone, by voice and by tap | **A real microphone, a real phone, and two real agents.** No harness in this repo can produce any of the three, which is why the criterion was written `manual` from the start rather than as an aspiration | **JJ** |
+
+### Harness port audit — the premise behind AC-18's blocker was wrong, mine included
+
+Asked to find harnesses that hardcode the tunnel's default port and therefore cannot run while the
+tool is in use. **Not one does.** The full list, since the list is the artifact and a count would
+have hidden the answer:
+
+| Harness | Port | Session | `VOICE_TUNNEL_DIR` |
+|---|---|---|---|
+| `e2e.py` | **free ephemeral** | `e2e` | temp |
+| `uitest.py` | **free ephemeral** | `uitest` | temp |
+| `probe_capture.py` | **free ephemeral** | `probe` | temp |
+| `devicepills.py` | ephemeral *static* server; starts no tunnel | — | — |
+| `lanestrip.py` | ephemeral *static* server; starts no tunnel | — | — |
+| `layout.py` | **8794**, fixed | `layout` | temp |
+| `channel.py` | **8799**, fixed | `chan` | temp |
+| `orbstate.py` | **8801**, fixed | `orb` | temp |
+| `bargein.py` | **8806**, fixed | `barge` | temp ⚠ which is why it scores 0.0 without the real gallery |
+| `contextcost.py` | starts nothing | reads `dev` read-only | — |
+
+**8765 appears in exactly two files and only as the thing to stay away from** — the `ServerWatch`
+assertions in `devicepills.py` and `lanestrip.py`, which prove they did *not* bind it.
+
+**So AC-18 was never blocked by a port collision, and I should not have said it was.** I inherited
+the claim from this repo's note that `devicepills.py` is "the one page harness safe to run during a
+live session" and generalised it into a port conflict without opening the files. The real reason
+that note is true is narrower: those two start **no server at all**, while the others spawn one —
+which costs CPU and a model load, and is a resource question rather than a collision. Every one of
+them already isolates its session directory, so none can touch his turn log.
+
+**The smaller real defect, which the ruling does fix:** four harnesses hardcode a *fixed non-default*
+port. That cannot collide with the live tunnel, but it can collide with a second run of the same
+harness, with another developer, or with anything else that happens to hold 8794/8799/8801/8806 —
+and the failure is a confusing bind error rather than a clear one. **Mechanism ruled: take a free
+ephemeral port by default and PRINT it, with `--port` to override.** A flag that must be remembered
+is a flag that will be forgotten, which is how this class of problem comes back; `e2e.py` already
+works exactly this way and is the pattern to copy.
 
 ⚠ **Nothing else is waiting on anything.** The routing half is verified against 2,493 turns of his own
 recorded speech, the hold is verified by mutation, and the strip is verified in a real browser by a
