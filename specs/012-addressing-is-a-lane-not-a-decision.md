@@ -155,10 +155,21 @@ passed, per TC3.
   silently falls behind. That guard is correct and must be kept — but N agents watching N lanes is the
   normal case here, so a session-wide flag would refuse every agent after the first. It becomes one wait
   per `(session, lane)`.
-- **TC8** — **A lane name must be exact-matchable and must not collide with another lane.** The switch is
-  an exact string match (see the ruling), so a name the recognizer never renders exactly is a name he can
-  never switch to by voice. Name confusability is a property of the *lane set*, decided at registration
-  time, where it is cheap — not at recognition time, where it is a guess.
+- **TC8** — **A lane name must be exact-matchable, and it is ONE token.** The switch is an exact string
+  match on the single word after the greeting (see the ruling), so a name the recognizer never renders
+  exactly is a name he can never switch to by voice, and a name containing a space or a hyphen can never
+  be matched at all — normalization splits it into two tokens. Registration therefore refuses a malformed
+  name, a duplicate, and the reserved broadcast name.
+  ⚠ **It does NOT refuse a name merely similar to another lane, and an earlier draft of this spec was
+  wrong to say it should.** Measured while implementing: `claude` and `codex` score **0.55** against each
+  other — exactly the threshold that draft proposed — so the rule would have rejected this feature's
+  primary use case at registration. It would also have bought nothing, on two counts. Mis-routes are
+  already structurally impossible, because only an exact name switches. And lane-to-lane similarity did
+  not predict false refusals either: that same 0.55 pair produced **zero** across all 109 greeting-led
+  utterances. **The predictor is proximity to ORDINARY SPEECH, not to another lane** — every measured
+  false refusal was `grok`, against `go`, `got` and `god`. So the cost is reported rather than refused:
+  `lane add` warns and `lane list` carries the number, because a name whose only fault is costing an
+  occasional repeat is his call to keep.
 
 ## The TC2 ruling — only an exact lane name switches a lane
 
@@ -228,10 +239,12 @@ Same corpus, replayed through the table above with `current = claude`:
 
 **Mis-routes are structurally zero** for any lane set, because only an exact name switches. **False
 refusals are a property of the NAMES, not of the rule** — every one of them is `grok`, a short name close
-to ordinary speech (`go`, `got`, `god`). This is what TC8 acts on: confusability is decided when a lane is
-registered, where the answer is cheap and explainable, and `lane add` refuses a name that collides with an
-existing lane. It does not gate on the ordinary-speech corpus, which would be a rule nobody could predict;
-`lane list` reports the measured false-refusal cost of the current set instead.
+to ordinary speech (`go`, `got`, `god`), and none of them is a name close to another *lane*. That
+distinction is the whole of TC8: `claude` and `codex` are 0.55 similar to each other and cost nothing,
+while `grok` is unlike every other lane here and costs 2.4%. **Confusability with the lane set is the
+wrong thing to measure**; confusability with ordinary speech is the right thing, and it is a cost to
+report rather than a rule to enforce, because the corpus that measures it is his speech and is not
+something a fresh install has.
 
 ## The two remaining rulings
 
@@ -262,6 +275,16 @@ agent must never leave him talking to nobody.
 
 **Baseline before any change: 1,083 tests pass, 2 skipped** (both platform-specific: macOS and XDG path
 conventions).
+
+**One pre-existing test was corrected, and it is the only test this spec touches that it did not write.**
+`test_spawning_piper_is_reported_as_degraded` asserted `status == "degraded"` whenever `doctor`'s TTS
+detail mentioned spawning. With the piper engine present and **no voice installed**, the honest answer is
+`failed`, and the test's own stated intent — *"a spawning engine is a fallback, not a clean pass"* — is
+satisfied by it. The assertion now checks exactly that claim (`!= "ok"`) and additionally pins `degraded`
+when a voice **is** present, so it is **stronger** than before wherever it previously fired. It had never
+fired: a developer machine has a voice, and CI has no `piper.exe`, so neither produces the one combination
+that reveals it. **An isolated worktree does** — it inherits the venv and none of the downloaded models —
+which is the same fresh-install blind spot `coldstart.py` exists for, reached from a different direction.
 
 **`reason: "wake"` does not mean "he said the phrase".** It covers both a phrase grant and a conversation-
 window grant, which is why 954 of the 1,056 wake-granted turns in the corpus match no phrase rule at all.
@@ -297,7 +320,7 @@ The shapes an agent depends on. Everything else is implementation and is derived
 
 ```
 voice-tunnel lane list                       # every lane, which is live, per-lane pending counts
-voice-tunnel lane add <name>                 # register; refuses a reserved or colliding name
+voice-tunnel lane add <name>                 # register; refuses a reserved, duplicate or multi-word name
 voice-tunnel lane remove <name>
 voice-tunnel lane switch <name>              # the deterministic seam the tests drive; `everyone` allowed
 voice-tunnel watch --session dev --lane codex --since <cursor>
@@ -324,7 +347,7 @@ New error codes, per convention 8 (`{error, code, remedy}`):
 |---|---|
 | `off_lane` | `say --lane L` where `L` is not the caller's lane (FR9) |
 | `unknown_lane` | any command naming a lane that is not registered |
-| `lane_exists` | `lane add` for a name already registered, reserved, or colliding under TC8 |
+| `lane_exists` | `lane add` for a name already registered, reserved, or not a single word token (TC8) |
 | `watch_open` | unchanged in meaning, now scoped to `(session, lane)` (TC7) |
 
 ## Implementation Tasks
@@ -332,7 +355,8 @@ New error codes, per convention 8 (`{error, code, remedy}`):
 ### Slice A — routing (FR1–FR5, FR9)
 
 - [ ] A lane registry on the server: N lanes, one live, the `--wake` lane registered as default at startup.
-- [ ] `lane` subcommand — `list` / `add` / `remove` / `switch`, with TC8 collision refusal on `add`.
+- [ ] `lane` subcommand — `list` / `add` / `remove` / `switch`. `add` refuses a malformed, duplicate or
+      reserved name and REPORTS confusability rather than refusing on it (TC8).
 - [ ] Resolve the lane in the wake gate per the TC2 table; return the resolved lane and the grant alongside
       the existing `(addressed, text)` verdict.
 - [ ] Stamp the turn with its lane at append time, once, at the point of the gate decision (NFR2).
@@ -389,8 +413,10 @@ Every criterion names its validation method. `corpus` means replayed against the
       same way the spec 007 refusal is verified.
 - [ ] **AC-11** `integration` — **FR1, FR9.** A lane switch returns an open `watch` on the lane that just lost the
       conversation, with `reason: "lane"` and the new `live_lane`.
-- [ ] **AC-12** `unit` — **FR1, TC8.** `lane add everyone` is refused with `lane_exists`; `lane add` of a name colliding
-      with a registered lane under TC8 is refused; `lane list` reports the set's measured false-refusal cost.
+- [ ] **AC-12** `unit` — **FR1, TC8.** `lane add everyone` is refused with `lane_exists`, as is a duplicate
+      and a name that is not a single word token. **`lane add codex` alongside `claude` SUCCEEDS** — the
+      pair scores 0.55 against each other and must not be treated as a collision, which is the specific
+      regression this criterion exists to prevent.
 - [ ] **AC-13** `unit` — **NFR1.** Lane resolution is a pure function of state already in memory:
       it takes the lane set and the live lane as arguments, performs no I/O, and is called in the same
       pass as the wake verdict. Asserted by calling it with no server, no socket and no session directory.

@@ -51,7 +51,7 @@ agent constantly. **Requiring a greeting deleted that path, and the threshold wi
 is what buys leniency; now there is always context."""
 
 
-def _norm(text: str) -> str:
+def normalize(text: str) -> str:
     """Lowercase, strip punctuation, collapse whitespace — so 'Hey, Claude!' matches."""
     t = text.lower()
     t = re.sub(r"[^\w\s]", " ", t)
@@ -84,7 +84,7 @@ class WakeGate:
     ) -> None:
         # Longest first so "hey claude" wins over the bare "claude" and strips fully.
         self.phrases = sorted(
-            (_norm(p) for p in (phrases if phrases is not None else config.wake_phrases())),
+            (normalize(p) for p in (phrases if phrases is not None else config.wake_phrases())),
             key=len,
             reverse=True,
         )
@@ -112,7 +112,7 @@ class WakeGate:
         drop `_last_addressed_at`, so the very next sentence would come back unaddressed and they
         would have to say the (new) phrase to resume something they never stopped doing.
         """
-        self.phrases = sorted((_norm(p) for p in phrases), key=len, reverse=True)
+        self.phrases = sorted((normalize(p) for p in phrases), key=len, reverse=True)
 
     def _find_phrase(self, normalized: str) -> str | None:
         """Return the wake phrase that woke this utterance, or None.
@@ -219,7 +219,7 @@ class WakeGate:
             self.last_grant = "phrase"     # push-to-talk: the operator signalled intent by hand
             return True, text.strip()
 
-        normalized = _norm(text)
+        normalized = normalize(text)
         if not normalized:
             return False, text.strip()
 
