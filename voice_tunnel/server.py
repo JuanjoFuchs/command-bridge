@@ -197,6 +197,15 @@ class TunnelState:
         by `watching_lanes` rather than redefined. Redefining it would have silently changed the
         answer given to every existing caller (spec 012 TC7)."""
 
+        self.lane_held: dict[str, list] = {}
+        """Clips an off-lane agent produced while he was talking to somebody else (FR7).
+
+        ⚠ **DELIBERATELY NOT `undelivered`.** That queue is cleared wholesale by barge-in, which
+        is correct for the lane he is ON — playing the next clip at a man who just interrupted is
+        the same interruption wearing a different hat — and wrong for a lane he is NOT on, which
+        he has not interrupted and cannot even hear. TC3 records nine clips lost from that queue
+        on 2026-08-20; sharing it would have inherited the bug on purpose."""
+
         self.ambiguous: int = 0
         """How many summons this session could not route (TC2). Monotonic, never reset.
 
@@ -481,6 +490,7 @@ class TunnelState:
             "channel_open": self.channel_open,
             "watch_open": self.watch_open,
             "watching_lanes": sorted(self.watching_lanes),
+            "lane_waiting": {name: len(clips) for name, clips in self.lane_held.items() if clips},
             "ambiguous": self.ambiguous,
             "last_ambiguous": list(self.last_ambiguous),
             "agent_holds_turns": self.agent_holds_turns,
@@ -559,8 +569,16 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
     timing.stamp(state.session, "lane", lane=lane, why=why)
     await _broadcast_json(
         state,
-        {"type": "lane", "lane": lane, "lanes": list(state.lanes.names), "why": why},
+        {"type": "lane", "lane": lane, "lanes": list(state.lanes.names), "why": why,
+         "waiting": {name: len(clips) for name, clips in state.lane_held.items() if clips}},
     )
+    # HIS ATTENTION IS BACK HERE, so what this lane said while he was away stops being an
+    # interruption and becomes an answer. Best-effort: a failure to play a held clip must never
+    # be able to prevent the switch itself, or a broken clip would trap the conversation.
+    try:
+        await _flush_lane_held(state, lane)
+    except Exception as exc:
+        state.fail("transport", f"flush lane hold failed: {exc}")
 
 
 async def _broadcast_json(state: TunnelState, payload: dict[str, Any]) -> None:
@@ -798,17 +816,15 @@ async def handle_say(request: web.Request) -> web.Response:
                  "lanes": list(state.lanes.names)},
                 status=400,
             )
-        if lane != state.lanes.current and lane != lanes_mod.BROADCAST:
-            return web.json_response(
-                {"error": f"lane '{lane}' is not live — he is talking to "
-                          f"'{state.lanes.current}'",
-                 "code": "off_lane",
-                 "lane": lane,
-                 "live_lane": state.lanes.current,
-                 "remedy": f"voice-tunnel watch --session {state.session} --lane {lane} "
-                           f"--since <cursor>   # returns when he comes back to you"},
-                status=409,
-            )
+        # ⚠ **AN OFF-LANE `say` USED TO BE REFUSED HERE. IT IS HELD NOW (FR7).**
+        #
+        # Refusing was the correct interim while there was nowhere safe to put the audio -- the
+        # one thing that must never happen is an agent talking over the conversation he is
+        # actually having. But he asked for the other behaviour in as many words: *"while I am on
+        # the lane with the other one, the other agent cannot barge in -- what it is saying would
+        # be queued up."* A refusal makes the waiting agent's answer HIS problem to ask for again,
+        # which is the opposite of the point. `_speak` holds it and releases it the moment his
+        # attention comes back to that lane.
 
     # No 409 when nobody is connected. The reply is synthesized and held; see
     # TunnelState.undelivered. Refusing here is what made a locked phone eat answers silently.
@@ -878,11 +894,13 @@ async def handle_say(request: web.Request) -> web.Response:
     if fire_and_forget:
         # Return before synthesis so the agent can acknowledge and keep working in parallel,
         # instead of the user waiting out a TTS round trip before anything else starts.
-        asyncio.get_running_loop().create_task(_speak(state, text, voice))
+        # The lane travels on the fire-and-forget path too. `--now` is exactly the path an
+        # agent takes when it is in a hurry, which is when it would otherwise talk over him.
+        asyncio.get_running_loop().create_task(_speak(state, text, voice, lane=lane))
         return web.json_response({"queued": True, "async": True, **unread})
 
     try:
-        result = await _speak(state, text, voice)
+        result = await _speak(state, text, voice, lane=lane)
     except tts.TTSError as exc:
         return web.json_response({"error": str(exc)}, status=500)
     return web.json_response({**result, **unread})
@@ -910,7 +928,8 @@ def record_spoken(session: str, clip_id: str, text: str, held_for: float) -> str
     return normalized
 
 
-async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, Any]:
+async def _speak(state: TunnelState, text: str, voice: str | None,
+                 lane: str | None = None) -> dict[str, Any]:
     """Synthesize, hold if the speaker is mid-sentence, then push the audio.
 
     Shared by the blocking and fire-and-forget paths so the interruption guard cannot be
@@ -995,9 +1014,28 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
     # accident; a closed orb is a decision. Either way the reply is held rather than played to an
     # empty room, and arrives when he is back — which is what the undelivered queue was built for
     # when a locked phone was silently eating answers.
-    deliverable = bool(state.clients) and state.channel_open
+    # THREE ways to have nobody to talk to now, and the third is new. A dropped socket is an
+    # accident, a closed orb is a decision, and an off-lane agent is HIM TALKING TO SOMEBODY ELSE.
+    # The third is not a failure at all — it is the feature — so it is held in its own store and
+    # released when his attention comes back to this lane (FR7).
+    off_lane = bool(lane) and lane != state.lanes.current and lane != lanes_mod.BROADCAST
+    deliverable = bool(state.clients) and state.channel_open and not off_lane
     if deliverable:
         await _send_clip(state, header, pcm)
+    elif off_lane:
+        # ⚠ A SEPARATE STORE FROM `undelivered`, and TC3 is the whole reason. Nine clips queued
+        # there on 2026-08-20 and none of them played; the only mechanism found that can lose all
+        # nine is barge-in clearing that queue wholesale. That clearing is RIGHT for the lane he
+        # is on — playing the next clip at a man who just interrupted is the same interruption
+        # wearing a different hat — and WRONG for a lane he is not on, which he has not
+        # interrupted and is not listening to. Sharing the store would inherit the bug on purpose.
+        held = state.lane_held.setdefault(str(lane), [])
+        held.append({"header": header, "pcm": pcm, "at": time.time()})
+        _prune_lane_held(state, str(lane))
+        timing.stamp(state.session, "lane_held", clip=clip_id, lane=lane,
+                     depth=len(state.lane_held.get(str(lane), [])))
+        await _broadcast_json(state, {"type": "lane_waiting", "lane": lane,
+                                      "waiting": len(state.lane_held.get(str(lane), []))})
     else:
         state.undelivered.append({"header": header, "pcm": pcm, "at": time.time()})
         _prune_undelivered(state)
@@ -1023,10 +1061,50 @@ async def _speak(state: TunnelState, text: str, voice: str | None) -> dict[str, 
         # from a number that cannot express it.
         "held_for_speech": announced,
         "delivered": deliverable,
+        # HELD BECAUSE HE IS TALKING TO SOMEBODY ELSE, which is not the same as undelivered. The
+        # agent is not being told its reply failed; it is being told when he will hear it.
+        "held_off_lane": off_lane,
+        "lane": lane,
         # Say WHICH kind of not-delivered, so the agent can tell "his phone dropped" from "he
         # closed the channel deliberately" without a second call.
-        "reason": None if deliverable else ("channel_closed" if state.clients else "no_client"),
+        "reason": None if deliverable else (
+            "off_lane" if off_lane else ("channel_closed" if state.clients else "no_client")
+        ),
     }
+
+
+def _prune_lane_held(state: TunnelState, lane: str) -> None:
+    """Bound a lane's hold on both axes, exactly as `undelivered` is bounded and for the same
+    reason: coming back to an agent after twenty minutes and being read a stack of stale answers
+    is a worse experience than being told to ask again."""
+    now = time.time()
+    kept = [c for c in state.lane_held.get(lane, [])
+            if now - c["at"] <= config.UNDELIVERED_MAX_AGE_S][-config.UNDELIVERED_MAX:]
+    if kept:
+        state.lane_held[lane] = kept
+    else:
+        state.lane_held.pop(lane, None)
+
+
+async def _flush_lane_held(state: TunnelState, lane: str) -> int:
+    """Play what this lane said while he was talking to somebody else (FR7).
+
+    Called when a lane BECOMES LIVE, which is the moment its speech stops being an interruption
+    and becomes an answer. Oldest first, and each clip says how long it waited — a reply arriving
+    four minutes after the question, with no acknowledgement that time passed, reads as the agent
+    being slow rather than as him having been elsewhere.
+    """
+    _prune_lane_held(state, lane)
+    queued = state.lane_held.pop(lane, [])
+    for clip in queued:
+        header = dict(clip["header"])
+        header["delayed_s"] = round(time.time() - clip["at"], 1)
+        header["held_off_lane"] = True
+        await _send_clip(state, header, clip["pcm"])
+    if queued:
+        timing.stamp(state.session, "lane_held_flushed", lane=lane, count=len(queued))
+        await _broadcast_json(state, {"type": "lane_waiting", "lane": lane, "waiting": 0})
+    return len(queued)
 
 
 def _prune_undelivered(state: TunnelState) -> None:
@@ -1663,6 +1741,12 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
                                   "score": state.last_barge_score})
     # Drop anything still queued as well. Stopping the clip he interrupted and then playing the
     # next one at him would be the same interruption wearing a different hat.
+    #
+    # ⚠ `lane_held` IS DELIBERATELY NOT TOUCHED (spec 012 TC3). He interrupted the lane he is
+    # talking to; he has not interrupted an agent he cannot hear, and discarding its held speech
+    # would be the tool deciding on his behalf that an answer he never received is no longer
+    # wanted. That conflation is the only mechanism found that can lose all nine of the clips
+    # TC3 measured, and keeping the two stores apart is what stops it happening again.
     state.undelivered.clear()
     await _set_agent_state(state, "idle")
 

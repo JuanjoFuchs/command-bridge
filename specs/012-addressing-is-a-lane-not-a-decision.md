@@ -395,8 +395,12 @@ New error codes, per convention 8 (`{error, code, remedy}`):
 
 ### Slice B — lanes UI (FR6, FR7, FR8) — does not begin until AC-16 passes
 
-- [ ] Confirm the hold delivers (AC-16), per TC3.
-- [ ] A per-lane hold store, flushed when its lane becomes live, not cleared by barge-in.
+- [x] Confirm the hold delivers (AC-16), per TC3. **Verified by mutation, not only by a green run:**
+      reintroducing the exact TC3 bug (barge-in clearing the hold) and separately making the flush a
+      no-op each turn the guards red. The first attempt at the barge-in test SIMULATED the barge by
+      clearing the queue directly, and the mutation showed it stayed green against the real bug —
+      it now drives `_maybe_barge` itself.
+- [x] A per-lane hold store, flushed when its lane becomes live, not cleared by barge-in.
 - [ ] The lane strip in `web/index.html`: one row per lane, the live one marked, a tap switches it.
 - [ ] The "has something to say" mark on a held lane.
 - [ ] Per-lane agent state (thinking / transcribing / synthesizing / speaking).
@@ -429,9 +433,14 @@ Every criterion names its validation method. `corpus` means replayed against the
       no other, proving the 1,866 turns already on disk keep working.
 - [x] **AC-9** `integration` — Two waits on the SAME `(session, lane)`: the second is refused with
       `watch_open`. Two waits on DIFFERENT lanes of the same session: **both run** (TC7).
-- [x] **AC-10** `integration` — **FR9.** `say --lane <not mine>` returns `{error, code: "off_lane", remedy}`, exit 1,
-      and **nothing is synthesized and nothing is queued** — verified by the absence of a spoken record, the
-      same way the spec 007 refusal is verified.
+- [x] **AC-10** `integration` — **FR9.** `say --lane <not live>` **does not play.** ⚠ **This criterion was
+      deliberately REVERSED between the slices, and the reversal is the point rather than a correction.**
+      Slice A refused outright (`code: off_lane`, nothing synthesized), which was right while there was
+      nowhere safe to put the audio. Slice B built the hold, and he asked for that in as many words —
+      *"what it is saying would be queued up"*. A refusal makes the waiting agent's answer HIS problem to
+      ask for again. What survives unchanged is the guarantee that matters and it is asserted on the wire:
+      **nothing reaches the client while another lane is live.** `say --lane <unknown>` still refuses with
+      `unknown_lane`, since that is a caller error rather than bad timing.
 - [x] **AC-11** `integration` — **FR1, FR9.** A lane switch returns an open `watch` on the lane that just lost the
       conversation, with `reason: "lane"` and the new `live_lane`.
 - [x] **AC-12** `unit` — **FR1, TC8.** `lane add everyone` is refused with `lane_exists`, as is a duplicate
@@ -450,7 +459,7 @@ Every criterion names its validation method. `corpus` means replayed against the
 
 ### Slice B — the UI and the hold
 
-- [ ] **AC-16** `integration` — **The TC3 gate, and Slice B does not start until it passes.** A clip issued
+- [x] **AC-16** `integration` — **The TC3 gate, and Slice B does not start until it passes.** A clip issued
       to an off-lane agent is held, and **delivers in full when that lane becomes live** — asserted on the
       bytes arriving, not on `queued: true`. Repeated with a barge-in between the hold and the switch: the
       held clip **still delivers** (**FR7, TC4**), because barge-in silences the live lane and must not discard another

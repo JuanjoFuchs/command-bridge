@@ -2787,19 +2787,19 @@ def cmd_say(args) -> dict[str, Any]:
     if getattr(args, "lane", None):
         payload["lane"] = args.lane
     result = _request(args.session, "/say", payload)
-    if isinstance(result, dict) and result.get("code") == "off_lane":
-        # HE IS TALKING TO SOMEBODY ELSE, so nothing was spoken and nothing was queued. Same shape
-        # as the unread refusal below and for the same reason — a refusal that has already played
-        # audio is not a refusal, it is an interruption with an apology attached.
-        live = result.get("live_lane")
+    if isinstance(result, dict) and result.get("held_off_lane"):
+        # HELD, NOT LOST AND NOT REFUSED. He is talking to somebody else, so this reply is waiting
+        # rather than playing over that conversation, and it goes out on its own the moment he
+        # comes back to this lane. The agent does not have to do anything about it — which is
+        # exactly why it has to be TOLD, or it will assume it was heard and carry on.
+        mine = getattr(args, "lane", "") or ""
         _emit_next(
-            result, args.session, "say", "off_lane",
-            f"run `voice-tunnel watch --session {args.session} "
-            f"--lane {getattr(args, 'lane', '') or ''} --since <cursor>`",
-            f"NOT SPOKEN — he is talking to '{live}' right now, and cutting in would be talking "
-            f"over that conversation. Wait for him: the watch above returns the moment he comes "
-            f"back to you. Your reply is not lost; it was never said, so restate it then if it "
-            f"has gone stale.",
+            result, args.session, "say", "held_off_lane",
+            f"run `voice-tunnel watch --session {args.session} --lane {mine} --since <cursor>`",
+            "HELD, NOT SPOKEN — he is talking to another agent right now, so this is waiting and "
+            "plays by itself when he comes back to you. He can see that you have something to "
+            "say. Do not repeat it and do not say it another way: keep waiting on the watch "
+            "above, which returns the moment his attention is back on this lane.",
         )
         return result
     if isinstance(result, dict) and result.get("code") == config.UNREAD_REFUSAL_CODE:

@@ -13,6 +13,7 @@ TunnelState of this test's own, on a turn log under tmp_path.
 """
 import argparse
 import asyncio
+import json
 
 import pytest
 
@@ -164,27 +165,33 @@ async def _spoke(*_a, **_k):
     """Stands in for synthesis on the paths that are SUPPOSED to reach it."""
     return {"queued": True, "id": "x"}
 
-def test_say_into_a_lane_that_is_not_live_is_refused_before_synthesis(state, monkeypatch):
-    """AC-10, FR9. Nothing synthesized and nothing queued — asserted on the mechanism, because a
-    refusal that made the audio and threw it away would pass a return-value check while being
-    exactly the bug."""
-    synthesized = []
+def test_say_into_a_lane_that_is_not_live_is_held_rather_than_played(state, monkeypatch):
+    """AC-10, FR9 — **and this assertion was deliberately REVERSED between the two slices.**
 
-    async def _never(*a, **k):
-        synthesized.append(a)
-        return {"queued": True}
+    Slice A refused an off-lane `say` outright, which was correct while there was nowhere safe to
+    put the audio: the one thing that must never happen is an agent talking over the conversation
+    he is actually having. Slice B built the hold, and he asked for that in as many words — *"what
+    it is saying would be queued up"*. A refusal makes the waiting agent's answer HIS problem to
+    ask for again, which is the opposite of the point.
 
-    monkeypatch.setattr(server, "_speak", _never)
+    What survives the reversal unchanged is the guarantee that actually matters: **it does not
+    play.** That is asserted on the wire rather than on the return value.
+    """
+    monkeypatch.setattr(server.tts, "synthesize", lambda text, **k: (b"\x00\x01" * 64, 22050))
+    sent = []
+    monkeypatch.setattr(server, "_send_clip",
+                        lambda *a, **k: sent.append(a) or asyncio.sleep(0))
     state.lanes.switch("codex")
 
     resp = asyncio.run(server.handle_say(_Req(state, {"text": "all green", "lane": "claude"})))
-    payload = resp.body.decode()
+    payload = json.loads(resp.body.decode())
 
-    assert resp.status == 409
-    assert '"code": "off_lane"' in payload
-    assert "codex" in payload, "it must say who he IS talking to"
-    assert synthesized == [], "nothing may be synthesized on a refusal"
-    assert state.undelivered == [], "and nothing may be queued"
+    assert resp.status == 200, "it is held, not an error — the agent did nothing wrong"
+    assert payload["delivered"] is False
+    assert payload["held_off_lane"] is True
+    assert payload["reason"] == "off_lane"
+    assert sent == [], "nothing may reach the wire while he is talking to somebody else"
+    assert len(state.lane_held["claude"]) == 1, "and it is waiting, not discarded"
 
 
 def test_say_into_the_live_lane_is_not_refused(state, monkeypatch):
