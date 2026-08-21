@@ -2473,7 +2473,9 @@ def cmd_watch(args) -> dict[str, Any]:
             # Done as they arrive rather than once at the end, so the page's read boundary keeps
             # moving during a long hold. Best-effort: this must keep working with no server.
             try:
-                ack = _request(args.session, "/consumed", {"cursor": cursor})
+                ack = _request(args.session, "/consumed",
+                               {"cursor": cursor,
+                                **({"lane": my_lane} if my_lane else {})})
             except Exception:
                 ack = ack or {}
         live = _request(args.session, "/status")

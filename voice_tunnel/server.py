@@ -197,6 +197,15 @@ class TunnelState:
         by `watching_lanes` rather than redefined. Redefining it would have silently changed the
         answer given to every existing caller (spec 012 TC7)."""
 
+        self.lane_states: dict[str, str] = {}
+        """What EACH agent is doing (FR8), keyed by lane.
+
+        `agent_state` above stays the LIVE lane's state and keeps its original meaning, because it
+        is what the orb paints and the orb must not flicker with a background agent's work. This
+        is the fan-out that lets the lane strip show all of them at once — which is what he asked
+        for: *"I would like to be able to keep track of, still, see if one agent is thinking,
+        transcribing, or synthesizing."*"""
+
         self.lane_held: dict[str, list] = {}
         """Clips an off-lane agent produced while he was talking to somebody else (FR7).
 
@@ -491,6 +500,7 @@ class TunnelState:
             "watch_open": self.watch_open,
             "watching_lanes": sorted(self.watching_lanes),
             "lane_waiting": {name: len(clips) for name, clips in self.lane_held.items() if clips},
+            "lane_states": dict(self.lane_states),
             "ambiguous": self.ambiguous,
             "last_ambiguous": list(self.last_ambiguous),
             "agent_holds_turns": self.agent_holds_turns,
@@ -544,15 +554,28 @@ def _check(request: web.Request, state: TunnelState) -> tuple[bool, str]:
     )
 
 
-async def _set_agent_state(state: TunnelState, value: str) -> None:
+async def _set_agent_state(state: TunnelState, value: str, lane: str | None = None) -> None:
     """Publish what the agent is doing: idle | thinking | waiting | speaking.
 
     The point is that silence is ambiguous. Without this the user cannot tell "it did not hear
     me" from "it heard me and is working" from "it is holding back so as not to interrupt" —
     and all three look like a broken tool.
+
+    With several agents in the room the same question is asked N times, so the state is ALSO
+    recorded per lane (FR8). `agent_state` keeps meaning what it always meant — what the agent he
+    is TALKING TO is doing — because that is what the orb shows and the orb must not start
+    flickering with a background agent's work. `lane_states` is the fan-out.
+
+    An explicit `lane` is used when the caller knows whose state this is (an agent reporting its
+    own); otherwise it belongs to the live lane, which is the only agent the tunnel's own stages —
+    transcribing, synthesizing, speaking — can be about.
     """
-    state.agent_state = value
-    await _broadcast_json(state, {"type": "agent_state", "state": value})
+    who = lane or state.lanes.current
+    state.lane_states[who] = value
+    if who == state.lanes.current:
+        state.agent_state = value
+    await _broadcast_json(state, {"type": "agent_state", "state": value, "lane": who,
+                                  "live": who == state.lanes.current})
 
 
 async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
@@ -1437,11 +1460,16 @@ async def handle_watching(request: web.Request) -> web.Response:
     else:
         state.watching_lanes.discard(lane)
     state.watch_open = bool(state.watching_lanes)
+    # ATTRIBUTED TO THE LANE THAT SAID IT (FR8). Without this a background agent re-arming its
+    # watch would repaint the orb of the agent he is actually talking to — publishing one agent's
+    # state through another's channel, which is the defect `agent_state` and `muted` were already
+    # separated to avoid.
+    mine = state.lane_states.get(lane, "idle")
     if watching:
-        if state.agent_state == "thinking":
-            await _set_agent_state(state, "idle")
-    elif state.agent_state == "idle":
-        await _set_agent_state(state, "thinking")
+        if mine == "thinking":
+            await _set_agent_state(state, "idle", lane=lane)
+    elif mine == "idle":
+        await _set_agent_state(state, "thinking", lane=lane)
     return web.json_response({"agent_state": state.agent_state, "verbose": state.verbose,
                               "lane": lane, "watching_lanes": sorted(state.watching_lanes)})
 
@@ -1506,11 +1534,12 @@ async def handle_consumed(request: web.Request) -> web.Response:
     # pre-reply check rather than a listen. See TunnelState.agent_holds_turns.
     state.agent_holds_turns = True
     agent_state = str((body or {}).get("state") or "thinking")
+    consumed_lane = (body or {}).get("lane") or None
     await _broadcast_json(
         state,
         {"type": "consumed", "cursor": cursor, "pending": state.pending_turns()},
     )
-    await _set_agent_state(state, agent_state)
+    await _set_agent_state(state, agent_state, lane=consumed_lane)
     # THE ACKNOWLEDGEMENT, and it is the intent that earns it — not the arrival of the words, and
     # not the act of reading them. See `_will_respond`. An agent that reads a turn and signals it
     # is going back to listening (`state: "idle"`) makes no sound at all, which is the whole point:
@@ -1552,7 +1581,14 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
     # the old name.
     await ws.send_json(
         {"type": "ready", "session": state.session, "verbose": state.verbose,
-         "wake": config.wake_name(), "wake_phrases": list(state.wake.phrases)}
+         "wake": config.wake_name(), "wake_phrases": list(state.wake.phrases),
+         # THE WHOLE LANE PICTURE ON CONNECT. A page that learned about lanes only from the next
+         # change event would show an empty room until somebody moved — and a phone reconnects
+         # every time it locks, so that is the common case rather than the edge one.
+         "lane": state.lanes.current, "lanes": list(state.lanes.names),
+         "broadcast": lanes_mod.BROADCAST,
+         "lane_states": dict(state.lane_states),
+         "waiting": {n: len(c) for n, c in state.lane_held.items() if c}}
     )
     # Deliver anything said while the phone was asleep, before any new audio arrives.
     try:

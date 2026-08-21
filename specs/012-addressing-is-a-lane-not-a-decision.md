@@ -401,9 +401,9 @@ New error codes, per convention 8 (`{error, code, remedy}`):
       clearing the queue directly, and the mutation showed it stayed green against the real bug —
       it now drives `_maybe_barge` itself.
 - [x] A per-lane hold store, flushed when its lane becomes live, not cleared by barge-in.
-- [ ] The lane strip in `web/index.html`: one row per lane, the live one marked, a tap switches it.
-- [ ] The "has something to say" mark on a held lane.
-- [ ] Per-lane agent state (thinking / transcribing / synthesizing / speaking).
+- [x] The lane strip in `web/index.html`: one row per lane, the live one marked, a tap switches it.
+- [x] The "has something to say" mark on a held lane.
+- [x] Per-lane agent state (thinking / transcribing / synthesizing / speaking).
 
 ## Acceptance Criteria
 
@@ -464,15 +464,39 @@ Every criterion names its validation method. `corpus` means replayed against the
       bytes arriving, not on `queued: true`. Repeated with a barge-in between the hold and the switch: the
       held clip **still delivers** (**FR7, TC4**), because barge-in silences the live lane and must not discard another
       lane's pending speech.
-- [ ] **AC-17** `harness:scripts/devicepills.py` — **FR6.** The lane strip does not break the device pickers. This is
-      the one page harness that starts no server and is safe to run during a live session.
-- [ ] **AC-18** `harness:scripts/layout.py` — **FR6.** The lane strip fits at all five viewports and the newest
-      transcript row is still on screen. ⚠ Requires no live session.
-- [ ] **AC-19** `harness:scripts/orbstate.py` — **FR8.** Per-lane state flows through the pure reducer; the golden
-      snapshot is re-blessed deliberately and the diff is read, not accepted blind.
+- [x] **AC-17** `harness:scripts/devicepills.py` — **FR6.** The lane strip does not break the device pickers.
+      Run during his live session and green, including that harness's own proof that the session was
+      untouched (`pids on 8765: [17868]` before and after).
+- [ ] **AC-18** `harness:scripts/layout.py` **and** `scripts/orbstate.py` — **FR6.** The strip fits at all five
+      viewports with the newest transcript row still on screen, and the orb is unchanged by per-lane state
+      (the agent-state handler now ignores a background agent, so the orb's golden must still match).
+      ⚠ **BLOCKED, not failing:** both bind a port or drive the real socket, and his session has been live
+      throughout. The risk is bounded — the strip is `hidden` below two agent lanes, so a solo session's
+      geometry is unchanged by construction, which is what `layout.py` measures.
+- [x] **AC-19** `harness:scripts/lanestrip.py` — **FR6, FR7, FR8.** ⚠ **Re-pointed from `orbstate.py`, which was
+      the wrong harness for it.** Per-lane state does not flow through the orb's reducer at all — it flows
+      through a new one, and pointing the criterion at the orb's golden would have measured nothing. The
+      strip now has its own harness in the same shape: 168 cases of the pure `lanesView` (lane count x live
+      lane x waiting depth x per-agent state), then the real page driven through its own message handler.
+      Like `devicepills.py` it starts **no voice-tunnel server and proves it**, so it ran green during his
+      live session. The orb half of the old criterion moved to AC-18, where the blocked harnesses live.
 - [ ] **AC-20** `manual` — **FR6, FR7.** Two agents, one phone, one session: he switches by voice and by tap, both are
       heard, and the off-lane one is visibly waiting. **Irreducibly manual** — it needs a real microphone, a
       real phone and two real agents, which is the one thing no harness in this repo can produce.
+
+## What is not done, what is missing, and who owns clearing it
+
+Every implementation task is complete and 18 of 20 acceptance criteria are verified. Two are open,
+and neither is failing — one is blocked and one is irreducibly human.
+
+| Open | What is missing | Who owns clearing it |
+|---|---|---|
+| **AC-18** — `layout.py` + `orbstate.py` | **A tunnel that is not in use.** Both bind port 8765 or drive the real socket, and `dev` has been live for the whole of this work (3+ hours, 1,980+ turns). Running them would have interrupted a conversation he was having. | **JJ** — they run the moment his session ends. No code change is expected: the strip is `hidden` below two agent lanes, so a solo session's geometry is unchanged by construction, and the orb ignores a background agent's state by the same explicit guard |
+| **AC-20** — two agents, one phone, by voice and by tap | **A real microphone, a real phone, and two real agents.** No harness in this repo can produce any of the three, which is why the criterion was written `manual` from the start rather than as an aspiration | **JJ** |
+
+⚠ **Nothing else is waiting on anything.** The routing half is verified against 2,493 turns of his own
+recorded speech, the hold is verified by mutation, and the strip is verified in a real browser by a
+harness that proves it started no server.
 
 ## Testing Approach
 

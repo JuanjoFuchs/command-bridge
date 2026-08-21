@@ -359,6 +359,32 @@
   }
 
   /* One row under the orb: mute, the device pickers, verbose, collapse. */
+  /* One compact row of chips, no wider than the controls beside them, so the cluster under the
+     orb stays a cluster rather than becoming a bar that spans the screen. */
+  #lanes {
+    display:flex; align-items:center; justify-content:center;
+    gap:.35rem; flex-wrap:wrap; row-gap:.35rem;
+    width:min(100%,29rem); margin:.5rem auto 0;
+  }
+  #lanes button {
+    display:inline-flex; align-items:center; gap:.3rem;
+    padding:.2rem .55rem; border-radius:999px;
+    border:1px solid var(--edge-2); background:transparent; color:var(--dim);
+    font:inherit; font-size:.78rem; line-height:1.5; cursor:pointer;
+  }
+  /* EXACTLY ONE chip is filled, because exactly one lane is live. Cool, the token this page
+     already uses for "the machine has the floor" — which is what being the live lane means. */
+  #lanes button.live { background:var(--cool); border-color:var(--cool); color:var(--bg-deep); }
+  /* A lane holding something to say. Warm, the token for "wants the floor", and it is a BORDER
+     rather than a fill so it cannot be mistaken for the live lane at a glance on a phone. */
+  #lanes button.waiting { border-color:var(--warm); color:var(--warm); }
+  #lanes button.live.waiting { color:var(--bg-deep); border-color:var(--warm); }
+  #lanes .dot { width:.45rem; height:.45rem; border-radius:50%; background:currentColor; opacity:.3; }
+  #lanes .dot.busy { opacity:1; animation:lanepulse 1.1s ease-in-out infinite; }
+  #lanes .n { font-variant-numeric:tabular-nums; }
+  @keyframes lanepulse { 0%,100% { opacity:.3; } 50% { opacity:1; } }
+  @media (prefers-reduced-motion:reduce) { #lanes .dot.busy { animation:none; opacity:1; } }
+
   #controls {
     display:flex; align-items:center; justify-content:center;
     gap:.45rem; flex-wrap:wrap; row-gap:.45rem;
@@ -732,6 +758,12 @@
          never contradicted, which is exactly how a stale label survives. When the page cannot
          know, this renders NOTHING — not "unknown", and not an empty element holding a line of
          height. Silence is honest; a confident wrong answer is the bug. -->
+    <!-- WHO IS IN THE MEETING (spec 012 FR6/FR7/FR8). Hidden entirely below two agent lanes, and
+         that is the same rule the device pickers follow: a control offering no choice is not a
+         control, it is a line of a phone screen spent on nothing. It also means a single-agent
+         session's layout is byte-identical to before this existed, which is what keeps
+         `scripts/layout.py` measuring the case almost every session is actually in. -->
+    <div id="lanes" role="group" aria-label="Agents in this session" hidden></div>
     <div id="route" role="status" hidden></div>
     <!-- ERRORS ONLY. There used to be a permanent status line here relaying "say hey claude",
          "muted — tap the orb to talk" and friends, reserving three lines of a phone screen to
@@ -777,6 +809,7 @@
   const $dev = document.getElementById("dev");
   const $devpick = document.getElementById("devpick");
   const $controls = document.getElementById("controls");
+  const $lanes = document.getElementById("lanes");
   const $route = document.getElementById("route");
   const $verbose = document.getElementById("verbose");
   const $mute = document.getElementById("mute");
@@ -868,6 +901,18 @@
     // only have to prove the model is WIRED correctly, not that the rules are right.
     orbView: null,
     orb: null,
+    // The pure LANE reducer, exposed for the same reason `orbView` is: a harness sweeps every
+    // combination of lane count, live lane, waiting depth and per-agent state in milliseconds,
+    // with no microphone, no socket and no server. The DOM checks then only have to prove the
+    // model is wired to the painter, not that the rules are right.
+    lanesView: null,
+    lanes: null,
+    // Feeds one server frame into the REAL `onMessage`, so a harness can drive the lane strip
+    // without a socket, a microphone or a running tunnel. Same argument as `signal` above: the
+    // alternative is a harness that pokes the model directly and therefore stops testing the
+    // handler that production actually runs — which is how a page ends up passing its own suite
+    // while the wiring between a message and the paint is broken.
+    deliver: null,
     // THE PILL MODEL AND ITS PURE REDUCER, the same pairing as `orb`/`orbView` above and for the
     // same reason. `pills` is what the page decided last — how many DISTINCT devices there are on
     // each side after Chrome's `default`/`communications` aliases are collapsed, whether the two
@@ -1137,6 +1182,105 @@
     return { label, timer: TIMED_STATES.includes(state) ? state : null };
   }
 
+  // ---------------------------------------------------------------- lanes (spec 012)
+  //
+  // Several agents, one microphone, one transcript. The same discipline as the orb, for the same
+  // reason: a PURE reducer plus exactly one painter. The orb once read "Thinking" with no clock
+  // because four handlers painted it independently and nothing in the suite could see that; a
+  // strip with one row per agent has more ways to go quietly wrong, not fewer.
+  let lanes = [];            // registered agent lanes, in registration order
+  let liveLane = null;       // who he is talking to
+  let laneWaiting = {};      // lane -> how many clips it is holding
+  let laneStates = {};       // lane -> idle | transcribing | thinking | synthesizing | speaking
+  let broadcastLane = "everyone";
+
+  const LANE_BUSY = ["transcribing", "thinking", "synthesizing", "speaking"];
+
+  function lanesView(m) {
+    const names = (m.lanes || []).slice();
+    const broadcast = m.broadcast || "everyone";
+    // BELOW TWO AGENTS THERE IS NO CHOICE TO OFFER. One agent plus "everyone" is the same
+    // destination twice, so the row would be decoration occupying a line of a phone screen —
+    // the exact rule the device pickers already follow, and the reason a single-agent session
+    // looks precisely as it did before lanes existed.
+    const shown = names.length >= 2;
+    const rows = names.map((name) => {
+      const state = m.states && m.states[name] ? m.states[name] : "idle";
+      const waiting = (m.waiting && m.waiting[name]) || 0;
+      const live = name === m.live;
+      return {
+        name,
+        live,
+        waiting,
+        state,
+        busy: LANE_BUSY.includes(state),
+        // The label is built HERE, not in the painter, so a harness can assert what the row says
+        // without a browser. Same argument as `orbView` returning its own label.
+        label: name,
+        // What a screen reader is told, which has to carry everything the colour carries.
+        aria: name + (live ? ", live" : "")
+              + (waiting ? ", " + waiting + " waiting to be heard" : "")
+              + (state && state !== "idle" ? ", " + state : ""),
+      };
+    });
+    // The broadcast lane is a DESTINATION, never a participant: it has no state of its own and
+    // can hold nothing, because anything said to everyone is said to the live lane too.
+    rows.push({
+      name: broadcast, live: m.live === broadcast, waiting: 0, state: "", busy: false,
+      label: "everyone", broadcast: true,
+      aria: "everyone" + (m.live === broadcast ? ", live" : ""),
+    });
+    return { shown, rows };
+  }
+
+  // ONE painter, and the ONLY thing allowed to touch the strip.
+  function applyLanes() {
+    const view = lanesView({ lanes, live: liveLane, waiting: laneWaiting, states: laneStates,
+                             broadcast: broadcastLane });
+    $lanes.hidden = !view.shown;
+    diag.lanes = view;
+    if (!view.shown) { $lanes.replaceChildren(); return; }
+    $lanes.replaceChildren(...view.rows.map((row) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.lane = row.name;
+      b.classList.toggle("live", row.live);
+      b.classList.toggle("waiting", row.waiting > 0);
+      b.setAttribute("aria-pressed", String(row.live));
+      b.setAttribute("aria-label", row.aria);
+      const dot = document.createElement("span");
+      dot.className = "dot" + (row.busy ? " busy" : "");
+      b.append(dot, document.createTextNode(row.label));
+      if (row.waiting > 0) {
+        const n = document.createElement("span");
+        n.className = "n";
+        n.textContent = String(row.waiting);
+        b.append(n);
+      }
+      return b;
+    }));
+  }
+
+  // A TAP IS THE OTHER HALF OF THE SWITCH, never a replacement for it. He refused being REQUIRED
+  // to tap, not the tap itself, so this exists for when his hands are free and the voice path
+  // stays the one that works when they are not.
+  $lanes.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-lane]");
+    if (!btn) return;
+    const name = btn.dataset.lane;
+    if (name === liveLane) return;      // tapping where you already are is not a switch
+    // Optimistic, then corrected by the server's own broadcast. The alternative — waiting for the
+    // round trip to repaint — makes his own tap feel like it did not register, which is the
+    // ambiguity the orb's "No mic" label exists to kill.
+    liveLane = name;
+    applyLanes();
+    fetch("/lane" + location.search, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "switch", name }),
+    }).catch(() => {});
+  });
+
   // ONE painter, and it is the ONLY thing allowed to touch the orb. Every handler updates the
   // model and calls this; none of them writes a label or a class directly.
   function applyOrb() {
@@ -1225,6 +1369,8 @@
   // handlers that a div with role=switch needed would double-toggle here — press, and the
   // control would flip and flip back.
   diag.orbView = orbView;
+  diag.lanesView = lanesView;
+  diag.deliver = (msg) => onMessage({ data: JSON.stringify(msg) });
 
   // Collapse the transcript. Reported 2026-08-07: "I want to make that collapsible so that I can just
   // collapse it and hide it and just have the orb and the buttons and not see the transcript
@@ -1789,6 +1935,18 @@
         // not one per browser.
         if (msg.verbose !== undefined) paintVerbose(msg.verbose);
         if (msg.wake) wakeName = msg.wake;
+        // THE WHOLE LANE PICTURE, adopted rather than accumulated. A phone reconnects every time
+        // it locks, so "seed from this frame" is the common path and not the edge one — and a
+        // strip rebuilt from remembered state would be a strip that can disagree with the server
+        // about who is even in the room.
+        if (Array.isArray(msg.lanes)) {
+          lanes = msg.lanes;
+          liveLane = msg.lane;
+          laneStates = msg.lane_states || {};
+          laneWaiting = msg.waiting || {};
+          if (msg.broadcast) broadcastLane = msg.broadcast;
+          applyLanes();
+        }
         applyOrb();
       } else if (msg.type === "verbose") {
         // Someone flipped it elsewhere — another device, or the agent via `voice-tunnel verbose on`.
@@ -1832,8 +1990,30 @@
         // whether the elapsed-seconds counter runs — which is what stops a future handler from
         //half-updating the orb and leaving it saying "Thinking" with no clock.
         diag.states.push(msg.state);
-        agentState = msg.state;
-        applyOrb();
+        // PER LANE, so the strip can show every agent at once — *"see if one agent is thinking,
+        // transcribing, or synthesizing."* The orb still follows only the LIVE lane: a background
+        // agent's work must not repaint the state of the agent he is talking to, which is the
+        // same separation `muted` and `agent_state` already have from each other.
+        if (msg.lane) { laneStates[msg.lane] = msg.state; applyLanes(); }
+        if (msg.lane === undefined || msg.live !== false) {
+          agentState = msg.state;
+          applyOrb();
+        }
+      } else if (msg.type === "lane") {
+        // WHO HE IS TALKING TO NOW, and the whole registry with it. The server sends the complete
+        // set on every change rather than a delta, so a page that missed a message cannot drift
+        // into disagreeing with it about who is even in the room.
+        lanes = Array.isArray(msg.lanes) ? msg.lanes : lanes;
+        liveLane = msg.lane;
+        if (msg.waiting) laneWaiting = msg.waiting;
+        applyLanes();
+      } else if (msg.type === "lane_waiting") {
+        // An off-lane agent has something to say, or has just been heard. This is FR7's visible
+        // half and it must arrive as an event: a mark that only appears on the next poll lags
+        // the thing it describes, and he is looking at the screen when he switches.
+        if (msg.waiting) laneWaiting[msg.lane] = msg.waiting;
+        else delete laneWaiting[msg.lane];
+        applyLanes();
       } else if (msg.type === "partial") {
         // Live preview of the utterance still being spoken. Replaced in place, then removed
         // when the final turn lands — so it reads as one sentence firming up rather than a
