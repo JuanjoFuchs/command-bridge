@@ -432,7 +432,12 @@ def test_the_builder_alone_produces_first_then_repeat(state):
 
     assert first["refusal_repeat"] == 0 and first["unread"][0]["text"] == MEDIAN_TURN
     assert repeat["refusal_repeat"] == 1 and repeat["unread"] == [{"id": 7}]
-    assert state.last_refusal == (state.consumed_cursor, 7), "the identity, on the state object"
+    # KEYED BY LANE (spec 018 FR4) and measured from THIS LANE'S read cursor (spec 017 FR3). It was
+    # a bare tuple against the session cursor; both halves moved for the same reason, which is that
+    # a refusal belongs to one agent and has to be recoverable by that agent.
+    assert state.last_refusal[state.lanes.default] == (unread["since"], 7), (
+        "the identity, on the state object, under the lane that was refused"
+    )
 
     state.last_refusal = None
     assert server._unread_refusal(state, unread)["refusal_repeat"] == 0, (

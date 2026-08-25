@@ -1751,8 +1751,15 @@ WATCHDOG_PROMPT = """Voice tunnel watchdog. Do this without commentary and witho
 
 STEP 0 - CHECK BEFORE ACTING. Run `voice-tunnel status --session {session}`.
   * It ERRORS -> the server is down. Say so in one line and STOP. Do not restart it unasked.
-  * `watch_open` is TRUE -> a watch is already running. Do NOTHING: no output, no second watch.
-    Two watches on one log race for the same turns and one cursor silently falls behind.
+  * YOUR LANE is already in `watching_lanes` -> your watch is running. Do NOTHING: no output, no
+    second watch. Two watches on one lane race for the same turns and one cursor falls behind.
+  * `watching_lanes` exists and YOUR LANE IS NOT IN IT -> continue, even if the list is non-empty.
+    Those are OTHER agents listening on THEIR lanes and none of them will hand you anything.
+    This step used to read `watch_open`, which is true while ANY lane is watching -- so a lane
+    whose watch had died was never re-armed while somebody else was listening, and his turns piled
+    up on it unread. Measured 2026-08-25: five turns on an idle lane while another lane watched.
+  * `watching_lanes` is ABSENT and `watch_open` is TRUE -> the server predates the per-lane list.
+    Fall back to the old rule: a watch is already running, do NOTHING.
   * `watch_open` is ABSENT (missing, not false) -> the server predates the field. ABSENT IS NOT
     FALSE and it is not true either: check your own background tasks for a running watch, stop
     silently if there is one, and otherwise continue.
@@ -2013,22 +2020,44 @@ def _update_session_state(session: str, **fields: Any) -> None:
         pass          # a watch must never fail over its own bookkeeping
 
 
-def _empty_streak(session: str) -> int:
-    """How many watches in a row have come back with nothing.
+def _empty_streak(session: str, lane: str | None = None) -> int:
+    """How many watches in a row have come back with nothing, FOR THIS LANE.
 
     Persisted rather than held in memory because every invocation is a fresh process — the state
     has to outlive the command that observed it, or the backoff resets on every call and does
     nothing at all.
+
+    🔴 **PER LANE SINCE SPEC 018 FR3.** One counter for the session meant a lane that had been
+    quiet for nine minutes left the ladder at its cap, and a DIFFERENT lane's first wait after he
+    spoke opened on that rung. The ladder is meant to price one agent's silence, and it was
+    pricing the room's.
+
+    ⚠ **The old session-keyed value is inherited, not discarded** (TC2). A lane with no entry of
+    its own falls back to it, so an upgrade mid-session does not reset every ladder to zero and
+    start a round of hot polling.
     """
     try:
-        return max(0, int(_session_state(session).get("empty_streak", 0)))
+        st = _session_state(session)
+        lanes = st.get("empty_streak_lanes")
+        if lane and isinstance(lanes, dict) and lane in lanes:
+            return max(0, int(lanes[lane]))
+        return max(0, int(st.get("empty_streak", 0)))
     except Exception:
         return 0
 
 
-def _set_empty_streak(session: str, value: int) -> None:
+def _set_empty_streak(session: str, value: int, lane: str | None = None) -> None:
     try:
-        _update_session_state(session, empty_streak=max(0, int(value)))
+        value = max(0, int(value))
+        if not lane:
+            _update_session_state(session, empty_streak=value)
+            return
+        lanes = _session_state(session).get("empty_streak_lanes")
+        lanes = dict(lanes) if isinstance(lanes, dict) else {}
+        lanes[lane] = value
+        # `empty_streak` is kept in step so a reader that predates the fan-out — including an older
+        # copy of this CLI sharing the file — still sees a plausible number rather than a zero.
+        _update_session_state(session, empty_streak_lanes=lanes, empty_streak=value)
     except Exception:
         pass          # a watch must never fail over its own bookkeeping
 
@@ -2468,8 +2497,21 @@ def cmd_watch(args) -> dict[str, Any]:
     #
     # Read from `status_pre`, i.e. BEFORE `/watching` is announced, because announcing the wait
     # is itself a state transition on the server.
-    holding_reply = bool(isinstance(status_pre, dict) and status_pre.get("agent_holds_turns"))
-    streak = _empty_streak(args.session)
+    # THIS LANE'S ANSWER, NOT THE ROOM'S (spec 018 FR1). `agent_holds_turns` is true when ANY agent
+    # is holding turns and false as soon as ANY agent's watch comes back empty, so on a multi-lane
+    # session it answered a question this caller did not ask. `lane_holds_turns` is the fan-out;
+    # the session-wide flag remains the fallback for a server that predates it.
+    _my_lane = getattr(args, "lane", None)
+    holding_reply = False
+    if isinstance(status_pre, dict):
+        _fan = status_pre.get("lane_holds_turns")
+        if isinstance(_fan, dict) and _my_lane:
+            holding_reply = bool(_fan.get(_my_lane))
+        elif isinstance(_fan, dict):
+            holding_reply = bool(_fan.get(status_pre.get("default_lane"), False))
+        else:
+            holding_reply = bool(status_pre.get("agent_holds_turns"))
+    streak = _empty_streak(args.session, _my_lane)
     waited_ceiling = _watch_ceiling(base, streak, reachable=reachable,
                                     unattended=unattended, explicit=explicit)
     started = time.monotonic()
@@ -2569,8 +2611,8 @@ def cmd_watch(args) -> dict[str, Any]:
             # itself become the hang that stops it answering. Reported as itself rather than
             # disguised as silence: `finished: false` says he was STILL TALKING when time ran
             # out, which is not the same fact as him having stopped.
-            _set_empty_streak(args.session, 0)
-            _watch_closed(args.session, empty=False, lane=getattr(args, "lane", None))
+            _set_empty_streak(args.session, 0, _my_lane)
+            _watch_closed(args.session, empty=False, lane=_my_lane)
             return _watch_payload(
                 args, "ceiling", collected, cursor, rounds, started, talking, live,
                 next=f"run `voice-tunnel watch --session {args.session} --since {cursor}` again — "
@@ -2728,7 +2770,7 @@ def cmd_watch(args) -> dict[str, Any]:
         # indistinguishable from a hang, and an agent that cannot tell those apart will kill it
         # and poll instead. The ladder paces ONLY this branch — it never decides whether he has
         # finished, which is what the speech signals are for.
-        _set_empty_streak(args.session, streak + 1)
+        _set_empty_streak(args.session, streak + 1, _my_lane)
         result["waited"] = round(waited_ceiling, 1)
         # Recomputed from the CURRENT status rather than from the baseline, because the wait that
         # just ended is often the thing that changed it: a page can have dropped while this call
@@ -2742,10 +2784,10 @@ def cmd_watch(args) -> dict[str, Any]:
     else:
         # Speech or a button resets the ladder, because both are evidence that the silence the
         # backoff was pricing has ended.
-        _set_empty_streak(args.session, 0)
+        _set_empty_streak(args.session, 0, _my_lane)
     # `empty` ends the batch of unanswered turns on the server, so the NEXT call goes back to
     # blocking instead of answering instantly forever. See TunnelState.agent_holds_turns.
-    _watch_closed(args.session, empty=not turns, lane=getattr(args, "lane", None))
+    _watch_closed(args.session, empty=not turns, lane=_my_lane)
     return result
 
 

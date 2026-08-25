@@ -339,8 +339,30 @@ class TunnelState:
         Same principle as `agent_state` itself: *"a status the agent announces is a claim, and a
         claim is wrong exactly when it matters."* Nothing here is a flag the caller passes, which
         is the point — an option is a decision an agent makes wrong under time pressure."""
-        self.last_refusal: tuple[int, int] | None = None
-        """The identity `(since, last_turn_id)` of the refusal most recently built, or None.
+        self.lane_holds_turns: dict[str, bool] = {}
+        """The same question as `agent_holds_turns`, asked PER LANE (spec 018 FR1).
+
+        🔴 **The single boolean above is set by ANY lane taking a turn and cleared by ANY lane's
+        empty watch**, and those are different agents. So an agent about to answer him could have
+        its pre-reply check downgraded to a listen by a completely unrelated lane going quiet —
+        and then wait a full backoff rung before speaking.
+
+        Reported 2026-08-25, timed on his phone: *"that watch resolves immediately because I am
+        silent. But on the other lanes, it doesn't... and it goes the full sixty seconds before
+        resolving. What that costs me is time. Time I'm waiting for an answer should have arrived
+        sixty seconds earlier."*
+
+        ⚠ **`agent_holds_turns` KEEPS ITS MEANING** — "some agent here is holding turns" — because
+        it is published and read by callers that predate lanes (TC1, and the same ruling spec 012
+        made for `watch_open`). This is the fan-out beside it, not a redefinition of it."""
+
+        self.last_refusal: dict[str, tuple[int, int]] = {}
+        """The identity `(since, last_turn_id)` of each lane's most recently built refusal.
+
+        🔴 **KEYED BY LANE (spec 018 FR4).** It was one pair for the whole session, so one agent's
+        refusal made a DIFFERENT agent's first refusal render as a repeat — ids instead of the turn
+        text, on the one occasion the text is the thing that agent needs to recover. The saving
+        below is per agent, so the memo has to be too.
 
         **THE MEMO THAT MAKES A REFUSED BATCH COST ONE COPY OF THE TURN INSTEAD OF N** (spec 011,
         FR1). Measured 2026-08-19: four `say --now` clips fired back to back, all four refused, and
@@ -358,8 +380,11 @@ class TunnelState:
         process and cannot be driven by a test, and because the refusal builder must be reproducible
         in-process: two calls with the same state and the same unread set produce first-then-repeat
         with no server and no HTTP."""
-        self.refusal_repeat: int = 0
-        """How many refusals have already been answered on the CURRENT `last_refusal` identity.
+        self.refusal_repeat: dict[str, int] = {}
+        """How many refusals each lane has already been answered on its current identity.
+
+        Keyed by lane for the same reason as `last_refusal` above (spec 018 FR4): the count is a
+        statement about one agent's retries, and sharing it charged the wrong agent for them.
 
         0 on the first (which carries the turn text in full), then 1, 2, 3 … on the repeats (which
         carry the ids alone). Published as `refusal_repeat` so the agent can see how many times it
@@ -674,6 +699,11 @@ class TunnelState:
             "ambiguous": self.ambiguous,
             "last_ambiguous": list(self.last_ambiguous),
             "agent_holds_turns": self.agent_holds_turns,
+            # THE SAME QUESTION PER LANE (spec 018 FR1). `agent_holds_turns` above still answers
+            # "is any agent here holding turns", unchanged for every caller that predates lanes;
+            # this is the fan-out a lane reads to decide whether ITS next wait is a pre-reply
+            # check. Published rather than inferred — the CLI cannot see the other lanes.
+            "lane_holds_turns": dict(self.lane_holds_turns),
             "barges": self.barges,
             "last_barge_score": self.last_barge_score,
             "turn_detection": (self.turn.describe() if self.turn else {"enabled": False}),
@@ -909,7 +939,8 @@ def _unread_turns(state: TunnelState, lane: str | None = None) -> dict[str, Any]
     return {"unread": turns, "unread_count": len(turns), "cursor": last_id, "since": since}
 
 
-def _unread_refusal(state: TunnelState, unread: dict[str, Any]) -> dict[str, Any]:
+def _unread_refusal(state: TunnelState, unread: dict[str, Any],
+                    lane: str | None = None) -> dict[str, Any]:
     """The payload `say` returns INSTEAD of speaking, when he said something nobody read.
 
     **THE CURSOR IN THE REMEDY IS THE ONE FACT THIS FUNCTION EXISTS TO GET RIGHT.** It is
@@ -953,13 +984,25 @@ def _unread_refusal(state: TunnelState, unread: dict[str, Any]) -> dict[str, Any
     A caller that wants the full payload twice resets `state.last_refusal` to None between them.
     """
     n = unread["unread_count"]
-    identity = (state.consumed_cursor, unread["cursor"])
-    if state.last_refusal == identity:
-        state.refusal_repeat += 1
+    # THE MEMO IS THIS LANE'S (spec 018 FR4). Two agents refused on the same turn are two separate
+    # first refusals, and each needs the text. The identity's first half is this lane's own read
+    # cursor for the same reason — it is what `since` was measured from (017 FR3).
+    who = lane or state.lanes.default
+    # ⚠ THE RESET CONTRACT SURVIVES THE FAN-OUT. `state.last_refusal = None` is documented as the
+    # way to make the next call a first again, and both the FR1 harness and `context_cost.py` use
+    # it. Normalising here keeps that sentence true now that the memo is a dict: assigning None
+    # still clears every lane's memo, because an empty map has no entry for anybody.
+    if not isinstance(state.last_refusal, dict):
+        state.last_refusal = {}
+    if not isinstance(state.refusal_repeat, dict):
+        state.refusal_repeat = {}
+    identity = (unread.get("since", state.consumed_cursor), unread["cursor"])
+    if state.last_refusal.get(who) == identity:
+        state.refusal_repeat[who] = state.refusal_repeat.get(who, 0) + 1
     else:
-        state.last_refusal = identity
-        state.refusal_repeat = 0
-    repeat = state.refusal_repeat
+        state.last_refusal[who] = identity
+        state.refusal_repeat[who] = 0
+    repeat = state.refusal_repeat[who]
 
     error = (
         f"refusing to speak: he said {n} thing(s) you have not read. Nothing was synthesized "
@@ -1150,7 +1193,7 @@ async def handle_say(request: web.Request) -> web.Response:
     # and a reader meeting 409 in `handle_say` again would reasonably conclude that bug had come
     # back. It has not: nothing is discarded here because nothing was ever made.
     if unread["unread_count"]:
-        return web.json_response(_unread_refusal(state, unread), status=428)
+        return web.json_response(_unread_refusal(state, unread, lane), status=428)
 
     # SPEAKING IS WHAT ENDS THE BATCH. Whatever turns the agent was holding, it has now answered
     # them — so its next wait is a LISTEN and should block, rather than the instant pre-reply
@@ -1158,7 +1201,12 @@ async def handle_say(request: web.Request) -> web.Response:
     #
     # Below the refusal on purpose: a refused `say` answered nothing, so the agent is still
     # holding its turns and its next wait is still the pre-reply check.
-    state.agent_holds_turns = False
+    #
+    # THIS LANE ANSWERED, so only this lane's batch ends (spec 018 FR1). The session-wide flag is
+    # then re-derived from the fan-out rather than set, so one agent speaking cannot end another
+    # agent's batch — which is half of the sixty-second pause he timed.
+    state.lane_holds_turns[lane or state.lanes.default] = False
+    state.agent_holds_turns = any(state.lane_holds_turns.values())
 
     # THE RESET HALF OF `unanswered_s` (spec 013 FR8), and its position is the whole point: it sits
     # AFTER every refusal, so a `say` that was declined does not clear a debt it never paid. A
@@ -1216,7 +1264,11 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
     Shared by the blocking and fire-and-forget paths so the interruption guard cannot be
     bypassed by choosing the async one.
     """
-    timing.stamp(state.session, "say_requested", chars=len(text))
+    # THE LANE RIDES EVERY STAMP THAT HAS ONE (spec 018 FR5). Without it the timing log cannot
+    # tell two agents apart, which is why the sixty-second pause had to be found by reading source
+    # rather than by reading the log JJ already had.
+    timing.stamp(state.session, "say_requested", chars=len(text),
+                 lane=lane or state.lanes.current)
     # 🔴 THE CLIP'S OWN LANE OWNS EVERY STAGE OF IT (spec 016 FR3), resolved ONCE here and never
     # re-read. Synthesis, the hold, playback and the closing idle are one flow that spans seconds
     # of real time, and he can move the conversation at any point inside it. Re-deriving the owner
@@ -1241,7 +1293,8 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         await _set_agent_state(state, "idle", owner)
         raise
 
-    timing.stamp(state.session, "synthesized", audio_s=round(len(pcm) / 2 / rate, 2))
+    timing.stamp(state.session, "synthesized", audio_s=round(len(pcm) / 2 / rate, 2),
+                 lane=owner)
     clip_id = f"clip-{int(time.time() * 1000)}"
 
     # Do not talk over the speaker. Synthesis is done, but if they are mid-utterance, hold the
@@ -1726,17 +1779,31 @@ async def handle_watching(request: web.Request) -> web.Response:
     # I speak?" and the answer was no, so it is no longer holding unanswered turns and its next
     # call is a listen again. Without this the instant-return mode would latch on for an agent
     # that consumed turns and then never replied.
-    if not watching and bool((body or {}).get("empty")):
-        state.agent_holds_turns = False
     # WHICH lane is waiting, so a second agent on a second lane is not refused (TC7). A caller
     # that names no lane is the single-agent case and is recorded against the default lane, which
     # is the lane it is in fact watching.
     lane = str((body or {}).get("lane") or state.lanes.default)
+    # ⚠ ONLY THIS LANE'S BATCH ENDS (spec 018 FR1). This clear used to be session-wide, so a
+    # BYSTANDER lane's empty watch ended the batch of an agent that was still composing an answer
+    # — and that agent's next pre-reply check was downgraded to a listen and waited a full rung.
+    # Timed by JJ on 2026-08-25 at sixty seconds. Moved below the lane resolution because it now
+    # needs the name.
+    if not watching and bool((body or {}).get("empty")):
+        state.lane_holds_turns[lane] = False
+        state.agent_holds_turns = any(state.lane_holds_turns.values())
     if watching:
         state.watching_lanes.add(lane)
     else:
         state.watching_lanes.discard(lane)
     state.watch_open = bool(state.watching_lanes)
+    # 🔴 THE EVENT THE TIMING LOG NEVER HAD (spec 018 FR5). Every other stage of an exchange was
+    # stamped and the WAIT was not — so the log could show how long an agent took to answer and
+    # never why, and the sixty-second pause JJ timed was invisible in the one place built to make
+    # latency visible. `holds` is the fact that decides fast-check versus long-listen, recorded at
+    # the moment it is read rather than reconstructed afterwards.
+    timing.stamp(state.session, "watch_open" if watching else "watch_closed",
+                 lane=lane, holds=bool(state.lane_holds_turns.get(lane)),
+                 watching=sorted(state.watching_lanes))
     # ATTRIBUTED TO THE LANE THAT SAID IT (FR8). Without this a background agent re-arming its
     # watch would repaint the orb of the agent he is actually talking to — publishing one agent's
     # state through another's channel, which is the defect `agent_state` and `muted` were already
@@ -1813,12 +1880,18 @@ async def handle_consumed(request: web.Request) -> web.Response:
     store.write_consumed_cursor(state.session, cursor)
     # The agent has the turn in hand. Everything from here to `say_requested` is IT thinking —
     # the stage that dominated every measurement and was invisible until it had a name.
-    timing.stamp(state.session, "consumed", cursor=cursor)
+    # THE LANE THAT TOOK THE TURN (spec 018 FR5). `consumed` is the stamp that opens the agent's
+    # thinking time, and with three lanes an unlabelled one cannot say whose thinking it is.
+    timing.stamp(state.session, "consumed", cursor=cursor,
+                 lane=(body or {}).get("lane") or state.lanes.default)
     # The agent now HOLDS turns it has not answered, which is what makes its next wait a
     # pre-reply check rather than a listen. See TunnelState.agent_holds_turns.
-    state.agent_holds_turns = True
     agent_state = str((body or {}).get("state") or "thinking")
     consumed_lane = (body or {}).get("lane") or None
+    # RECORDED AGAINST THE LANE THAT TOOK THEM (spec 018 FR1), with the session-wide flag kept in
+    # step so every existing reader of `agent_holds_turns` sees what it always saw.
+    state.lane_holds_turns[consumed_lane or state.lanes.default] = True
+    state.agent_holds_turns = True
     await _broadcast_json(
         state,
         {"type": "consumed", "cursor": cursor, "pending": state.pending_turns(),
@@ -1943,7 +2016,8 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         await ws.send_json({"type": "hello_ack", "server_sample_rate": config.TARGET_SR})
     elif kind == "played":
         state.last_played = str(msg.get("id") or "")
-        timing.stamp(state.session, "played", clip=state.last_played)
+        timing.stamp(state.session, "played", clip=state.last_played,
+                     lane=state.speaking_lane or state.lanes.current)
         # Playback finished, so the agent is no longer speaking. The client is the only party
         # that knows when a clip actually ended — the server only knows when it finished
         # sending — so the receipt is what closes the state machine back to idle.
