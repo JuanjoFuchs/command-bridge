@@ -260,3 +260,29 @@ def test_the_page_is_told_the_moment_a_lane_starts_waiting(state, sock):
 
     waiting = [h for h in sock.headers if h.get("type") == "lane_waiting"]
     assert waiting and waiting[-1] == {"type": "lane_waiting", "lane": "codex", "waiting": 1}
+
+
+def test_the_off_lane_hint_tells_the_agent_to_SPEAK_not_to_wait():
+    """🔴 THE DEADLOCK, AS AN ASSERTION ON THE WORDS THAT CAUSED IT.
+
+    Every mechanism in this file already worked: an off-lane `say` is held, not refused, and it
+    raises a hand with a count. What failed was the SENTENCE the tool hands the agent when he
+    switches away. It ended *"then wait on this same watch"* and said nothing about speaking — and
+    silence about the one thing the agent is holding reads as a rule against doing it.
+
+    JJ, 2026-08-25: *"I've noticed some agents waiting for me to return to their lane before saying
+    something. And that defeats the purpose because the only reason I will return to an agent's
+    lane is because they said something."*
+
+    🎯 **A capability nobody is told about is not a capability.** The hold has been shipped and
+    tested since spec 012; the agents using it were told, in the only place they read, to wait.
+    """
+    from voice_tunnel import cli
+
+    hint = cli.DESCRIBE["commands"]["watch"]["returns"]["on_lane"]
+    assert "say" in hint.lower(), "the off-lane branch must name the action, not only the wait"
+    assert "deadlock" in hint.lower(), (
+        "and it must say WHY waiting is wrong — the reason is the circle, and an agent that only "
+        "reads 'you may speak' will still default to the politer-looking silence"
+    )
+    assert "held" in hint.lower(), "and that the clip survives, which is what makes speaking safe"

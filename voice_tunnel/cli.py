@@ -784,8 +784,12 @@ DESCRIBE: dict[str, Any] = {
                              "summons could not be routed. Only ever set on a `--lane` watch",
                 "on_lane": "bool — present and FALSE when he has switched to another agent. This "
                            "is NOT `listening`: the microphone is fine, you are simply not the "
-                           "one being addressed. Say so out loud before you go quiet, then wait "
-                           "on this same watch — it returns when he comes back to you",
+                           "one being addressed. **IT IS ALSO NOT A REASON TO STAY SILENT.** If "
+                           "you have an answer, `say` it now — an off-lane clip is HELD for your "
+                           "lane, not refused, and it raises a hand with a count on your orb. "
+                           "That hand is the only thing that brings him back, so waiting for him "
+                           "first is a deadlock. Then wait on this same watch — it returns when "
+                           "he comes back to you",
                 "candidates": "[str, ...] — on `reason: ambiguous`, the lanes his summons was "
                               "torn between. He said a name and it matched nobody exactly, so "
                               "NOBODY heard it. You are being told because you are the lane he "
@@ -2664,10 +2668,24 @@ def cmd_watch(args) -> dict[str, Any]:
                 # talking to YOU" would destroy both facts, which is the same defect as publishing
                 # mute through `agent_state`. A different question gets a different field.
                 result["on_lane"] = False
+                # 🔴 **SAY IT ANYWAY — this hint used to create a deadlock and he named it
+                # precisely:** *"I've noticed some agents waiting for me to return to their lane
+                # before saying something. And that defeats the purpose because the only reason I
+                # will return to an agent's lane is because they said something."* (2026-08-25)
+                #
+                # The old text ended "then wait on this same watch" and said nothing at all about
+                # speaking — and **silence about the one thing the agent is holding reads as a
+                # prohibition on it.** An off-lane `say` was never refused: it is held for this
+                # lane and raises the hand with a count, which is the signal that brings him back.
+                # So the hint now leads with that, because it is the action, and the wait is only
+                # what happens afterwards.
                 result["hint"] = (
-                    f"he is talking to {live.get('lane')!r} now, not to you. Nothing more will "
-                    f"arrive on this lane until he comes back; say so out loud before you go "
-                    f"quiet, then wait on this same watch"
+                    f"he is talking to {live.get('lane')!r} now, not to you. **IF YOU HAVE "
+                    f"SOMETHING TO SAY, SAY IT NOW** — an off-lane `say` is NOT refused: it is "
+                    f"held for this lane and raises a hand on your orb with the count, and that "
+                    f"hand is what brings him back. Waiting for him to return first is a deadlock, "
+                    f"because the only reason he returns is that you spoke. Then wait on this "
+                    f"same watch; it returns when he comes back to you"
                 )
     if changed:
         # The EVENT is named, not merely implied by a diff, because "he unmuted" and "he muted"
