@@ -1351,12 +1351,15 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
                 break
         if not state.talking():
             break
-    await _set_agent_state(state, "speaking", owner)
-    # WHOSE CLIP IS IN THE AIR. The `played` receipt comes back from the client with a clip id and
-    # no lane, and by then the conversation may have moved — so the lane that will be released is
-    # recorded here, where it is still known, rather than re-derived when the receipt lands.
-    state.speaking_lane = owner
-    await _push_cue(state, "speaking")
+    # ⚠ **`speaking` IS NOT SET HERE ANY MORE.** It used to be, and it was a claim made before the
+    # clip's fate was known: the deliverability test is thirty lines below, and a clip for a lane
+    # he is not on gets HELD rather than played. So a background agent sat on "speaking" with
+    # nothing audible, permanently — the `played` receipt that would clear it never arrives for a
+    # clip that never went out.
+    #
+    # JJ, 2026-08-25: *"whenever an agent's lane is not focused and that agent is queuing turns,
+    # their orb says speaking. But surely they're only speaking when that orb is selected and that
+    # turn is being played."* The mark now lives with the send, in the branch that does it.
 
     # Header first so the client knows how to interpret the bytes that follow — and both under
     # the clip lock, because a second clip slipping between them is what made two replies play
@@ -1387,6 +1390,12 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
     off_lane = bool(lane) and lane != state.lanes.current and lane != lanes_mod.BROADCAST
     deliverable = bool(state.clients) and state.channel_open and not off_lane
     if deliverable:
+        # SPOKEN WHEN IT IS ACTUALLY GOING OUT, not when it was composed. `speaking_lane` is the
+        # lane the `played` receipt will release: the receipt carries a clip id and no lane, and by
+        # the time it lands he may have moved on.
+        await _set_agent_state(state, "speaking", owner)
+        state.speaking_lane = owner
+        await _push_cue(state, "speaking")
         await _send_clip(state, header, pcm)
     elif off_lane:
         # ⚠ A SEPARATE STORE FROM `undelivered`, and TC3 is the whole reason. Nine clips queued
@@ -1402,6 +1411,10 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
                      depth=len(state.lane_held.get(str(lane), [])))
         await _broadcast_json(state, {"type": "lane_waiting", "lane": lane,
                                       "waiting": len(state.lane_held.get(str(lane), []))})
+        # ITS STAGE ENDED HERE. The clip is composed and parked; the raised hand is what says so.
+        # Reporting `idle` hands the lane back to the derivation, which — this agent being in no
+        # watch at that instant — renders it as thinking rather than as an agent doing nothing.
+        await _set_agent_state(state, "idle", owner)
     else:
         state.undelivered.append({"header": header, "pcm": pcm, "at": time.time()})
         _prune_undelivered(state)
@@ -1462,6 +1475,14 @@ async def _flush_lane_held(state: TunnelState, lane: str) -> int:
     """
     _prune_lane_held(state, lane)
     queued = state.lane_held.pop(lane, [])
+    if queued:
+        # NOW it is speaking — this is the moment the held audio actually goes out, and the mark
+        # was deliberately not made when the clip was composed. See the comment in `_speak`.
+        # The cue travels with it for the same reason: it announces that a reply is starting, and
+        # this is where one starts.
+        await _set_agent_state(state, "speaking", lane)
+        state.speaking_lane = lane
+        await _push_cue(state, "speaking")
     for clip in queued:
         header = dict(clip["header"])
         header["delayed_s"] = round(time.time() - clip["at"], 1)
@@ -1667,10 +1688,16 @@ async def handle_lane(request: web.Request) -> web.Response:
                 )
             if action == "add":
                 state.lanes.add(name)
+                # PERSISTED ON THE CHANGE, not on shutdown (spec 019 FR2). A server is stopped by
+                # `stop`, by Ctrl-C, by a crash and by the machine sleeping, and only the first of
+                # those runs anything — a save-on-exit would be absent in exactly the cases the
+                # restart is most likely to follow.
+                store.write_lanes(state.session, state.lanes.names)
             elif action == "remove":
                 gone = state.lanes.remove(name)
                 state.watching_lanes.discard(gone)
                 state.watch_open = bool(state.watching_lanes)
+                store.write_lanes(state.session, state.lanes.names)
             else:
                 # Switching by tap is the hands-free path's twin, not a lesser one — he asked for
                 # both. It goes through the same publish as the spoken switch so a page, a second
@@ -1688,16 +1715,10 @@ async def handle_lane(request: web.Request) -> web.Response:
         )
 
     if action in ("add", "remove"):
-                # PERSISTED ON THE CHANGE, not on shutdown (spec 019 FR2). A server is stopped by
-                # `stop`, by Ctrl-C, by a crash and by the machine sleeping, and only the first of
-                # those runs anything — a save-on-exit would be absent in exactly the cases the
-                # restart is most likely to follow.
-                store.write_lanes(state.session, state.lanes.names)
         # The set changed even though the live lane may not have. Publish it, or the page keeps
         # offering a lane that is gone.
         await _set_lane(state, state.lanes.current, why=action)
     return web.json_response({
-                store.write_lanes(state.session, state.lanes.names)
         "lane": state.lanes.current,
         "lanes": list(state.lanes.names),
         "default_lane": state.lanes.default,

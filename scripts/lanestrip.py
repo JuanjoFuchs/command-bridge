@@ -519,15 +519,26 @@ with sync_playwright() as pw:
           return { busy: c ? c.textContent.trim() : null, idle: l ? l.textContent.trim() : null };
         }""")
         check(timer["busy"], "a busy lane shows a seconds counter", f"{timer['busy']!r}")
-        check(timer["idle"] is None,
+        # ⚠ **"SHOWS NONE" IS EMPTY TEXT, NOT AN ABSENT ELEMENT**, and the difference is not
+        # cosmetic. The span is now always in the DOM so the tenths tick can write into it without
+        # rebuilding the button — the rebuild is what stopped taps registering. Asserting
+        # `element === null` was asserting the IMPLEMENTATION that happened to deliver the
+        # property; the property is that an idle orb shows no number, and `:empty` collapses the
+        # span so it costs no row either.
+        check(not (timer["idle"] or ""),
               "and an idle lane shows none — the number belongs to the work, not to the orb",
               f"{timer['idle']!r}")
 
         deliver(page, {"type": "agent_state", "lane": "codex", "state": "idle",
                        "live": False})
         page.wait_for_timeout(200)
-        cleared = page.evaluate(
-            "() => document.querySelector('#orbs .laneorb[data-lane=\\'codex\\'] .lanetimer') === null")
+        cleared = page.evaluate("""() => {
+          const t = document.querySelector('#orbs .laneorb[data-lane="codex"] .lanetimer');
+          if (!t) return true;
+          // Empty AND collapsed: text alone would leave a grid row and its gap, which is what
+          // pushed the status word off the middle of the disc.
+          return !t.textContent.trim() && t.getBoundingClientRect().height === 0;
+        }""")
         check(cleared, "and it clears the moment that lane stops working")
 
         # ------------------------------------------- 014 AC-5: hue is identity, and it is PURE
@@ -673,6 +684,40 @@ with sync_playwright() as pw:
         page.evaluate("() => document.querySelector('#lanes button[data-lane=\\'claude\\']').click()")
         check(len(page.evaluate("() => window.__posts")) == before,
               "tapping the lane that is ALREADY live posts nothing — it is not a switch")
+
+        # 🔴 A TAP ON THE ORB ROW MUST SURVIVE THE SECONDS TICKING.
+        #
+        # The elapsed counter repaints ten times a second while any lane is busy. When that tick
+        # called the full painter, `replaceChildren` destroyed the buttons — and a pointer that
+        # went down on one released over its replacement, so no click event ever fired. Reported
+        # minutes after the decimal shipped: *"clicking around the orbs is weird. And one click
+        # does not recognize the lane switching. Was that on purpose?"*
+        #
+        # ⚠ The press and the release are issued SEPARATELY with a tick's worth of time between
+        # them. A single `.click()` is synchronous and cannot straddle a repaint, so it would pass
+        # against the broken build and prove nothing — which is the whole failure mode this file
+        # exists to refuse.
+        note("a tap survives the elapsed tick — press and release straddle a repaint")
+        # A lane set of this block's own, so the target does not depend on what the tests above
+        # left live. `atlas` is registered here and is NOT the live lane, which is what makes the
+        # tap a switch rather than a no-op.
+        deliver(page, {"type": "lane", "lanes": ["claude", "codex", "atlas"], "lane": "claude",
+                       "waiting": {}})
+        deliver(page, {"type": "agent_state", "state": "thinking", "lane": "atlas", "live": False})
+        page.wait_for_timeout(150)
+        orb = page.locator("#orbs .laneorb[data-lane='atlas']")
+        if orb.count() and orb.bounding_box():
+            box = orb.bounding_box()
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            page.mouse.down()
+            page.wait_for_timeout(250)          # two ticks and change
+            page.mouse.up()
+            posts = [p for p in page.evaluate("() => window.__posts") if "/lane" in p["url"]]
+            check(posts and posts[-1]["body"] == {"action": "switch", "name": "atlas"},
+                  "an orb tap held across two ticks still posts its switch",
+                  f"{posts[-1] if posts else 'nothing posted'}")
+        else:
+            check(False, "the orb row rendered so the tap could be measured")
 
         # ------------------------------------------------------ 4. the negative control
         note("the negative control: these assertions have been SEEN to fail")

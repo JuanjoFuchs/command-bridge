@@ -274,6 +274,10 @@
     font-variant-numeric:tabular-nums;
     letter-spacing:.04em; color:color-mix(in srgb, var(--lane-c) 70%, #cfd6de);
   }
+  /* The span is always in the DOM now so the tick can write into it without rebuilding the button
+     (see the interval). Empty it must occupy NOTHING — a grid row and its gap would push the
+     status word off the middle of the disc, which is the very complaint the centring fixed. */
+  .laneorb .lanetimer:empty { display:none; }
   .laneorb.live .disc {
     border-color:var(--lane-c);
     box-shadow:0 0 0 3px color-mix(in srgb,var(--lane-c) 22%,transparent),
@@ -1830,12 +1834,26 @@
   // Timed client-side from the state change, because the server reports what a lane IS doing and
   // not when it started.
   const laneBusySince = {};
+  const laneBusyState = {};
   const LANE_BUSY_STATES = ["transcribing", "thinking", "synthesizing", "speaking"];
+  // 🔴 THE CLOCK RESTARTS ON EVERY STATE, not once per busy spell.
+  //
+  // JJ, 2026-08-25: *"sometimes the timers are not resetting because I was just seeing an agent
+  // finishing the synthesizing of its turn and it started speaking, but the timer kept going."*
+  //
+  // It only started the clock `if (!laneBusySince[name])`, so a lane that went thinking →
+  // synthesizing → speaking kept one running total across all three. That number answers "how
+  // long has this agent been busy", which is not the question the digit sits next to: the word
+  // above it names ONE stage, so the seconds beneath it have to be that stage's.
   function noteLaneBusy(name, state) {
     if (LANE_BUSY_STATES.includes(state)) {
-      if (!laneBusySince[name]) laneBusySince[name] = Date.now();
+      if (!laneBusySince[name] || laneBusyState[name] !== state) {
+        laneBusySince[name] = Date.now();
+        laneBusyState[name] = state;
+      }
     } else {
       delete laneBusySince[name];
+      delete laneBusyState[name];
     }
   }
   // 🔴 THE DECIMAL IS BACK. *"the seconds counter inside of the orbs — you have removed the
@@ -1910,8 +1928,12 @@
           const watching = (m.watching || []).includes(name);
           state = watching ? (name === m.live ? "listening" : "idle") : "thinking";
         }
-        const waiting = (m.waiting && m.waiting[name]) || 0;
         const live = name === m.live;
+        // 🔴 THE HAND ONLY MEANS SOMETHING ON A LANE HE IS NOT ON. *"the hand with the turns
+        // should only show whenever the lane is not focused."* (2026-08-25) On the live lane the
+        // held clips are already playing, so a raised hand there is asking for attention he is
+        // currently giving — and it lingers over the very orb whose words are coming out.
+        const waiting = live ? 0 : ((m.waiting && m.waiting[name]) || 0);
         return {
           name, live, waiting, state,
           hue: laneHue(names, name),
@@ -1981,13 +2003,14 @@
         st.textContent = row.status;
         disc.append(st);
         // The seconds, under the word, and only while this lane is actually busy.
-        const el = laneElapsed(row.name);
-        if (el) {
-          const t = document.createElement("span");
-          t.className = "lanetimer";
-          t.textContent = el;
-          disc.append(t);
-        }
+        // ⚠ **ALWAYS APPENDED, even when empty.** It used to be created only while the lane was
+        // busy, which meant the seconds appearing or disappearing required a full rebuild of the
+        // row — and the rebuild is what broke tapping (see the tick below). An empty span occupies
+        // no height, and the tick can write into it without touching the button around it.
+        const t = document.createElement("span");
+        t.className = "lanetimer";
+        t.textContent = laneElapsed(row.name);
+        disc.append(t);
         if (row.waiting) {
           // A RAISED HAND WITH A COUNT (FR7), replacing the words "wants you". His words:
           // "instead of codex wants you, I would like to have a count or a raised hand, with the
@@ -3547,11 +3570,25 @@
   //
   // ⚠ **THE TICK IS THE RESOLUTION SHOWN, and when the decimal came back the tick had to follow.**
   // It was one second against a whole-second reading; a tenth is now displayed, so a one-second
-  // tick would show a tenths digit that jumped by ten every time — visibly wrong in a way the old
-  // pairing never was. It still does nothing at all when no lane is busy, which is most of the
-  // time, so the extra rate is paid only while there is something to watch.
+  // tick would show a tenths digit that jumped by ten every time.
+  //
+  // 🔴 **AND IT MUST NOT CALL THE PAINTER.** `applyLaneOrbs` rebuilds the row with
+  // `replaceChildren`, so at ten times a second a tap had a good chance of landing on a button
+  // that stopped existing between press and release — the click never fires, because the element
+  // it started on is gone. Reported within minutes of the decimal shipping: *"clicking around the
+  // orbs is weird. And one click does not recognize the lane switching. Was that on purpose?"*
+  //
+  // 🎯 **A repaint rate is a liveness decision; a rebuild is a structural one, and they were the
+  // same call.** This writes text into an element that is always present and touches nothing else,
+  // so the buttons under his thumb survive. Structure still changes only when the model does.
   setInterval(() => {
-    if (Object.keys(laneBusySince).length) applyLaneOrbs();
+    if (!Object.keys(laneBusySince).length || !$orbs) return;
+    $orbs.querySelectorAll(".laneorb").forEach((b) => {
+      const t = b.querySelector(".lanetimer");
+      if (!t) return;
+      const txt = laneElapsed(b.dataset.lane);
+      if (t.textContent !== txt) t.textContent = txt;
+    });
   }, 100);
   $orb.addEventListener("click", () => { if (!running) orbTapped(); });
 

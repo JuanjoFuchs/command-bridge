@@ -26,6 +26,26 @@ import pytest
 from voice_tunnel import server, store
 
 
+class _Client:
+    """A socket that records instead of sending.
+
+    ⚠ **A bare `object()` DOES NOT WORK, and it fails in the most misleading way available.**
+    `_broadcast_json` prunes any client it cannot send to — so the first state change of the flow
+    silently emptied `state.clients`, the deliverability test thirty lines later read `no_client`,
+    and the clip was queued instead of played. The assertion then failed on the STATE, which looks
+    exactly like the state machine being wrong rather than the fixture being unable to receive.
+    """
+
+    def __init__(self):
+        self.json = []
+
+    async def send_json(self, payload):
+        self.json.append(payload)
+
+    async def send_bytes(self, data):
+        pass
+
+
 class _Req:
     """Only what the handlers touch — the stub shape spec 007's suite uses."""
 
@@ -124,7 +144,7 @@ def test_a_clip_marks_the_lane_it_is_FOR_not_whichever_lane_is_live(state, monke
     """
     monkeypatch.setattr(server.tts, "synthesize", lambda text, **k: (b"\x00\x01" * 64, 22050))
     monkeypatch.setattr(server, "_send_clip", lambda *a, **k: asyncio.sleep(0))
-    state.clients.add(object())
+    state.clients.add(_Client())
     state.channel_open = True
     state.lanes.current = "magnus"
 
@@ -147,7 +167,7 @@ def test_the_playback_receipt_releases_the_lane_that_was_speaking(state, monkeyp
     on `speaking` for good and reset an agent that never opened its mouth."""
     monkeypatch.setattr(server.tts, "synthesize", lambda text, **k: (b"\x00\x01" * 64, 22050))
     monkeypatch.setattr(server, "_send_clip", lambda *a, **k: asyncio.sleep(0))
-    state.clients.add(object())
+    state.clients.add(_Client())
     state.channel_open = True
 
     run(server._speak(state, "all green", None, lane="magnus"))

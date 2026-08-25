@@ -193,6 +193,21 @@ body { display:block !important; background:#0b0d10; padding:1.2rem; }
 @media (prefers-reduced-motion:reduce) { .rv-lane.live .orb { animation:none; } }
 
 .rv-log { flex:1; overflow:auto; }
+
+/* 🔴 THE COLLAPSE BAND, because the BUILD has one and a preview that omits it is not comparable.
+   *"I want arrangement C to have the transcript collapsing section."* (2026-08-25)
+   It costs a row of the phone, which is exactly the kind of thing a layout is being judged on —
+   leaving it out of the drawing made arrangement C look like it bought more transcript than it
+   actually does. Same glyph and same weight as `#collapse` on the page. */
+.rv-collapse {
+  display:flex; align-items:center; justify-content:center; gap:.35rem;
+  min-height:34px; padding:0;
+  background:transparent; border:0; cursor:pointer;
+  font-family:var(--mono); font-size:.58rem; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--faint);
+}
+.rv-collapse svg { width:13px; height:13px; fill:none; stroke:currentColor; stroke-width:2;
+                   stroke-linecap:round; stroke-linejoin:round; }
 """
 
 MIC = ('<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="10.5" rx="3"/>'
@@ -256,6 +271,10 @@ def satellites(arrangement: str) -> str:
         f'<span class="mini"><i></i></span><span class="nm">{n}</span>'
         f'<span class="st">{st}</span></div>'
         for (n, st, _hue, _w), c, s in zip(LANES, cls, spots))
+
+
+COLLAPSE = ('<button class="rv-collapse">transcript'
+            '<svg viewBox="0 0 24 24"><path d="M7 10.5 12 15l5-4.5"/></svg></button>')
 
 
 def log(coloured: bool) -> str:
@@ -356,7 +375,7 @@ def build(style: str) -> str:
         f'<span class="nm">{n}</span></div>'
         for (n, st, hue, wait), c in zip(LANES, cls))
     c = frame("C — no centre orb, one per lane",
-              head() + f'<div class="rv-grid">{lanes}</div>' + log(True))
+              head() + f'<div class="rv-grid">{lanes}</div>' + COLLAPSE + log(True))
 
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"

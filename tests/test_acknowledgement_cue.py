@@ -199,10 +199,26 @@ def test_the_thinking_cue_is_unaffected(state):
 
 def test_the_speaking_cue_still_fires_from_the_say_path(state, monkeypatch):
     """TC4. It is the one that tells him to stop talking because a reply is starting, so it is the
-    cue whose loss would be least visible and most costly."""
+    cue whose loss would be least visible and most costly.
+
+    ⚠ **THE CLIP HAS TO BE DELIVERABLE NOW.** The cue moved next to the send on 2026-08-25: it
+    announces that audio is STARTING, and `_speak` does not always start any — a clip for a lane he
+    is not on is held, and one with nobody connected is queued. This fixture previously had no
+    client at all, so it was asserting that a sound plays into a room with no listener, and it kept
+    passing only because the cue fired before the branch that decides.
+    """
     monkeypatch.setattr(server.tts, "synthesize",
                         lambda text, voice=None, speed=1.0, pause=0.0: (b"\x00\x00" * 100, 22050))
     monkeypatch.setattr(server.config, "SPEAK_GRACE_S", 0.0)
+    # ⚠ `_send_clip` IS NOT STUBBED, and must not be: a cue is itself sent through it, so replacing
+    # it silences the very thing this test measures. `_Client` receives real sends.
+    #
+    # ONLY THE CHANNEL. The fixture already put a `_Client` in the set, and `cues_played` reads
+    # `next(iter(state.clients))` — so adding a second one made the assertion read whichever the
+    # set happened to yield first, which is not the one the cue went to. What was actually missing
+    # is `channel_open`: `deliverable` is `clients AND channel_open AND not off_lane`, and this
+    # fixture never opened the channel because nothing used to depend on it.
+    state.channel_open = True
 
     asyncio.run(server._speak(state, "here you go", None))
 
