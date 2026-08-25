@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import functools
 import http.server
+import json
 import os
 import socketserver
 import subprocess
@@ -170,8 +171,49 @@ SWEEP = """
           const v = view({ lanes, live, waiting, states: sts, broadcast: 'everyone' });
           out.push({ n, live, depth, st, shown: v.shown,
                      rows: v.rows.map(r => ({ name: r.name, live: r.live, waiting: r.waiting,
-                                              busy: r.busy, aria: r.aria })) });
+                                              busy: r.busy, aria: r.aria,
+                                              stateLabel: r.stateLabel })) });
         }
+      }
+    }
+  }
+  return out;
+}
+"""
+
+
+TAGSWEEP = """
+() => {
+  const tag = window.__voiceTunnel.tagView;
+  const out = [];
+  for (const lanes of [[], ['claude'], ['claude', 'codex'], ['claude', 'codex', 'atlas']]) {
+    // An agent clip, from each possible speaker.
+    for (const lane of ['claude', 'codex', 'atlas', undefined]) {
+      out.push({ kind: 'agent', lanes: lanes.length, lane,
+                 got: tag({ from: 'agent', lane, lanes, fallback: 'claude' }) });
+    }
+    // His own turns: addressed to a lane, to everyone, refused, absent, or not addressed at all.
+    for (const spec of [{ lane: 'claude' }, { lane: 'codex' }, { lane: 'everyone' },
+                        { lane: null }, {}]) {
+      out.push({ kind: 'you', lanes: lanes.length, spec: JSON.stringify(spec),
+                 got: tag({ from: 'you', addressed: true, lanes, fallback: 'claude', ...spec }) });
+    }
+    out.push({ kind: 'heard', lanes: lanes.length,
+               got: tag({ from: 'you', addressed: false, lanes, fallback: 'claude' }) });
+  }
+  return out;
+}
+"""
+
+
+RECEIPTSWEEP = """
+() => {
+  const r = window.__voiceTunnel.receiptView;
+  const out = [];
+  for (const id of [0, 1, 2, 3, 4]) {
+    for (const consumed of [null, -1, 0, 2, 4]) {
+      for (const readThrough of [null, -1, 0, 2, 4]) {
+        out.push({ id, consumed, readThrough, got: r({ id, consumed, readThrough }).state });
       }
     }
   }
@@ -260,6 +302,280 @@ with sync_playwright() as pw:
                         if c["waiting"] and "waiting to be heard" not in c["aria"]]
         check(not waiting_said, "a waiting lane says so in words, not only in a border colour")
 
+        # ---------------------------------------------- 013 AC-11: the state has to be READABLE
+        # The dot already carried `busy`, and a dot that is either on or off cannot answer the
+        # question he asked -- "I should know if an agent is listening or thinking or something
+        # else". A binary indicator collapses four states into one.
+        unsaid = [(r["st"], c) for r in rows for c in r["rows"]
+                  if not c.get("broadcast") and r["st"] != "idle" and c["name"] == "claude"
+                  and r["n"] >= 2 and not c["stateLabel"]]
+        check(not unsaid, "013 AC-11: a busy lane names its state in words, not only as a lit dot",
+              "" if not unsaid else f"{len(unsaid)} silent, first {unsaid[0]}")
+
+        idle_quiet = [c for r in rows for c in r["rows"]
+                      if r["st"] == "idle" and not c["waiting"] and c["stateLabel"]]
+        check(not idle_quiet, "an idle lane with nothing held says nothing — no label to ignore")
+
+        # A held clip is the one state he can ACT on, so it outranks whatever the agent is doing.
+        held_wins = [c for r in rows for c in r["rows"]
+                     if c["waiting"] and c["stateLabel"] != "wants you"]
+        check(not held_wins,
+              "013 AC-12: a lane holding speech reads 'wants you', whatever else it is doing",
+              "" if not held_wins else f"first {held_wins[0]}")
+
+        # ------------------------------------------- 013 AC-10: who is talking, and to whom
+        note("013 FR3/FR4: the transcript says WHO — the 'everybody shows as Claude' guard")
+        tags = page.evaluate(TAGSWEEP)
+        check(len(tags) > 30, "the tag sweep ran", f"{len(tags)} cases")
+
+        # THE DEFECT ITSELF. Every agent rendered under the same literal tag, so three agents in
+        # one transcript were indistinguishable. JJ, 2026-08-24: "In the transcript everybody
+        # shows as Claude."
+        multi = [t for t in tags if t["lanes"] >= 2]
+        collapsed = [t for t in multi if t["kind"] == "agent" and t["lane"] and t["got"] != t["lane"]]
+        check(not collapsed,
+              "013 AC-10: with several agents, a clip is tagged with the lane that SPOKE it",
+              "" if not collapsed else f"{len(collapsed)} wrong, first {collapsed[0]}")
+
+        # ⚠ PARSED, NOT STRING-MATCHED. The first version of this filter compared against
+        # '"lane": "codex"' while `JSON.stringify` emits '{"lane":"codex"}' — it selected nothing,
+        # and `all()` over an empty list is TRUE. It printed PASS with an empty detail, which is
+        # the same vacuous green this repo has now hit three times: a sweep against a retired
+        # selector, a layout run against a hidden strip, and this. **Hence the non-empty guard on
+        # every subset below** — a filter that matches nothing must fail, not pass quietly.
+        def spec_of(t):
+            try:
+                return json.loads(t["spec"])
+            except (KeyError, ValueError):
+                return {}
+
+        addressed = [t for t in multi if t["kind"] == "you" and spec_of(t).get("lane") == "codex"]
+        check(addressed and all("codex" in t["got"] and t["got"].startswith("you")
+                                for t in addressed),
+              "013 AC-10: his own turns say who he was addressing",
+              f"{len(addressed)} cases, {sorted({t['got'] for t in addressed})}")
+
+        # A refused summons reached NOBODY. Naming a lane there would claim a delivery that did
+        # not happen -- the one thing the ambiguity refusal exists to prevent.
+        refused = [t for t in multi if t["kind"] == "you"
+                   and "lane" in spec_of(t) and spec_of(t)["lane"] is None]
+        check(refused and all(t["got"] == "you → nobody" for t in refused),
+              "a turn the gate refused to route is shown as reaching nobody",
+              f"{len(refused)} cases, {sorted({t['got'] for t in refused})}")
+
+        # Absent `lane` is NOT null: those are the thousands of turns that predate lanes, and they
+        # belong to the default lane rather than to nobody.
+        legacy = [t for t in multi if t["kind"] == "you" and spec_of(t) == {}]
+        check(legacy and all(t["got"] == "you → claude" for t in legacy),
+              "a turn from before lanes existed is shown as addressed to the default lane",
+              f"{len(legacy)} cases, {sorted({t['got'] for t in legacy})}")
+
+        # ⚠ BELOW TWO LANES THE NAME IS NOISE. Same rule as the strip: one agent means every row
+        # would carry a name that distinguishes nothing.
+        solo = [t for t in tags if t["lanes"] < 2]
+        noisy = [t for t in solo if "→" in t["got"]]
+        check(not noisy, "a single-agent session renders exactly as it did before lanes",
+              "" if not noisy else f"first {noisy[0]}")
+
+        # 🔴 AND IT SAYS WHO IS SPEAKING, WHICH IS A DIFFERENT QUESTION FROM WHERE IT WENT.
+        #
+        # The solo branch used to return the literal string "claude" for every agent row. JJ,
+        # 2026-08-25, one lane, named magnus: *"even though we have named this lane Magnus, you
+        # are speaking as Claude."* Same class as the 2026-08-10 runtime incident — **this tool
+        # holds no model and cannot know what is driving it**, so a model name compiled into the
+        # page is always a guess and was wrong the first time anyone renamed a lane.
+        #
+        # ⚠ The sweep above cannot catch it: it uses `fallback: 'claude'`, so the bug and the
+        # correct answer are the same string. This one asks with a name no model has.
+        named = page.evaluate("""() => {
+          const tag = window.__voiceTunnel.tagView;
+          return ['magnus', undefined].map((lane) => ({
+            lane,
+            got: tag({ from: 'agent', lane, lanes: ['magnus'], fallback: 'magnus' }),
+          }));
+        }""")
+        check(named and all(t["got"] == "magnus" for t in named),
+              "a solo agent is tagged with ITS OWN lane name, never a model name",
+              f"{len(named)} cases, {sorted({t['got'] for t in named})}")
+
+        heard = [t for t in tags if t["kind"] == "heard"]
+        check(all(t["got"] == "heard" for t in heard),
+              "an unaddressed turn is still just 'heard', at any lane count")
+
+        # -------------------- 015 FR2: "idle" must not stand for an agent that is heads-down
+        #
+        # 🔴 JJ, 2026-08-24: *"the agents say idle, but in reality, you are not idle, right?
+        # Whenever you're not listening and whenever you're doing something, you're thinking."*
+        #
+        # `lane_states` holds only what an agent REPORTED, and an agent deep in a long task reports
+        # nothing — so it rendered identically to one sitting doing nothing. The separating fact is
+        # whether the lane is sitting in a `watch`, which the server already tracks and now sends.
+        note("015 FR2: listening, working and idle are three different things")
+        orb_state = page.evaluate("""() => {
+          const v = window.__voiceTunnel.laneOrbsView;
+          const base = { lanes: ['claude', 'codex', 'atlas'], live: 'claude', waiting: {},
+                         states: {} };
+          const pick = (view, n) => view.rows.find((r) => r.name === n).status;
+          const view = v({ ...base, watching: ['claude'], consumed: { claude: 5, codex: 9 } });
+          return {
+            watching: pick(view, 'claude'),   // in a wait -> listening
+            headsDown: pick(view, 'codex'),   // has read, not waiting -> working
+            neverSeen: pick(view, 'atlas'),   // never read anything -> genuinely idle
+            reported: pick(v({ ...base, watching: [], consumed: { codex: 9 },
+                               states: { codex: 'speaking' } }), 'codex'),
+          };
+        }""")
+        check(orb_state["watching"] == "listening",
+              "a lane sitting in a watch reads as listening", f"{orb_state}")
+        check(orb_state["headsDown"] == "working",
+              "015 FR2: a lane that has read and is NOT waiting reads as working, not idle",
+              f"{orb_state}")
+        check(orb_state["neverSeen"] == "idle",
+              "and a lane that never started is still idle — no overclaim the other way")
+        check(orb_state["reported"] == "speaking",
+              "a state the agent actually reported always wins over the derived one")
+
+        # ---------------------------- 015 FR1: one lane reading must not mark another lane's turns
+        #
+        # 🔴 THE BUG HE FOUND BY LOOKING AT THE PAGE, 2026-08-24: *"whenever one lane reads, I think
+        # we're marking everything as read."* The receipt was drawn against `consumed_cursor`, a
+        # single integer overwritten by whichever lane's watch reported last — so Atlas reading
+        # turn 40 painted Claude's turn 10 blue, a turn Claude was never delivered.
+        #
+        # 🎯 **Same seam as the unread-refusal bug, and the half that was left.** `012` made
+        # DELIVERY per-lane; `013` built the receipt on the session-wide cursor. Each was right on
+        # its own and nothing checked the pair — the third time today that shape has bitten.
+        note("015 FR1: the receipt is per-lane, so one reader cannot speak for another")
+        deliver(page, {"type": "lane", "lanes": ["claude", "codex"], "lane": "claude",
+                       "waiting": {}, "default_lane": "claude"})
+        page.evaluate("""() => {
+          const log = document.getElementById('log');
+          log.replaceChildren();
+          [['claude', 10], ['codex', 40]].forEach(([lane, id]) => {
+            const d = document.createElement('div');
+            d.className = 'row addressed';
+            d.dataset.id = String(id);
+            d.dataset.lane = lane;
+            const t = document.createElement('span');
+            t.className = 'text';
+            t.textContent = lane + ' turn ' + id;
+            d.appendChild(t);
+            log.appendChild(d);
+          });
+        }""")
+        # Codex has read through 40. Claude has read nothing.
+        deliver(page, {"type": "consumed", "cursor": 40, "pending": 0,
+                       "lane_consumed": {"codex": 40}})
+        page.wait_for_timeout(250)
+        marks = page.evaluate("""() => {
+          const g = (lane) => {
+            const t = document.querySelector('#log .row[data-lane="' + lane + '"] .tick');
+            return t ? t.dataset.state : null;
+          };
+          return { claude: g('claude'), codex: g('codex') };
+        }""")
+        check(marks["codex"] == "read", "the lane that actually read shows read", f"{marks}")
+        check(marks["claude"] == "sent",
+              "015 FR1: and the lane that did NOT read still shows sent", f"{marks}")
+
+        # ------------------------------- 014: every orb counts its OWN seconds while it is busy
+        #
+        # 🔴 THE TIMER WAS LOST IN THE REVAMP AND NO HARNESS NOTICED. It was a child of the single
+        # orb, so replacing that orb took it away — while `orbView` still returned its `timer` and
+        # `orbstate.py`'s 480-case golden still matched, because the MODEL was intact and only the
+        # thing that showed it was gone. He caught it by looking, minutes after it shipped:
+        # *"I no longer see the seconds counter, the timer, whenever you're doing something."*
+        #
+        # 🎯 **A golden over a pure model cannot see a missing view.** This asserts the rendered
+        # element, which is the half that was actually absent.
+        note("014: the busy timer, per lane, in the DOM rather than in the model")
+        deliver(page, {"type": "lane", "lanes": ["claude", "codex"], "lane": "claude",
+                       "waiting": {}})
+        deliver(page, {"type": "agent_state", "lane": "codex", "state": "thinking",
+                       "live": False})
+        # 2.5s, not 1.4s: the clock is stamped at the state change and the tick fires on the
+        # second, so a 1.4s window straddles the first render and floors to zero often enough to
+        # be flaky. A guard that fails intermittently teaches people to re-run it.
+        page.wait_for_timeout(2500)
+        timer = page.evaluate("""() => {
+          const c = document.querySelector('#orbs .laneorb[data-lane="codex"] .lanetimer');
+          const l = document.querySelector('#orbs .laneorb[data-lane="claude"] .lanetimer');
+          return { busy: c ? c.textContent.trim() : null, idle: l ? l.textContent.trim() : null };
+        }""")
+        check(timer["busy"], "a busy lane shows a seconds counter", f"{timer['busy']!r}")
+        check(timer["idle"] is None,
+              "and an idle lane shows none — the number belongs to the work, not to the orb",
+              f"{timer['idle']!r}")
+
+        deliver(page, {"type": "agent_state", "lane": "codex", "state": "idle",
+                       "live": False})
+        page.wait_for_timeout(200)
+        cleared = page.evaluate(
+            "() => document.querySelector('#orbs .laneorb[data-lane=\\'codex\\'] .lanetimer') === null")
+        check(cleared, "and it clears the moment that lane stops working")
+
+        # ------------------------------------------- 014 AC-5: hue is identity, and it is PURE
+        note("014 FR5: one hue per lane, deterministic, and defined past the end of the list")
+        hue = page.evaluate("""() => {
+          const h = window.__voiceTunnel.laneHue;
+          const three = ['claude', 'codex', 'atlas'];
+          const many = Array.from({length: 9}, (_, i) => 'lane' + i);
+          return {
+            stable: h(three, 'codex') === h(three, 'codex'),
+            distinct: new Set(three.map((n) => h(three, n))).size === 3,
+            // ⚠ POSITIONAL, not name-hashed: two devices watching one session must agree, and a
+            // hash would also make one lane's colour change when an unrelated lane is added.
+            positional: h(['codex', 'claude'], 'codex') === h(['claude', 'codex'], 'claude'),
+            unknown: h(three, 'nobody'),
+            // TC4: the list repeats rather than running out or returning undefined.
+            wrapsDefined: many.every((n) => typeof h(many, n) === 'string' && h(many, n)),
+            wrapsRepeat: h(many, 'lane6') === h(many, 'lane0'),
+          };
+        }""")
+        check(hue["stable"], "014 AC-5: the same lane list yields the same hue")
+        check(hue["distinct"], "and the first three lanes are distinct")
+        check(hue["positional"], "assignment is by POSITION, so two devices agree")
+        check(hue["wrapsDefined"] and hue["wrapsRepeat"],
+              "014 AC-5/TC4: past the end of the list it repeats rather than going undefined",
+              f"lane6 == lane0: {hue['wrapsRepeat']}")
+        check(hue["unknown"] and "var(" in str(hue["unknown"]),
+              "a lane that is not registered gets no identity colour", f"{hue['unknown']!r}")
+
+        # ------------------------------------------------ 013 AC-13: the receipt, TWO states
+        #
+        # 🔴 **RULED DOWN FROM THREE, by JJ, 2026-08-24**, from an observation sharper than the
+        # design: *"as soon as one of my terms enters your context window, that's read by you."*
+        # Delivered and read are the SAME instant here, so the middle state was drawing a
+        # distinction that does not exist, and the third ("answered") was not a delivery state at
+        # all — the answer is already the next row in the transcript. *"We just keep one check
+        # mark, right? And that check mark is gray and then blue."*
+        note("013 FR7: the receipt is TWO states, and the colour is the whole signal")
+        rec = page.evaluate(RECEIPTSWEEP)
+        check(len(rec) > 50, "the receipt sweep ran", f"{len(rec)} cases")
+
+        seen = sorted({c["got"] for c in rec})
+        check(seen == ["read", "sent"],
+              "013 AC-13: exactly two states, and both are reachable", f"{seen}")
+
+        below = [c for c in rec if c["consumed"] is None or c["id"] > c["consumed"]]
+        check(below and all(c["got"] == "sent" for c in below),
+              "a turn no agent has taken yet is 'sent'", f"{len(below)} cases")
+
+        taken = [c for c in rec if c["consumed"] is not None and c["id"] <= c["consumed"]]
+        check(taken and all(c["got"] == "read" for c in taken),
+              "a turn inside an agent's context is 'read' — the cursor IS the receipt",
+              f"{len(taken)} cases")
+
+        # ⚠ `readThrough` must no longer move the verdict. It still exists on the server for
+        # `unanswered_s`, and a receipt that quietly read it would reintroduce the third state.
+        by_cursor = {}
+        for c in rec:
+            by_cursor.setdefault((c["id"], c["consumed"]), set()).add(c["got"])
+        split = {k: v for k, v in by_cursor.items() if len(v) > 1}
+        check(not split,
+              "the verdict depends on the delivery cursor ALONE, never on what a lane answered",
+              "" if not split else f"{len(split)} ids disagree, first {list(split.items())[0]}")
+
         # ------------------------------------------------------ 2. the wiring
         note("the model reaches the paint, through the page's own message handler")
         deliver(page, {"type": "ready", "lanes": ["claude"], "lane": "claude",
@@ -270,7 +586,22 @@ with sync_playwright() as pw:
         deliver(page, {"type": "lane", "lanes": ["claude", "codex"], "lane": "claude",
                        "waiting": {}})
         two = strip(page)
-        check(not two["hidden"], "a second agent brings the strip on screen")
+        # 🔴 THE CHIP STRIP IS SUPERSEDED BY THE ORB ROW (spec 014 FR4). He asked for the badges to
+        # become orbs — *"I'm thinking around the orb… and maybe use mini orbs for them"*, then
+        # arrangement C replaced the centre orb outright — so the strip is now hidden whenever the
+        # row is up, and asserting it appears would pin behaviour the page no longer has.
+        #
+        # ⚠ **The REQUIREMENT is unchanged and is asserted here, on the element that carries it:**
+        # a second agent must bring a visible, per-lane control on screen. Everything below still
+        # exercises `lanesView`, which remains the pure reducer both views are built from.
+        # ⚠ The strip's own markup is now dead on the page — flagged for removal rather than
+        # deleted at the end of a long session, since its 45 checks are the only coverage of the
+        # reducer until the orb row's equivalents exist.
+        orbs_shown = page.evaluate(
+            "() => { const o = document.getElementById('orbs');"
+            "        return Boolean(o) && !o.hidden"
+            "               && o.querySelectorAll('button').length >= 2; }")
+        check(orbs_shown, "a second agent brings the ORB ROW on screen (spec 014 FR4)")
         check([c["name"] for c in two["chips"]] == ["claude", "codex", "everyone"],
               "one chip per agent plus the broadcast",
               f"{[c['name'] for c in two['chips']]}")

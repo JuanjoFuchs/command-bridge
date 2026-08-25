@@ -14,6 +14,7 @@ TunnelState of this test's own, on a turn log under tmp_path.
 import argparse
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -203,11 +204,150 @@ def test_say_into_the_live_lane_is_not_refused(state, monkeypatch):
     assert resp.status == 200
 
 
-def test_say_with_no_lane_still_works(state, monkeypatch):
-    """Every existing single-agent caller passes no lane and must be untouched."""
+def test_say_with_no_lane_still_works_when_there_is_only_one_lane(state, monkeypatch):
+    """Every existing single-agent caller passes no lane and must be untouched (013 NFR1).
+
+    ⚠ **This test used to assert the opposite and pass, because the fixture registers TWO lanes.**
+    Its name and docstring both said "single agent"; the state it ran against had `claude` and
+    `codex`, so what it actually pinned was a no-lane `say` being accepted *while several agents
+    shared the session* — which is the defect 013 FR1 exists to close, held in place by a test
+    nobody read as wrong. It now runs against the one-lane registry it always claimed to describe.
+    """
     monkeypatch.setattr(server, "_speak", _spoke)
+    state.lanes = server.lanes_mod.LaneRegistry("claude")
     resp = asyncio.run(server.handle_say(_Req(state, {"text": "all green"})))
     assert resp.status == 200
+
+
+def test_say_with_no_lane_is_refused_once_a_second_agent_joins(state, monkeypatch):
+    """013 FR1 — the live failure, 2026-08-24: Codex spoke over a conversation with Claude.
+
+    The hold that should have stopped it is guarded by `bool(lane)`, so an omitted `--lane` was
+    never off-lane and always played. Refusing is the only close available, because the server
+    cannot tell who is calling (TC1).
+    """
+    monkeypatch.setattr(server, "_speak", _spoke)
+    resp = asyncio.run(server.handle_say(_Req(state, {"text": "all green"})))
+
+    assert resp.status == 400
+    body = resp.body.decode()
+    assert '"code": "no_lane"' in body
+    # The remedy has to be runnable and the lane set has to be visible, or a refused agent has
+    # nothing to act on -- the same contract the unread refusal already keeps.
+    assert "--lane" in body
+    assert "codex" in body and "claude" in body
+
+
+def _said(session, text, lane, stamp=True, addressed=True):
+    """One addressed turn on a lane, for the refusal-scoping tests."""
+    return store.append_turn(session, text, 0.0, 1.0, addressed,
+                             lane=lane, stamp_lane=stamp)
+
+
+def test_another_lanes_turn_cannot_refuse_your_say(state, monkeypatch):
+    """013 AC-4, FR2 — the seam between 007 and 012.
+
+    Measured live 2026-08-24: a turn stamped `lane: atlas` refused Claude's `say`, naming a turn
+    Claude's own `watch --lane claude` is structurally forbidden to deliver. An agent cannot read
+    its way out of that, so the refusal has to count only what it could have read.
+    """
+    monkeypatch.setattr(server, "_speak", _spoke)
+    state.consumed_cursor = -1
+    _said(state.session, "hey codex are you there", "codex")
+
+    resp = asyncio.run(server.handle_say(_Req(state, {"text": "all green", "lane": "claude"})))
+    assert resp.status == 200
+
+
+def test_your_own_lanes_turn_still_refuses_your_say(state, monkeypatch):
+    """The scoping must not become a way out of the refusal — 007's guarantee is untouched."""
+    monkeypatch.setattr(server, "_speak", _spoke)
+    state.consumed_cursor = -1
+    _said(state.session, "hey claude wait", "claude")
+
+    resp = asyncio.run(server.handle_say(_Req(state, {"text": "all green", "lane": "claude"})))
+    assert resp.status != 200
+    assert "unread" in resp.body.decode()
+
+
+def test_a_turn_with_no_lane_key_still_refuses_the_default_lane(state, monkeypatch):
+    """013 AC-5, NFR1 — absent means the default lane, and that survives the per-lane scoping.
+
+    Thousands of turns predate lanes and carry no `lane` key. If the scoping dropped them the
+    refusal would go quiet on exactly the backlog a returning agent most needs to be stopped by.
+    """
+    monkeypatch.setattr(server, "_speak", _spoke)
+    state.consumed_cursor = -1
+    _said(state.session, "an old turn from before lanes", None, stamp=False)
+
+    resp = asyncio.run(server.handle_say(_Req(state, {"text": "all green", "lane": "claude"})))
+    assert resp.status != 200
+
+
+def test_unanswered_rises_while_he_talks_and_resets_when_the_lane_answers(state, monkeypatch):
+    """013 AC-6, FR8 — the fold loop's bound.
+
+    ⚠ The RISING half is the one that matters. The first draft of this requirement reported
+    whether a wait returned anything new, which is `true` on every iteration of the livelock it
+    was meant to break — a signal that is true in the failure case and false in the case that
+    already works is not a bound.
+    """
+    monkeypatch.setattr(server, "_speak", _spoke)
+    state.consumed_cursor = 99  # nothing unread, so the refusal cannot mask the measurement
+
+    assert state.lane_unanswered().get("claude") is None
+
+    _said(state.session, "hey claude", "claude")
+    first = state.lane_unanswered().get("claude")
+    assert first is not None
+
+    _said(state.session, "and another thing", "claude")
+    time.sleep(0.05)
+    second = state.lane_unanswered().get("claude")
+    assert second is not None and second >= first, "it must not fall while he keeps talking"
+
+    state.consumed_cursor = 99
+    asyncio.run(server.handle_say(_Req(state, {"text": "answering", "lane": "claude"})))
+    assert state.lane_unanswered().get("claude") is None, "answering clears the debt"
+
+
+def test_a_restart_does_not_inherit_the_whole_logs_backlog_as_unanswered(monkeypatch, tmp_path):
+    """013 FR8 — the bug the FIRST restart after this shipped exposed, in the real sequence.
+
+    A restart meets a log it did not live through. With no baseline the scan reached the top of a
+    2,442-turn history and reported `unanswered_s: 1035657` — twelve days. That is the age of the
+    LOG, not the length of his wait, and it would have read as an alarm on every restart forever.
+
+    ⚠ **The order is the test.** The turns must exist BEFORE the state is constructed; writing
+    them afterwards measures a live session, which is a different question and was how the first
+    version of this test fooled itself.
+    """
+    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    store.append_turn("t", "said before this process existed", 0.0, 1.0, True,
+                      lane="claude", stamp_lane=True)
+
+    st = server.TunnelState("t", token=None)
+    st.lanes = server.lanes_mod.LaneRegistry("claude")
+    st.lanes.add("codex")
+
+    assert st.lane_unanswered().get("claude") is None, \
+        "a turn this process was never given is not a debt it owes"
+
+    # ...and a turn that arrives AFTER it starts is.
+    _said("t", "hey claude", "claude")
+    assert st.lane_unanswered().get("claude") is not None
+
+
+def test_a_refused_say_does_not_reset_how_long_he_has_been_waiting(state, monkeypatch):
+    """013 FR8 — the reset sits after every refusal, so a declined `say` pays no debt.
+
+    If a refusal cleared it, the number would read zero for exactly the agent that has not
+    answered him, which is the case it exists to surface.
+    """
+    monkeypatch.setattr(server, "_speak", _spoke)
+    asyncio.run(server.handle_say(_Req(state, {"text": "all green"})))
+    assert "claude" not in state.lane_spoke_at
 
 
 def test_say_into_an_unknown_lane_names_the_real_ones(state, monkeypatch):

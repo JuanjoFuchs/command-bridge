@@ -222,7 +222,11 @@ def test_the_status_snapshot_publishes_all_three_from_one_place(state):
 def test_the_hold_loop_reads_the_same_answer_as_status():
     """The two copies are what produced the caveat. `_speak` must go through `state.talking()`."""
     src = SERVER.read_text(encoding="utf-8")
-    speak = src[src.index("    waited = 0.0"):src.index('await _set_agent_state(state, "speaking")')]
+    # SLICED TO THE STAGE NAME, not to a whole call. The end marker used to be the literal
+    # `await _set_agent_state(state, "speaking")`, and spec 016 added the owner argument — so a
+    # change that took nothing away from this test broke it. The stage name is the part that
+    # actually delimits the hold loop.
+    speak = src[src.index("    waited = 0.0"):src.index('_set_agent_state(state, "speaking"')]
 
     assert "state.talking()" in speak
     assert "state.user_speaking or state.buffer.speech_active" not in speak, (
@@ -310,7 +314,10 @@ def test_say_samples_unread_before_synthesis():
     src = SERVER.read_text(encoding="utf-8")
     body = src[src.index("async def handle_say"):src.index("async def _speak")]
 
-    assert body.index("_unread_turns(state)") < body.index("if fire_and_forget:"), (
+    # Matched on the ASSIGNMENT rather than on a full call with its arguments: the argument list
+    # grew a lane in 013 and this assertion broke on the punctuation while the ordering it exists
+    # to protect was never in question. What it pins is WHERE the sample happens, not its shape.
+    assert body.index("unread = _unread_turns(") < body.index("if fire_and_forget:"), (
         "sample it before the early return, or the hurried path is the one path without it"
     )
     fire = body[body.index("if fire_and_forget:"):]

@@ -420,7 +420,12 @@ def test_the_builder_alone_produces_first_then_repeat(state):
 
     This is also the reset contract: clearing `state.last_refusal` makes the next call a first
     again, which is how a harness measures the same payload both ways."""
-    unread = {"unread": [{"id": 7, "text": MEDIAN_TURN}], "unread_count": 1, "cursor": 7}
+    # `since` rides on every payload `_unread_turns` produces (spec 017 FR3) — the cursor the count
+    # was measured against, so the remedy cannot be built from a different number. A hand-built
+    # fixture that omits it is drifting from its producer, which is how a test starts asserting a
+    # shape nothing emits.
+    unread = {"unread": [{"id": 7, "text": MEDIAN_TURN}], "unread_count": 1, "cursor": 7,
+              "since": 6}
 
     first = server._unread_refusal(state, unread)
     repeat = server._unread_refusal(state, unread)
@@ -442,7 +447,12 @@ def test_the_memo_is_per_state_and_not_shared_between_sessions(state, monkeypatc
     that crossed between them would omit text an agent had never been sent."""
     other = server.TunnelState("other", token=None)
     other.consumed_cursor = -1
-    unread = {"unread": [{"id": 7, "text": MEDIAN_TURN}], "unread_count": 1, "cursor": 7}
+    # `since` rides on every payload `_unread_turns` produces (spec 017 FR3) — the cursor the count
+    # was measured against, so the remedy cannot be built from a different number. A hand-built
+    # fixture that omits it is drifting from its producer, which is how a test starts asserting a
+    # shape nothing emits.
+    unread = {"unread": [{"id": 7, "text": MEDIAN_TURN}], "unread_count": 1, "cursor": 7,
+              "since": 6}
 
     server._unread_refusal(state, unread)
     first_for_other = server._unread_refusal(other, unread)

@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from voice_tunnel import cli, config
+from voice_tunnel import cli, config, lanes
 
 
 def run(argv, capsys):
@@ -83,6 +83,55 @@ def test_describe_carries_exit_codes_and_the_error_shape():
     part of the published contract, not folklore."""
     assert set(cli.DESCRIBE["exit_codes"]) == {"0", "1", "2", "3"}
     assert set(cli.DESCRIBE["errors"]) == {"error", "code", "remedy"}
+
+
+def test_describe_registers_every_lane_error_the_registry_actually_raises():
+    """Bind the published registry to the code that raises, not to a literal list.
+
+    Spec 012 shipped `unknown_lane` and `lane_exists` as real refusals and documented neither, so
+    `describe` — the thing an agent reads to learn the surface — was silent on both. A literal
+    assertion would have gone stale the same way; this drives the real registry and fails if a
+    code it raises is missing from the contract.
+    """
+    registry = lanes.LaneRegistry("claude")
+    raised = set()
+    for bad in ["everyone", "two words", "x"]:
+        with pytest.raises(lanes.LaneError) as caught:
+            registry.add(bad)
+        raised.add(caught.value.code)
+    registry.add("codex")
+    with pytest.raises(lanes.LaneError) as caught:
+        registry.add("codex")
+    raised.add(caught.value.code)
+    with pytest.raises(lanes.LaneError) as caught:
+        registry.require("grok")
+    raised.add(caught.value.code)
+
+    assert raised == {"lane_exists", "unknown_lane"}
+    undocumented = raised - set(cli.DESCRIBE["error_codes"])
+    assert not undocumented, f"raised but absent from describe.error_codes: {sorted(undocumented)}"
+
+
+def test_describe_carries_the_lane_field_the_turn_log_now_writes():
+    """`lane` is the field that decides WHICH agent a turn reaches, so an agent that reads the
+    turn schema and never sees it cannot know its watch is filtered. The absent-means-default
+    rule is the load-bearing half: every turn logged before lanes existed has no `lane` key."""
+    lane_doc = cli.DESCRIBE["turn_schema"]["lane"]
+    assert "ABSENT MEANS THE DEFAULT LANE" in lane_doc
+
+
+def test_describe_carries_the_two_things_013_added_to_the_agent_contract():
+    """013 AC-8 — the refusal an agent must handle, and the number that ends its fold loop.
+
+    Both are things an agent learns ONLY from `describe`: `no_lane` is a refusal it will meet the
+    first time a second agent joins, and `unanswered_s` is the bound on a loop the same contract
+    tells it to run. A contract that states the loop and omits its exit is the defect 013 FR8 was
+    written for.
+    """
+    assert "no_lane" in cli.DESCRIBE["error_codes"]
+    watch_returns = cli.DESCRIBE["commands"]["watch"]["returns"]
+    assert "unanswered_s" in watch_returns
+    assert "STOP FOLDING AND ANSWER" in watch_returns["unanswered_s"]
 
 
 def test_describe_tells_the_caller_how_to_invoke_it():

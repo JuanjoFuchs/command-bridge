@@ -13,6 +13,7 @@ turns text into audio. Everything else belongs to the agent driving it.
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
 import json
 import os
 import signal
@@ -45,6 +46,18 @@ class TunnelState:
         self.session = session
         self.token = token
         self.started_at = time.time()
+
+        # WHERE THE LOG STOOD WHEN THIS PROCESS STARTED — the debt line for `unanswered_s`.
+        #
+        # A restart meets a log it did not live through. Measured on the first one after FR8
+        # shipped: with no baseline the scan reached the top of a 2,442-turn history and reported
+        # `unanswered_s: 1035657` — twelve days, which is the age of the LOG rather than the length
+        # of his wait, and it would have read as an alarm on every restart forever.
+        # **An agent cannot owe a reply to a turn it was never given.**
+        try:
+            self.baseline_turn_id = store.last_turn_id(session)
+        except OSError:
+            self.baseline_turn_id = -1
         self.clients: set[web.WebSocketResponse] = set()
         self.wake = WakeGate(enabled=gate_enabled)
         self.lanes = lanes_mod.LaneRegistry(lanes_mod.lane_name_for_wake(config.wake_name()))
@@ -206,6 +219,60 @@ class TunnelState:
         for: *"I would like to be able to keep track of, still, see if one agent is thinking,
         transcribing, or synthesizing."*"""
 
+        self.speaking_lane: str | None = None
+        """WHOSE CLIP IS CURRENTLY IN THE AIR (spec 016 FR3).
+
+        The `played` receipt arrives from the client carrying a clip id and nothing else, and it is
+        the only party that knows when audio actually STOPPED — the server knows only when it
+        finished sending. So the receipt is what returns a lane to rest, and by the time it lands
+        the conversation may have moved to somebody else. Recording the owner when the clip goes
+        out is what stops that receipt releasing the wrong agent."""
+
+        self.lane_spoke_at: dict[str, float] = {}
+        """When each lane last SPOKE, as a wall clock, for `unanswered_s` (spec 013 FR8).
+
+        **The half of the bound the log cannot supply.** The turn log says when he spoke; only the
+        server knows when an agent answered. Together they say how long he has been waiting, which
+        is what turns *"fold the turns in and wait again"* from an instruction with no exit into a
+        number an agent can compare — the livelock he named on 2026-08-24: *"you get blocked in
+        watch instead of responding."*
+
+        ⚠ **Keyed by lane and not session-wide.** With three agents, Codex answering says nothing
+        about how long Claude has kept him waiting, and a session-wide stamp would report the most
+        responsive lane's clock to every other one."""
+
+        self.lane_consumed: dict[str, int] = {}
+        """How far EACH lane has actually read (spec 015 FR1).
+
+        🔴 **`consumed_cursor` is one integer for the whole session, and with N lanes that is a
+        lie.** Whichever lane's `watch` reported last overwrites it, so a turn addressed to Claude
+        renders as read the moment Atlas reads something later — a turn Claude's own
+        `watch --lane claude` never delivered and never will.
+
+        Spotted by JJ on the page, 2026-08-24: *"whenever one lane reads, I think we're marking
+        everything as read."* 🎯 **It is the same seam as the unread-refusal bug caught that
+        morning, and the half that was left:** `012` made delivery per-lane, `013` built the
+        receipt on the session-wide cursor, and nothing connected them.
+
+        ⚠ **Monotonic per lane.** A cursor only ever moves forward here, because a `watch` resuming
+        from an older `--since` is re-reading, not un-reading, and a receipt that flickered back to
+        grey would be worse than one that was never drawn."""
+
+        self.lane_read_through: dict[str, int] = {}
+        """Per lane, the highest turn id that lane had in hand when it last SPOKE (013 FR7).
+
+        **The blue-tick half of the receipt, and the only one of the three states that is real
+        evidence.** He asked for WhatsApp's semantics: *"once it's sent, it's one check. Once it
+        arrives to the destination, it's two checks. And once the recipient has read the message,
+        the two checks turn blue."*
+
+        ⚠ **In this tool "delivered" and "read" are the SAME event** — a `watch` both hands a turn
+        over and advances the cursor — so a naive mapping would have two of the three states rise
+        together and the third never appear. What actually separates them is ANSWERING: the cursor
+        moving proves an agent was given the turn, and a clip spoken afterwards proves something
+        was done with it. That is the distinction he cares about, and it is the one a machine can
+        honestly make."""
+
         self.lane_held: dict[str, list] = {}
         """Clips an off-lane agent produced while he was talking to somebody else (FR7).
 
@@ -346,6 +413,27 @@ class TunnelState:
             last_turn_id = store.last_turn_id(self.session)
         return max(0, last_turn_id - self.consumed_cursor)
 
+    def lane_cursor(self, lane: str | None) -> int:
+        """WHERE HAS **THIS LANE** READ TO — the one place that answers it (spec 017 FR1).
+
+        🔴 **`consumed_cursor` is a single number for the whole session, and every lane's `watch`
+        overwrites it.** Spec 015 gave each lane its own cursor for the transcript's tick marks and
+        stopped there, so everything ELSE that asks "where have you read to" still asks the session
+        — and gets whichever lane read most recently.
+
+        Measured live 2026-08-25 with three lanes on his phone: `consumed_cursor` 2604 while
+        `lane_consumed` held `{magnus: 2604, atlas: 2597, kepler: 2589}`. **A kepler agent asking
+        where to resume was told 2604 and would have skipped fifteen turns**, with the unread count
+        reading zero the whole way, because the count was measured against the session number too.
+
+        ⚠ **The session cursor is the FALLBACK, not the rival.** A lane that has never reported has
+        no cursor of its own, and thousands of turns predate lanes entirely — for both, the session
+        number is the honest answer, and in a solo session it is the same number anyway (NFR1).
+        """
+        if lane is None:
+            return self.consumed_cursor
+        return self.lane_consumed.get(lane, self.consumed_cursor)
+
     def frames_stale(self) -> bool:
         """Has audio stopped arriving for longer than it would have taken to end an utterance?
 
@@ -436,6 +524,85 @@ class TunnelState:
         """Drop a subsystem's error once it succeeds, so a stale one cannot be re-diagnosed."""
         self.errors.pop(subsystem, None)
 
+    @staticmethod
+    def _turn_wall_seconds(turn: dict[str, Any]) -> float | None:
+        """A turn's `wall` stamp as epoch seconds, or None if it cannot be read.
+
+        The log's own timestamp is used rather than an arrival time the server would have to keep,
+        so this survives a restart: an agent that comes back to a session mid-conversation still
+        learns how long he has been waiting.
+        """
+        raw = turn.get("wall")
+        if not isinstance(raw, str):
+            return None
+        try:
+            return _dt.datetime.fromisoformat(raw).timestamp()
+        except ValueError:
+            return None
+
+    def lane_unanswered(self) -> dict[str, float]:
+        """Per lane, how long he has been waiting for that lane to say something (spec 013 FR8).
+
+        **The bound for the fold loop.** `watch` tells an agent to fold returned turns in and wait
+        again; while he keeps talking that instruction never terminates, and he ends up saying
+        *"respond"* to an agent that is following the rule exactly. This is the number that makes
+        the exit observable: it RISES while he talks and RESETS when the lane answers.
+
+        ⚠ **A lane that has never spoken is measured from THIS SERVER'S START**, not from the top
+        of the log — a fresh agent that has been listening for two minutes without replying is
+        worth reporting, and a twelve-day-old turn it was never given is not. See the comment on
+        the baseline below for what that read before it was bounded.
+
+        Absent from the result means the lane owes nothing, which is the common case and is why
+        this is a sparse dict rather than one entry per registered lane.
+        """
+        now = time.time()
+        out: dict[str, float] = {}
+        try:
+            turns = store.read_turns(self.session)
+        except OSError:
+            return out
+        for lane in self.lanes.names:
+            # WHICH turns are outstanding is decided by ID, and only HOW LONG is decided by a
+            # clock. The first version compared the turn's `wall` against a float baseline and
+            # could not do it reliably: `wall` is written to the SECOND, so a turn logged in the
+            # same second as the baseline lands up to a second on the wrong side of it. Measured
+            # both ways within one test run — a turn at 16:56:40 against a baseline of
+            # 16:56:40.45 read as older than the server, and a one-second tolerance then stopped
+            # an answer from ever clearing the debt inside the same second.
+            #
+            # 🎯 **Ids are exact and monotonic; timestamps at this resolution are neither.** Use
+            # the precise instrument for the question that needs precision, and keep the clock for
+            # the one place only a clock can answer — how many seconds have passed.
+            since_id = self.lane_read_through.get(lane)
+            if since_id is None:
+                since_id = self.baseline_turn_id
+            # 🔴 **A LANE THAT HAS NEVER SPOKEN IS MEASURED FROM THIS SERVER'S START, not from
+            # zero.** Measured on the first restart after this shipped: with no baseline the scan
+            # reached the oldest turn in a 2,442-turn log and reported `unanswered_s: 1035657` —
+            # twelve days. It was the age of the LOG, not of his wait, and it would have read as
+            # an alarm on every restart forever.
+            #
+            # 🎯 **An agent cannot owe a reply to a turn it was never given.** The log outlives the
+            # process; a lane's debt cannot. The docstring above said "measured from its oldest
+            # unanswered turn" and was right about a lane joining a live session and wrong about a
+            # process meeting a history — the same sentence, two situations, one of them absurd.
+            oldest: float | None = None
+            for turn in turns:
+                if not turn.get("addressed"):
+                    continue
+                if int(turn.get("id", -1)) <= since_id:
+                    continue
+                if not store.turn_is_for(turn, lane, self.lanes.default):
+                    continue
+                at = self._turn_wall_seconds(turn)
+                if at is None:
+                    continue
+                oldest = at if oldest is None else min(oldest, at)
+            if oldest is not None:
+                out[lane] = round(max(0.0, now - oldest), 1)
+        return out
+
     def snapshot(self) -> dict[str, Any]:
         # ONE disk read, two fields. `last_turn_id` and `pending_turns` are the same question
         # asked twice, and reading the log twice per status call is how a hot path acquires a
@@ -501,6 +668,9 @@ class TunnelState:
             "watching_lanes": sorted(self.watching_lanes),
             "lane_waiting": {name: len(clips) for name, clips in self.lane_held.items() if clips},
             "lane_states": dict(self.lane_states),
+            "lane_unanswered": self.lane_unanswered(),
+            "lane_read_through": dict(self.lane_read_through),
+            "lane_consumed": dict(self.lane_consumed),
             "ambiguous": self.ambiguous,
             "last_ambiguous": list(self.last_ambiguous),
             "agent_holds_turns": self.agent_holds_turns,
@@ -554,7 +724,7 @@ def _check(request: web.Request, state: TunnelState) -> tuple[bool, str]:
     )
 
 
-async def _set_agent_state(state: TunnelState, value: str, lane: str | None = None) -> None:
+async def _set_agent_state(state: TunnelState, value: str, lane: str) -> None:
     """Publish what the agent is doing: idle | thinking | waiting | speaking.
 
     The point is that silence is ambiguous. Without this the user cannot tell "it did not hear
@@ -566,16 +736,34 @@ async def _set_agent_state(state: TunnelState, value: str, lane: str | None = No
     is TALKING TO is doing — because that is what the orb shows and the orb must not start
     flickering with a background agent's work. `lane_states` is the fan-out.
 
-    An explicit `lane` is used when the caller knows whose state this is (an agent reporting its
-    own); otherwise it belongs to the live lane, which is the only agent the tunnel's own stages —
-    transcribing, synthesizing, speaking — can be about.
+    🔴 **`lane` IS REQUIRED, AND THAT IS THE WHOLE OF SPEC 016 FR4.** It used to default to the
+    live lane, which made every stage a pair of independent lookups — one when the stage opened,
+    one when it closed — with real work in between. The live lane moves during that work: he says
+    "hey magnus" while atlas is live, `transcribing` is attributed to atlas because the words have
+    not been recognised yet, the gate then moves the conversation, and the `idle` that would end
+    the stage resolves to magnus. **Atlas is left reading `transcribing` until the page reloads.**
+    Reported 2026-08-25: *"if I am talking to you, I do see that the Atlas lane says
+    transcribing."*
+
+    So the owner is now an input rather than a lookup: whoever opens a stage names the lane and
+    passes the same name to the close. A caller that genuinely means "the live lane" says
+    `state.lanes.current` at the top of its flow and holds it — which is the fix, spelled at the
+    only place that knows how long the flow is.
     """
-    who = lane or state.lanes.current
+    who = lane
     state.lane_states[who] = value
     if who == state.lanes.current:
         state.agent_state = value
     await _broadcast_json(state, {"type": "agent_state", "state": value, "lane": who,
-                                  "live": who == state.lanes.current})
+                                  "live": who == state.lanes.current,
+                                  # WHO IS ACTUALLY SITTING IN A WAIT, sent with every state change
+                                  # so the page can tell "listening" from "working" (015 FR2).
+                                  # The server only learns a REPORTED state, and an agent
+                                  # heads-down in a long task reports nothing — which is why every
+                                  # busy background lane read "idle". This is the fact that
+                                  # separates them, and the server already had it.
+                                  "watching_lanes": sorted(state.watching_lanes),
+                                  "lane_consumed": dict(state.lane_consumed)})
 
 
 async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
@@ -593,6 +781,10 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
     await _broadcast_json(
         state,
         {"type": "lane", "lane": lane, "lanes": list(state.lanes.names), "why": why,
+         # The page needs it to render a turn that carries NO lane key (013 FR3): absent means the
+         # default lane, and thousands of turns predate lanes. Sent on every lane message rather
+         # than only at handshake, so a page that connected late is never the one that gets it wrong.
+         "default_lane": state.lanes.default,
          "waiting": {name: len(clips) for name, clips in state.lane_held.items() if clips}},
     )
     # HIS ATTENTION IS BACK HERE, so what this lane said while he was away stops being an
@@ -672,8 +864,19 @@ async def handle_shutdown(request: web.Request) -> web.Response:
     return web.json_response({"stopping": True, "session": state.session})
 
 
-def _unread_turns(state: TunnelState) -> dict[str, Any]:
+def _unread_turns(state: TunnelState, lane: str | None = None) -> dict[str, Any]:
     """Everything he said that the agent has not read, for `say` to hand back as it speaks.
+
+    **SCOPED TO THE CALLER'S LANE (spec 013 FR2), and the bug that forced it is worth stating.**
+    Spec 007 refuses a `say` on anything unread in the SESSION; spec 012 then made delivery
+    per-lane and scoped the waiter guard to `(session, lane)` -- and left this session-wide.
+    Measured 2026-08-24 on the first three-agent run: a turn stamped `lane: atlas` refused
+    Claude's `say`, naming a turn Claude's own `watch --lane claude` is structurally forbidden to
+    deliver. **An agent cannot read its way out of a refusal built on turns it can never be given**,
+    so the refusal has to count what that agent could actually have read.
+
+    `lane=None` keeps the old session-wide behaviour, which is what a single-lane session wants and
+    what every pre-lanes caller gets.
 
     **DELIBERATELY DOES NOT ADVANCE THE READ CURSOR**, which is the one design decision here worth
     defending. `watch` consumes what it delivers, because delivering IS the acknowledgement and
@@ -690,12 +893,20 @@ def _unread_turns(state: TunnelState) -> dict[str, Any]:
     be handed the whole log inside a `say` response.
     """
     last_id = store.last_turn_id(state.session)
-    if last_id <= state.consumed_cursor:
-        return {"unread": [], "unread_count": 0, "cursor": last_id}
+    # MEASURED AGAINST **THIS LANE'S** CURSOR (spec 017 FR2). Spec 015 scoped WHICH turns count to
+    # the lane; the threshold they were counted against stayed the session number, so a lane whose
+    # own turns were unread still reported zero as soon as any other lane read past them. Half a
+    # fix reads exactly like a whole one from the outside, which is why this was invisible.
+    since = state.lane_cursor(lane)
+    if last_id <= since:
+        return {"unread": [], "unread_count": 0, "cursor": last_id, "since": since}
     turns = [t for t in store.read_turns(state.session)
-             if int(t.get("id", -1)) > state.consumed_cursor and t.get("addressed")]
+             if int(t.get("id", -1)) > since and t.get("addressed")]
+    if lane is not None:
+        default = state.lanes.default
+        turns = [t for t in turns if store.turn_is_for(t, lane, default)]
     turns = turns[-config.UNREAD_ON_SAY_MAX:]
-    return {"unread": turns, "unread_count": len(turns), "cursor": last_id}
+    return {"unread": turns, "unread_count": len(turns), "cursor": last_id, "since": since}
 
 
 def _unread_refusal(state: TunnelState, unread: dict[str, Any]) -> dict[str, Any]:
@@ -758,8 +969,12 @@ def _unread_refusal(state: TunnelState, unread: dict[str, Any]) -> dict[str, Any
         "spoke": False,
         "error": error,
         "code": config.UNREAD_REFUSAL_CODE,
+        # RESUMES FROM THE CURSOR THE COUNT WAS MEASURED AGAINST (spec 017 FR2). `unread["since"]`
+        # is this lane's own read cursor, published by `_unread_turns` for exactly this reason: a
+        # remedy computed from a different number than the complaint delivers the wrong turns and
+        # leaves the refusal unescapable, which is the trap documented below.
         "remedy": (
-            f"voice-tunnel watch --session {state.session} --since {state.consumed_cursor}"
+            f"voice-tunnel watch --session {state.session} --since {unread['since']}"
         ),
         # Full turn objects the first time, ids alone on every repeat of the same identity. The
         # KEY does not change and neither does its type, so an agent that reads `unread[i]["id"]`
@@ -769,7 +984,7 @@ def _unread_refusal(state: TunnelState, unread: dict[str, Any]) -> dict[str, Any
         "unread_count": n,
         # The cursor the remedy uses, published so a caller building its own command cannot
         # arrive at a different number than the one it was just handed.
-        "since": state.consumed_cursor,
+        "since": unread["since"],
         "last_turn_id": unread["cursor"],
         # Always present, 0 on the first — a field that only appears on repeats would make its
         # absence ambiguous between "this is the first" and "this build of the tool predates the
@@ -831,6 +1046,37 @@ async def handle_say(request: web.Request) -> web.Response:
     # the one thing that must not happen in the meantime is speaking over the conversation he is
     # actually having.
     lane = (body or {}).get("lane") or None
+    if lane is None and len(state.lanes.names) > 1:
+        # 🔴 **THE BUG THAT BROKE THE FIRST THREE-AGENT SESSION (spec 013 FR1).**
+        #
+        # The off-lane hold below is guarded by `bool(lane) and ...`, so a caller that omits
+        # `--lane` is NEVER off-lane and always plays. Measured live 2026-08-24: Codex spoke over
+        # a conversation JJ was having with Claude, which is the exact thing FR7 exists to
+        # prevent. Every 012 test passed `--lane` explicitly, so nine acceptance criteria could
+        # pass while the feature failed in the first minute of real use.
+        #
+        # 🎯 **A guard whose predicate is satisfied by the ABSENCE of the thing it guards.** The
+        # check is present, correct and tested; it simply never fires for the caller who did the
+        # least, and that is the caller who most needs it.
+        #
+        # JJ ruled it himself, minutes after it happened to him: *"I think we should force a lane
+        # now."* / *"A say without a lane should reject."*
+        #
+        # **Refusing is the only thing that closes it.** TC1: the server cannot know who is
+        # calling — identity is per-invocation — so there is nothing to infer from and any guess
+        # would put audio in the wrong conversation, which is the failure being fixed.
+        #
+        # ⚠ Only when a SECOND lane exists. A one-agent session has exactly one place the audio
+        # could go, so the flag carries no information and demanding it would be ceremony (NFR1).
+        return web.json_response(
+            {"error": "refusing to speak without a lane: several agents share this session, "
+                      "and this tool cannot tell which one you are",
+             "code": "no_lane",
+             "remedy": f"voice-tunnel say --session {state.session} --lane <yours> \"…\"",
+             "lanes": list(state.lanes.names),
+             "live_lane": state.lanes.current},
+            status=400,
+        )
     if lane is not None:
         if not isinstance(lane, str) or not state.lanes.knows(lane):
             return web.json_response(
@@ -865,7 +1111,7 @@ async def handle_say(request: web.Request) -> web.Response:
     #
     # Sampled BEFORE synthesis so both paths carry it: `--now` is exactly the path an agent takes
     # when it is in a hurry, which is when it skips the check.
-    unread = _unread_turns(state)
+    unread = _unread_turns(state, lane)
 
     # AND NOW IT REFUSES, WHERE IT USED TO SPEAK AND THEN WARN (spec 007, FR1).
     #
@@ -914,6 +1160,18 @@ async def handle_say(request: web.Request) -> web.Response:
     # holding its turns and its next wait is still the pre-reply check.
     state.agent_holds_turns = False
 
+    # THE RESET HALF OF `unanswered_s` (spec 013 FR8), and its position is the whole point: it sits
+    # AFTER every refusal, so a `say` that was declined does not clear a debt it never paid. A
+    # refused agent still owes him an answer, and reporting otherwise would hide exactly the case
+    # the number exists to surface.
+    _who = lane or state.lanes.default
+    state.lane_spoke_at[_who] = time.time()
+    # The blue tick (013 FR7): everything this lane had in hand at the moment it answered. Taken
+    # from the READ cursor and not from the head of the log — a turn that arrived while the reply
+    # was being synthesized has not been answered by it, and claiming otherwise would mark
+    # something read that nobody has seen.
+    state.lane_read_through[_who] = state.consumed_cursor
+
     if fire_and_forget:
         # Return before synthesis so the agent can acknowledge and keep working in parallel,
         # instead of the user waiting out a TTS round trip before anything else starts.
@@ -959,7 +1217,12 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
     bypassed by choosing the async one.
     """
     timing.stamp(state.session, "say_requested", chars=len(text))
-    await _set_agent_state(state, "synthesizing")
+    # 🔴 THE CLIP'S OWN LANE OWNS EVERY STAGE OF IT (spec 016 FR3), resolved ONCE here and never
+    # re-read. Synthesis, the hold, playback and the closing idle are one flow that spans seconds
+    # of real time, and he can move the conversation at any point inside it. Re-deriving the owner
+    # at each step would say a different agent is talking than the one whose words are playing.
+    owner = lane or state.lanes.current
+    await _set_agent_state(state, "synthesizing", owner)
     try:
         pcm, rate = await asyncio.get_running_loop().run_in_executor(
             None,
@@ -972,7 +1235,10 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         # It did not, on 2026-08-10, and the person debugging TTS spent twenty-five minutes
         # reading an accurate message about an optional subsystem nobody had asked about.
         state.fail("tts", str(exc))
-        await _set_agent_state(state, "idle")
+        # THE OWNER IS RELEASED ON THE FAILURE PATH TOO (016 FR2). A stage that opens and never
+        # closes strands its lane exactly as a mis-attributed close does, and this is the one exit
+        # from `_speak` that skips playback entirely.
+        await _set_agent_state(state, "idle", owner)
         raise
 
     timing.stamp(state.session, "synthesized", audio_s=round(len(pcm) / 2 / rate, 2))
@@ -1003,7 +1269,7 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
     while waited < 15.0 and not state.muted:
         if state.talking():
             if not announced:
-                await _set_agent_state(state, "waiting")
+                await _set_agent_state(state, "waiting", owner)
                 announced = True
             await asyncio.sleep(0.1)
             waited += 0.1
@@ -1019,7 +1285,11 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
                 break
         if not state.talking():
             break
-    await _set_agent_state(state, "speaking")
+    await _set_agent_state(state, "speaking", owner)
+    # WHOSE CLIP IS IN THE AIR. The `played` receipt comes back from the client with a clip id and
+    # no lane, and by then the conversation may have moved — so the lane that will be released is
+    # recorded here, where it is still known, rather than re-derived when the receipt lands.
+    state.speaking_lane = owner
     await _push_cue(state, "speaking")
 
     # Header first so the client knows how to interpret the bytes that follow — and both under
@@ -1032,6 +1302,13 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         "bytes": len(pcm),
         "text": text,
         "held_for": round(waited, 1),
+        # WHICH AGENT IS SPEAKING (spec 013 FR4), and its absence is why every reply on the page
+        # rendered as "claude". JJ, 2026-08-24, with three agents running: *"In the transcript
+        # everybody shows as Claude."* He was reading the page correctly -- the tag was a literal,
+        # because before lanes there was only ever one speaker and the wake name was a safe
+        # stand-in for it. With N agents the page cannot derive this from anything it holds, so
+        # the clip has to carry it.
+        "lane": lane or state.lanes.default,
     }
     # TWO ways to have nobody to talk to, and they queue identically. A dropped socket is an
     # accident; a closed orb is a decision. Either way the reply is held rather than played to an
@@ -1524,6 +1801,13 @@ async def handle_consumed(request: web.Request) -> web.Response:
     # with no turn behind it — the same defect as firing on capture, one layer along.
     advanced = cursor > state.consumed_cursor
     state.consumed_cursor = cursor
+    # PER-LANE, and the watch has been sending its lane here all along — the server simply threw
+    # it away (spec 015 FR1). Monotonic, because a `watch` resuming from an older `--since` is
+    # re-reading rather than un-reading, and a receipt flickering back to grey is worse than one
+    # that was never drawn.
+    _lane = (body or {}).get("lane")
+    if isinstance(_lane, str) and _lane:
+        state.lane_consumed[_lane] = max(state.lane_consumed.get(_lane, -1), cursor)
     # Persisted beside the log so a server restart resumes from the real read position instead
     # of reporting every turn ever logged as pending. Best-effort: see write_consumed_cursor.
     store.write_consumed_cursor(state.session, cursor)
@@ -1537,9 +1821,19 @@ async def handle_consumed(request: web.Request) -> web.Response:
     consumed_lane = (body or {}).get("lane") or None
     await _broadcast_json(
         state,
-        {"type": "consumed", "cursor": cursor, "pending": state.pending_turns()},
+        {"type": "consumed", "cursor": cursor, "pending": state.pending_turns(),
+         # The blue-tick half rides the same message as the boundary it qualifies (013 FR7,
+         # NFR2): one event moves both, so sending them separately would let the page paint a
+         # turn delivered and read at two different instants for one cause.
+         "read_through": dict(state.lane_read_through),
+         # PER-LANE READ CURSORS ride the same message as the boundary they qualify (015 FR1):
+         # one event moves both, so sending them apart would let the page paint a turn read at a
+         # different instant from the cursor that made it so.
+         "lane_consumed": dict(state.lane_consumed)},
     )
-    await _set_agent_state(state, agent_state, lane=consumed_lane)
+    # An agent reporting its OWN state names its own lane; `consumed_lane` is absent only on the
+    # legacy call shape that predates lanes, where there was exactly one reader and it was live.
+    await _set_agent_state(state, agent_state, consumed_lane or state.lanes.current)
     # THE ACKNOWLEDGEMENT, and it is the intent that earns it — not the arrival of the words, and
     # not the act of reading them. See `_will_respond`. An agent that reads a turn and signals it
     # is going back to listening (`state: "idle"`) makes no sound at all, which is the whole point:
@@ -1588,6 +1882,12 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
          "lane": state.lanes.current, "lanes": list(state.lanes.names),
          "broadcast": lanes_mod.BROADCAST,
          "lane_states": dict(state.lane_states),
+         # A page that reconnects must be able to tell "listening" from "working" immediately
+         # (015 FR2), not only after the next state change — a phone reconnects every time it
+         # locks, so that is the common case rather than the edge one.
+         "watching_lanes": sorted(state.watching_lanes),
+         "lane_consumed": dict(state.lane_consumed),
+         "default_lane": state.lanes.default,
          "waiting": {n: len(c) for n, c in state.lane_held.items() if c}}
     )
     # Deliver anything said while the phone was asleep, before any new audio arrives.
@@ -1647,7 +1947,12 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         # Playback finished, so the agent is no longer speaking. The client is the only party
         # that knows when a clip actually ended — the server only knows when it finished
         # sending — so the receipt is what closes the state machine back to idle.
-        await _set_agent_state(state, "idle")
+        #
+        # RELEASES THE LANE THAT WAS SPEAKING, not the one that is live now (016 FR3). A clip runs
+        # for seconds and he can switch during it; releasing `lanes.current` would leave the real
+        # speaker on `speaking` forever and reset an agent that never spoke.
+        await _set_agent_state(state, "idle", state.speaking_lane or state.lanes.current)
+        state.speaking_lane = None
     elif kind == "verbose":
         # Stored and republished, never acted on here — see TunnelState.verbose.
         state.verbose = bool(msg.get("value"))
@@ -1784,7 +2089,11 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
     # wanted. That conflation is the only mechanism found that can lose all nine of the clips
     # TC3 measured, and keeping the two stores apart is what stops it happening again.
     state.undelivered.clear()
-    await _set_agent_state(state, "idle")
+    # THE INTERRUPTED LANE IS THE ONE RELEASED (016 FR3). Barge-in stops the clip that is playing,
+    # so the agent returned to rest is the one whose clip it was — not whoever happens to be live,
+    # which after a summons-shaped interruption is frequently somebody else.
+    await _set_agent_state(state, "idle", state.speaking_lane or state.lanes.current)
+    state.speaking_lane = None
 
 
 async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventLoop) -> None:
@@ -1872,13 +2181,22 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     timing.stamp(state.session, "utterance_end", audio_s=round(t_end - t_start, 2))
     # Announce each stage. The user cannot see any of this from outside, and an unexplained
     # pause is the difference between "it's working" and "it's broken" to someone waiting.
-    await _set_agent_state(state, "transcribing")
+    #
+    # 🔴 THE OWNER OF THIS WHOLE FLOW, RESOLVED ONCE (spec 016 FR1, TC2). At this instant nobody
+    # knows which lane the utterance is for — that is precisely what ASR is about to reveal — so
+    # the stage opens against the lane that is live, which is the only honest answer available.
+    # What was wrong was re-asking the same question at the close: ASR returns "hey magnus", the
+    # gate moves the conversation, and the `idle` lands on magnus while atlas keeps `transcribing`
+    # forever. Reported 2026-08-25: *"if I am talking to you, I do see that the Atlas lane says
+    # transcribing."* Holding the name is the entire fix.
+    opener = state.lanes.current
+    await _set_agent_state(state, "transcribing", opener)
     # ASR is CPU-bound; keep it off the event loop or audio ingest stalls.
     text = await loop.run_in_executor(None, state.recognizer.transcribe, samples)
     timing.stamp(state.session, "transcribed", chars=len(text or ""))
     if not text:
         # No cue here: nothing was heard, and a sound would announce a turn that does not exist.
-        await _set_agent_state(state, "idle")
+        await _set_agent_state(state, "idle", opener)
         return  # silence or a hallucination artifact — never a turn (AC-1)
 
     # Session-relative audio time, not wall clock: it is monotonic, it matches the timestamps
@@ -2006,7 +2324,12 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # but on a phone in a pocket it does not. A quieter capture tick, distinct from the
     # acknowledgement, would buy the liveness signal back at the cost of a fifth sound in a
     # four-sound vocabulary. That is his call to make, and the spec flags it rather than assuming.
-    await _set_agent_state(state, "idle")
+    #
+    # CLOSED ON THE LANE THAT OPENED IT (016 FR1). If the gate moved the conversation while ASR
+    # ran, `opener` is the lane that was told `transcribing` and this is the only call that will
+    # ever release it. The incoming lane needs nothing here — its own agent reports `thinking`
+    # when it picks the turn up.
+    await _set_agent_state(state, "idle", opener)
 
 
 def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web.Application:

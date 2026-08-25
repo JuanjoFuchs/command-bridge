@@ -59,6 +59,20 @@ ERROR_CODES = {
     "invalid_input": "an argument was rejected. Exit 2.",
     "unknown_command": "no such command. Exit 2. When the name USED to be a command, `remedy` "
                        "carries the same invocation respelled with the one that replaced it.",
+    "unknown_lane": "a command named a lane that is not registered. Exit 2. `lane list` names "
+                    "every lane that exists; `lane add <name>` creates one.",
+    "no_lane": "`say` REFUSED because you did not name a lane and several agents share this "
+               "session. Exit 1. Nothing was synthesized. The tool cannot tell which agent you "
+               "are -- identity is per-invocation -- so it will not guess whose conversation your "
+               "audio belongs in. `lanes` lists the registered lanes and `live_lane` names the one "
+               "he is talking to; pass your own with `--lane`. A single-lane session never raises "
+               "this, because there is only one place the audio could go.",
+    "lane_exists": "`lane add` was refused. Exit 2. The name is already registered, is the "
+                   "reserved broadcast name, or is not a single lowercase word — a lane is "
+                   "matched as the ONE token after the greeting, so a space or a hyphen makes it "
+                   "unsayable. A name merely SIMILAR to another lane is NOT refused: only an "
+                   "exact name switches a lane, so similar names cannot mis-route. `lane add` "
+                   "reports confusability with ordinary speech in `note` and never enforces it.",
     # THE ONE FAILURE THAT IS NOT A MALFUNCTION. Everything above means something is broken or
     # mistyped; this one means the tool is working and is declining on purpose.
     config.UNREAD_REFUSAL_CODE: (
@@ -738,6 +752,14 @@ DESCRIBE: dict[str, Any] = {
                 "cursor": "int — resume from this. It is measured from where this call ACTUALLY "
                           "resumed, which is not always the `--since` you passed: see "
                           "`resumed_from`.",
+                "unanswered_s": "float | null — HOW LONG HE HAS BEEN WAITING FOR YOUR LANE TO SAY "
+                                "SOMETHING. **This is the fold loop's exit condition.** The rule "
+                                "above says fold returned turns in and wait again, which has no "
+                                "end while he keeps talking — every wait returns more, and he "
+                                "ends up asking why you went silent. Watch this number instead: "
+                                "it RISES while he talks and RESETS when your lane speaks, so "
+                                "when it is climbing, STOP FOLDING AND ANSWER. `null` means you "
+                                "owe him nothing right now.",
                 "since_requested": "int — the `--since` you passed. **PRESENT ONLY WHEN IT WAS "
                                    "LOWERED**, so its absence is the normal case and its presence "
                                    "is the tool telling you your cursor had run ahead of the "
@@ -1275,6 +1297,12 @@ DESCRIBE: dict[str, Any] = {
         "reason": "str — why: 'wake' | 'voice:<similarity>' | 'not-owner:<similarity>' (someone else spoke inside the conversation window) | 'not-addressed'",
         "final": "bool",
         "wall": "ISO-8601 local timestamp",
+        "lane": "str | null — the lane this turn was addressed to; the reserved broadcast name "
+                "for a broadcast, and null when the wake gate REFUSED to resolve one (an "
+                "ambiguous summons — `reason` then begins 'ambiguous:' and NO lane's watch "
+                "receives it). ABSENT MEANS THE DEFAULT LANE: every turn logged before lanes "
+                "existed keeps routing to the lane this server was started as, so "
+                "`watch --lane <default>` still returns them and no other lane ever does.",
     },
     "exit_codes": EXIT_CODES,
     "errors": ERROR_SHAPE,
@@ -1730,11 +1758,16 @@ STEP 0 - CHECK BEFORE ACTING. Run `voice-tunnel status --session {session}`.
     silently if there is one, and otherwise continue.
   * `watch_open` is FALSE -> continue.
 
-STEP 1 - CURSOR. From that same status output, take the LOWER of `consumed_cursor` and
-`last_turn_id`. They are usually equal; when they are not, `consumed_cursor` is smaller because
-turns arrived while you were busy and nobody has read them. Starting from `last_turn_id` would
-skip exactly those - the ones he said while waiting on you, which are the ones he most wants
-answered.
+STEP 1 - CURSOR. From that same status output, take the LOWER of your read cursor and
+`last_turn_id`. They are usually equal; when they are not, your cursor is smaller because turns
+arrived while you were busy and nobody has read them. Starting from `last_turn_id` would skip
+exactly those - the ones he said while waiting on you, which are the ones he most wants answered.
+
+YOUR read cursor is `lane_consumed[<your lane>]` whenever that key exists. Fall back to
+`consumed_cursor` only when it does not. `consumed_cursor` is ONE number for the whole session and
+EVERY lane's watch overwrites it, so on a multi-agent session it is somebody else's progress: seen
+live at 2604 while the lane reading it had only reached 2589, which would have skipped fifteen
+turns with the unread count reading zero the whole way.
 
 NEVER use `turns_logged`: that counts turns the server has written since IT started, so after a
 restart it is far too low and replays the whole log as if it had just been spoken.
@@ -2147,6 +2180,19 @@ def _watch_payload(args, reason: str, turns: list, cursor: int, rounds: int, sta
     }
     if isinstance(live, dict) and live.get("speech_pending") is not None:
         out["speech_pending"] = live["speech_pending"]
+    # HOW LONG HE HAS BEEN WAITING FOR THIS LANE (spec 013 FR8) — the fold loop's bound.
+    #
+    # `watch` says "if it hands back turns, fold them in and wait again", which has no exit while
+    # he is still talking: every wait returns turns and the agent never reaches the `say`. Caught
+    # live 2026-08-24 after he had to say "respond" twice: *"you get blocked in watch instead of
+    # responding."* This is the number that ends it — it rises while he talks and resets when this
+    # lane answers, so an agent can stop folding and speak on evidence rather than on nerve.
+    #
+    # Absent when he is owed nothing, which is the common case; `None` is published explicitly so
+    # a caller can tell "nothing owed" from "this server is too old to know".
+    if isinstance(live, dict) and isinstance(live.get("lane_unanswered"), dict):
+        who = getattr(args, "lane", None) or live.get("default_lane")
+        out["unanswered_s"] = live["lane_unanswered"].get(who)
     # AN UNKNOWABLE ANSWER IS SAID OUT LOUD. `finished` against a server that publishes neither
     # speech signal rests on empty polls alone — the weaker evidence this command exists because
     # it is not enough — and the caller has no other way to tell.
