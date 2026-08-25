@@ -167,13 +167,16 @@ def per_lane_read(page):
 
 
 def working_not_idle(page):
-    """015 FR2 — a background agent heads-down must not read as idle."""
+    """018 — his correction to 015 FR2: idle is the one state we CAN see, not the label for
+    everything unknown. In a watch and live is listening; in a watch and not live is idle, because
+    it is waiting for him; anything else is thinking, because from out here being between calls is
+    work. No history involved, which is what 015's version got wrong."""
     return [
         (lambda: _probe(page, "() => [...document.querySelectorAll('#orbs .laneorb')]"
                               ".map(b => b.dataset.lane + ':' +"
                               " b.querySelector('.stat').textContent.trim()).join(',')"),
-         "claude:listening,codex:working,atlas:idle",
-         "listening, working and idle are three different things"),
+         "claude:listening,codex:thinking,atlas:idle",
+         "listening, thinking and idle, decided by the watch and the live lane alone"),
     ]
 
 
@@ -205,8 +208,12 @@ SCENARIOS = {
         per_lane_read,
     ),
     "working": (
+        # claude is live AND watching -> listening. atlas is watching but NOT live -> idle, because
+        # it is parked waiting for him. codex is in no watch at all -> thinking, whatever it has or
+        # has not read. The `consumed` map is left in deliberately: under 015's rule it decided the
+        # answer, and under 018's it must not.
         [ready(lanes=("claude", "codex", "atlas"), live="claude"),
-         agent_state("codex", "idle", watching=["claude"],
+         agent_state("codex", "idle", watching=["claude", "atlas"],
                      consumed={"claude": 3, "codex": 9})],
         working_not_idle,
     ),

@@ -307,11 +307,36 @@
     font-family:var(--mono); font-size:.6rem; font-weight:700;
     box-shadow:0 0 12px color-mix(in srgb,var(--lane-c) 40%,transparent);
   }
+  /* BIG ENOUGH TO RECOGNISE WITHOUT READING. *"I also want the agent names beneath the orbs
+     bigger so that it's easier for me to recognize them."* (2026-08-25) Sized off the disc like
+     the words inside it, so a two-lane row gets a bigger name than a four-lane one instead of
+     every row sharing a number picked for the tightest case. */
   .laneorb .nm {
-    font-family:var(--mono); font-size:.55rem; letter-spacing:.12em; text-transform:uppercase;
-    color:var(--lane-c); opacity:.6;
+    font-family:var(--mono);
+    font-size:clamp(.6rem, 8cqw, .92rem);
+    letter-spacing:.1em; text-transform:uppercase; font-weight:600;
+    color:var(--lane-c); opacity:.55;
   }
+  /* 🔴 WHICH ONE AM I TALKING TO — answered by CONTRAST, not by a detail.
+     *"I want you to make the selected lane orb obvious that it's selected."*
+     The ring, the glow and the pulse all said "live" already and all of them are edge treatments
+     on a dark circle, which is exactly what a glance from across the room cannot resolve. So the
+     signal moves to the loudest channel available: everything that is NOT live steps back.
+     ⚠ Fading the others rather than brightening the live one keeps the live orb's own colours
+     honest — its ring is still its identity hue at full strength, which is FR5's whole point. */
   .laneorb.live .nm { opacity:1; }
+  /* ⚠ **NOT OPACITY ON THE ORB.** That was the first attempt and the shot showed why: the disc is
+     a DARK lens on a LIGHT ground, so fading it moves it toward the background and the two
+     background lanes came out as pale grey circles — a different object, not a quieter one.
+     SIZE is the channel that survives both themes, because it does not touch the palette at all.
+     The live orb keeps its full diameter, its identity ring, its glow and its pulse; the others
+     step back and desaturate slightly while staying the same dark lens. */
+  #orbs[data-multi="true"] .laneorb:not(.live) .disc {
+    transform:scale(.86); filter:saturate(.6);
+  }
+  #orbs[data-multi="true"] .laneorb:not(.live) .nm { opacity:.45; }
+  .laneorb .disc { transition:transform .18s ease, box-shadow .18s ease, filter .18s ease; }
+  .laneorb .nm   { transition:opacity .18s ease; }
   /* The session being off is a fact about the SESSION, so it is said once, on every orb, rather
      than by each of them inventing a state. */
   #orbs[data-off="true"] .disc { filter:grayscale(1) brightness(.75); }
@@ -826,6 +851,9 @@
     display:grid; grid-template-columns:minmax(3.5rem,max-content) minmax(0,1fr);
     gap:.7rem; align-items:baseline;
     padding:.55rem .95rem;
+    /* The containing block for the read bar, which is absolutely positioned against the row's own
+       left edge rather than trailing the words. See `.row .tick` below. */
+    position:relative;
     font-size:.92rem;
     color:var(--dim);            /* heard, but not addressed to anyone: ambient */
     overflow-wrap:anywhere;
@@ -845,20 +873,42 @@
   }
   .row.addressed          { color:var(--fg); }
   .row.addressed .tag     { color:var(--warm); }
+  /* HALF WARM, HALF THE LANE'S OWN HUE. "you" has meant warm on this page since long before lanes
+     existed and keeps it; the name after the arrow takes the colour that names that agent
+     everywhere else, so a glance at the left edge answers "who did I just talk to" without
+     reading. The dot keeps `currentColor` from `.tag`, so it stays warm — it marks the speaker,
+     and the speaker is him. Falls back to warm when there is no hue: a solo session has no arrow,
+     and `everyone` deliberately has no single colour to claim. */
+  .row .tag .who.sep      { color:var(--faint); }
+  .row .tag .who.lane     { color:var(--row-c, var(--warm)); }
   /* THE RECEIPT (spec 013 FR7). WhatsApp's SEMANTICS, this page's palette — he asked for
      "something similar, but respecting this design", so the states are carried by the same
      warm/cool tokens everything else uses rather than by WhatsApp's blue. Small, trailing, and
      dim until it means something: one tick is the resting state and must not draw the eye. */
+  /* 🔴 A BAR DOWN THE EDGE, NOT A CHECK MARK. *"the read check is not that obvious. It's hard for
+     me to distinguish from far apart if it's gray or if it's blue. I wonder if there's a better
+     way to show these states."* (2026-08-25)
+     He is right about the channel. The two states differed only in HUE on a glyph a few pixels
+     across, and hue is the first thing distance takes away — so the signal moves to SHAPE and
+     AREA: a bar the full height of the row, absent until read and then the lane's own colour.
+     ⚠ **The element and its `data-state` are unchanged**, so `receiptView` still decides and the
+     harness still reads the same two states. Only what the state LOOKS like moved; the glyph is
+     hidden with `font-size:0` rather than removed, because the painter writes text into it and a
+     second author for that decision is how two descriptions start disagreeing. */
   .row .tick {
-    margin-left:.5em; font-size:.78em; letter-spacing:-.08em; vertical-align:.08em;
-    opacity:.45; color:var(--fg);
+    position:absolute; left:0; top:.3rem; bottom:.3rem; width:3px;
+    margin:0; font-size:0; border-radius:0 3px 3px 0;
+    background:transparent;
+    transition:background .18s ease;
   }
   /* ONE tick, and the COLOUR is the whole signal (013 FR7, ruled 2026-08-24). He cut the three
      states to two himself, from the sharper observation: *"as soon as one of my terms enters your
      context window, that's read by you"* — delivered and read are the same instant here, so a
      second tick was drawing a distinction that does not exist. What is left is honest: grey means
      no agent has taken it, blue means it is in one's context. */
-  .row .tick[data-state="read"]      { opacity:1; color:var(--cool); }
+  /* Read: the lane's own hue, so the bar answers WHO read it as well as whether anyone did.
+     Falls back to the cool token in a solo session, where there is no lane hue to use. */
+  .row .tick[data-state="read"] { background:var(--row-c, var(--cool)); }
   .row.claude             { color:color-mix(in srgb, var(--fg) 86%, var(--cool)); }
   .row.claude .tag        { color:var(--cool); }
   /* PER-LANE HUE IN THE TRANSCRIPT (spec 014 FR8). His reason for wanting colours at all was as
@@ -1123,6 +1173,17 @@
   // on the move 2026-07-31: "those two play together, overlapping one on top of the other."
   const clipQueue = [];
   let draining = false;
+  // 🔴 WHOSE CLIP IS IN THE AIR, so the raised hand can count down instead of vanishing.
+  //
+  // JJ, 2026-08-25: *"as soon as I switch to that agent, I only get served one turn... I see the
+  // hand disappear, even though I'm only served one turn. And once that one finishes playing, I
+  // get served the next turn and so on. So I was thinking the count should decrease accordingly."*
+  //
+  // The cause is that the queue MOVES on a lane switch. The server flushes every held clip at
+  // once and broadcasts `waiting: 0`, which is true of the SERVER — from that instant the backlog
+  // lives here, in `clipQueue`, and only this page knows how much of it is left. So the count the
+  // hand shows is the server's number plus what is still queued or playing locally.
+  let playingLane = null;
   let muted = false, verbose = false;
   // THE ORB MODEL. Every one of these is a separate fact, and the orb is a pure function of all
   // of them (see orbView). They used to be written straight to the DOM from four different
@@ -1318,7 +1379,31 @@
     if (lane) d.dataset.lane = lane;
     if (id !== undefined) d.dataset.id = String(id);
     const s = document.createElement("span");
-    s.className = "tag"; s.textContent = tag;
+    s.className = "tag";
+    // 🔴 TWO COLOURS IN ONE TAG. *"I would like the agent name to follow the agent colour as well,
+    // so that it's the you in orange and then the agent in that colour so that I can easily see
+    // from afar who I have addressed."* (2026-08-25)
+    //
+    // `you → kepler` was painted entirely warm, so at a glance every one of his rows looked the
+    // same and the only way to tell who he had addressed was to read the word. Splitting it means
+    // the hue does the work the hue was introduced for.
+    //
+    // ⚠ **The separator is `tagView`'s to define, and this splits on it rather than re-deriving
+    // the parts** — two functions building the same string from the same inputs is how they start
+    // disagreeing. `textContent` still reads as the whole tag, which is what the harnesses and the
+    // accessibility tree see.
+    const ARROW = " → ";
+    const at = tag.indexOf(ARROW);
+    if (at < 0) {
+      s.textContent = tag;
+    } else {
+      const mk = (cls, txt) => {
+        const el = document.createElement("span");
+        el.className = "who " + cls; el.textContent = txt; return el;
+      };
+      s.append(mk("you", tag.slice(0, at)), mk("sep", ARROW),
+               mk("lane", tag.slice(at + ARROW.length)));
+    }
     const t = document.createElement("span");
     // Named so the receipt can be appended INSIDE the text cell. It used to go on the row itself,
     // which is a two-column grid — a third child lands in an implicit cell of its own rather than
@@ -1753,11 +1838,26 @@
       delete laneBusySince[name];
     }
   }
+  // 🔴 THE DECIMAL IS BACK. *"the seconds counter inside of the orbs — you have removed the
+  // decimals. I think we should re-add the decimals."* (2026-08-25)
+  //
+  // ⚠ **One decimal, not two or three**, and the reason is the repaint rather than the arithmetic:
+  // a digit that never changes is worse than no digit, so every place shown has to be redrawn at
+  // its own rate. One decimal means ten repaints a second, which is the same budget the orb's
+  // level ring already spends. Two would mean a hundred and three a thousand, for digits nobody
+  // can read as they pass.
+  //
+  // Past a minute the tenths are dropped: at that scale the number is answering "is this stuck",
+  // not "how fast was that", and `1m07` reads faster than `1m07.4`.
   function laneElapsed(name) {
     const since = laneBusySince[name];
     if (!since) return "";
-    const s = Math.floor((Date.now() - since) / 1000);
-    return s < 1 ? "" : (s < 60 ? s + "s" : Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0"));
+    const ms = Date.now() - since;
+    if (ms < 100) return "";
+    const s = ms / 1000;
+    if (s < 60) return s.toFixed(1) + "s";
+    const whole = Math.floor(s);
+    return Math.floor(whole / 60) + "m" + String(whole % 60).padStart(2, "0");
   }
 
   const LANE_HUES = ["#3559bd", "#0f7a63", "#8a3fa8", "#a8501f", "#1f6f8a", "#7a2f4f"];
@@ -1785,18 +1885,30 @@
         // fire for the live lane; a background agent heads-down in a long task reports nothing, so
         // it read exactly like one sitting doing nothing.
         //
-        // 🎯 **The fact the server already has is whether the lane is WAITING.** A lane sitting in
-        // `watch` is listening; a lane that has read turns and is NOT in a watch is between the
-        // two, which is the definition of working. A lookup over `watching_lanes` — no inference
-        // about content, so it stays on the dumb side of the line.
+        // 🔴 **AND THE FIRST FIX STILL OVERCLAIMED, IN THE OTHER DIRECTION.** It separated
+        // "working" from "idle" by whether the lane had ever read anything — which is history, not
+        // state, and it left "idle" meaning an agent we simply could not see.
         //
-        // ⚠ A lane that has never read anything stays "idle": it has not started, and calling that
-        // "working" would be the same overclaim pointing the other way.
-        let state = (m.states && m.states[name]) || "idle";
-        if (state === "idle") {
+        // JJ, 2026-08-25, correcting it: *"an agent that is not listening is an agent that is
+        // thinking, right? We don't have a way to determine if an agent is idle or not, so we
+        // shouldn't claim it. The only reason we show idle is if an agent is listening... but it's
+        // not the agent I am focused on. That means that it's waiting for me. That means that it's
+        // idle."*
+        //
+        // 🎯 **His rule needs no history at all — two facts the server already publishes:**
+        //
+        //     in a watch  AND live      -> listening   (it is hearing him right now)
+        //     in a watch  AND not live  -> idle        (it is waiting for him, which IS idle)
+        //     not in a watch            -> thinking    (it is doing something; we cannot see what)
+        //
+        // **"Idle" is now the ONE state we can actually observe** — a lane parked in a wait that he
+        // is not talking to — rather than the label for everything unknown. And an agent that has
+        // gone quiet without a watch is called thinking, because from out here that is the only
+        // honest reading: it is between calls, and being between calls is work.
+        let state = (m.states && m.states[name]) || "";
+        if (!state || state === "idle") {
           const watching = (m.watching || []).includes(name);
-          const seen = m.consumed && m.consumed[name] !== undefined;
-          state = watching ? "listening" : (seen ? "working" : "idle");
+          state = watching ? (name === m.live ? "listening" : "idle") : "thinking";
         }
         const waiting = (m.waiting && m.waiting[name]) || 0;
         const live = name === m.live;
@@ -1825,8 +1937,19 @@
     // Stamp the busy clocks BEFORE building the view, so a state that just changed is timed from
     // the moment it changed rather than from the next repaint.
     lanes.forEach((n) => noteLaneBusy(n, laneStates[n] || "idle"));
+    // THE SERVER'S BACKLOG PLUS THIS PAGE'S. The two never overlap: the server broadcasts
+    // `waiting: 0` for a lane at the instant it hands the whole queue over, and from then on the
+    // remainder is local. Summing them is what makes the hand count DOWN as each clip plays
+    // instead of vanishing on the first one.
+    const waiting = {};
+    lanes.forEach((n) => {
+      const local = clipQueue.filter((c) => (c.header.lane || defaultLane) === n).length
+                    + (playingLane === n ? 1 : 0);
+      const total = (laneWaiting[n] || 0) + local;
+      if (total) waiting[n] = total;
+    });
     const view = laneOrbsView({
-      lanes, live: liveLane, waiting: laneWaiting, states: laneStates,
+      lanes, live: liveLane, waiting, states: laneStates,
       // The two facts that separate "listening" from "working" from "never started".
       watching: watchingLanes, consumed: laneConsumed,
       sessionOff: !(running && channelOpen),
@@ -1839,6 +1962,9 @@
       // so two lanes get a bigger orb than three. Published rather than inferred, the same rule
       // the rest of this file follows: a stylesheet cannot count its own elements.
       $orbs.style.setProperty("--n", String(view.rows.length || 1));
+      // The step-back above only makes sense when there is something to step back FROM. Said once
+      // on the row rather than by each orb deciding, the same rule `data-off` already follows.
+      $orbs.dataset.multi = String(view.rows.length > 1);
       $orbs.replaceChildren(...(view.shown ? view.rows.map((row) => {
         const b = document.createElement("button");
         b.type = "button";
@@ -2730,10 +2856,18 @@
       // reply. `start()` drains again as soon as the new context exists.
       while (clipQueue.length && ctx) {
         const { header, buf } = clipQueue.shift();
+        // The hand counts what is LEFT, so it has to be repainted as each clip leaves the queue
+        // and again when the last one stops — not once when the queue arrives.
+        playingLane = header.lane || defaultLane;
+        applyLaneOrbs();
         await playClip(header, buf);
+        playingLane = null;
+        applyLaneOrbs();
       }
     } finally {
       draining = false;
+      playingLane = null;
+      applyLaneOrbs();
     }
   }
 
@@ -3409,11 +3543,16 @@
   $orbs.addEventListener("click", tapLaneOrb);
 
   // The seconds have to ADVANCE, and nothing else repaints the row between state changes — which
-  // is precisely the window the number exists to fill. One second is the resolution shown, so one
-  // second is the tick; it does nothing at all when no lane is busy, which is most of the time.
+  // is precisely the window the number exists to fill.
+  //
+  // ⚠ **THE TICK IS THE RESOLUTION SHOWN, and when the decimal came back the tick had to follow.**
+  // It was one second against a whole-second reading; a tenth is now displayed, so a one-second
+  // tick would show a tenths digit that jumped by ten every time — visibly wrong in a way the old
+  // pairing never was. It still does nothing at all when no lane is busy, which is most of the
+  // time, so the extra rate is paid only while there is something to watch.
   setInterval(() => {
     if (Object.keys(laneBusySince).length) applyLaneOrbs();
-  }, 1000);
+  }, 100);
   $orb.addEventListener("click", () => { if (!running) orbTapped(); });
 
   // Connect on load, before any tap. The socket needs no permission and no gesture — only the

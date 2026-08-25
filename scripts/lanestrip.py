@@ -408,30 +408,46 @@ with sync_playwright() as pw:
         # Whenever you're not listening and whenever you're doing something, you're thinking."*
         #
         # `lane_states` holds only what an agent REPORTED, and an agent deep in a long task reports
-        # nothing — so it rendered identically to one sitting doing nothing. The separating fact is
-        # whether the lane is sitting in a `watch`, which the server already tracks and now sends.
-        note("015 FR2: listening, working and idle are three different things")
+        # nothing — so it rendered identically to one sitting doing nothing.
+        #
+        # 🔴 **AND SPEC 015's ANSWER OVERCLAIMED IN THE OTHER DIRECTION**, which he corrected on
+        # 2026-08-25: it split "working" from "idle" by whether the lane had ever read anything —
+        # history, not state — leaving "idle" as the label for an agent nobody could see.
+        #
+        # *"an agent that is not listening is an agent that is thinking, right? We don't have a way
+        # to determine if an agent is idle or not, so we shouldn't claim it. The only reason we
+        # show idle is if an agent is listening... but it's not the agent I am focused on. That
+        # means that it's waiting for me. That means that it's idle."*
+        #
+        # 🎯 His rule uses two facts and no history, and it is what these cases now pin:
+        #     in a watch AND live -> listening · in a watch AND not live -> idle · otherwise
+        #     thinking. `consumed` is passed here only to prove it no longer changes the answer.
+        note("018: listening, idle and thinking, decided without any history")
         orb_state = page.evaluate("""() => {
           const v = window.__voiceTunnel.laneOrbsView;
           const base = { lanes: ['claude', 'codex', 'atlas'], live: 'claude', waiting: {},
                          states: {} };
           const pick = (view, n) => view.rows.find((r) => r.name === n).status;
-          const view = v({ ...base, watching: ['claude'], consumed: { claude: 5, codex: 9 } });
+          const view = v({ ...base, watching: ['claude', 'atlas'],
+                           consumed: { claude: 5, codex: 9 } });
           return {
-            watching: pick(view, 'claude'),   // in a wait -> listening
-            headsDown: pick(view, 'codex'),   // has read, not waiting -> working
-            neverSeen: pick(view, 'atlas'),   // never read anything -> genuinely idle
+            liveWatching: pick(view, 'claude'),  // in a wait AND live -> listening
+            headsDown: pick(view, 'codex'),      // not in a wait -> thinking, whatever it has read
+            parked: pick(view, 'atlas'),         // in a wait, not live -> waiting for him -> idle
+            neverSeen: pick(v({ ...base, watching: [], consumed: {} }), 'atlas'),
             reported: pick(v({ ...base, watching: [], consumed: { codex: 9 },
                                states: { codex: 'speaking' } }), 'codex'),
           };
         }""")
-        check(orb_state["watching"] == "listening",
-              "a lane sitting in a watch reads as listening", f"{orb_state}")
-        check(orb_state["headsDown"] == "working",
-              "015 FR2: a lane that has read and is NOT waiting reads as working, not idle",
+        check(orb_state["liveWatching"] == "listening",
+              "the lane he is talking to, sitting in a watch, reads as listening", f"{orb_state}")
+        check(orb_state["headsDown"] == "thinking",
+              "018: a lane NOT in a watch reads as thinking — never idle, which we cannot see",
               f"{orb_state}")
-        check(orb_state["neverSeen"] == "idle",
-              "and a lane that never started is still idle — no overclaim the other way")
+        check(orb_state["parked"] == "idle",
+              "018: a lane parked in a watch he is NOT talking to is idle — it waits for him")
+        check(orb_state["neverSeen"] == "thinking",
+              "and history no longer decides: a lane that has read nothing is judged the same way")
         check(orb_state["reported"] == "speaking",
               "a state the agent actually reported always wins over the derived one")
 
