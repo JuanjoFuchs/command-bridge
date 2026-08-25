@@ -146,16 +146,25 @@ MEASURE = """() => {
     spkTouchHeight: pill('spkpick', 'spk'),
     muteTouchHeight: Math.round(ub.height),
     pillsShown: wraps.filter((id) => !document.getElementById(id).hidden).length,
-    laneStripShown: !document.getElementById('lanes').hidden,
-    laneChips: document.querySelectorAll('#lanes button').length,
+    // 🔴 THE PER-AGENT CONTROL MOVED FROM THE CHIP STRIP TO THE ORB ROW (spec 014 FR4), so this
+    // measures `#orbs` where it used to measure `#lanes`.
+    //
+    // ⚠ The REQUIREMENT is unchanged and so is every assertion below — at two or more agents there
+    // must be a visible, tappable control per lane, one row where the viewport allows, 44px
+    // minimum. What changed is which element carries it, because he asked for the badges to become
+    // orbs. The strip is hidden whenever the row is shown, so leaving this pointed at `#lanes`
+    // would have reported a clean sweep against nothing on screen — the exact vacuity the
+    // `wantLanes` guard exists to catch, and it did catch it: 10 red the moment the row shipped.
+    laneStripShown: !document.getElementById('orbs').hidden,
+    laneChips: document.querySelectorAll('#orbs button').length,
     laneTouchHeight: (() => {
-      const b = document.querySelector('#lanes button');
+      const b = document.querySelector('#orbs button');
       return b ? Math.round(b.getBoundingClientRect().height) : 0;
     })(),
     // Does the row stay ONE row? Wrapping is allowed and costs height; reporting it means a
     // silent second line shows up as a number rather than as a mystery inside the overflow check.
     laneRows: (() => {
-      const tops = new Set(Array.from(document.querySelectorAll('#lanes button'))
+      const tops = new Set(Array.from(document.querySelectorAll('#orbs button'))
                                 .map((b) => Math.round(b.getBoundingClientRect().top)));
       return tops.size;
     })(),

@@ -130,7 +130,7 @@
   /* Rows are assigned explicitly rather than by source order, so hiding the wordmark in
      landscape (or an element appearing later) cannot shuffle the stage and the transcript
      up a row — which is exactly what dropped the log into the middle of the page. */
-  h1       { grid-row:1; }
+  #head    { grid-row:1; }
   #stage   { grid-row:2; }
   #collapse{ grid-row:3; }
   #log     { grid-row:4; }
@@ -147,6 +147,43 @@
      the minute the rule existed. */
   body:has(#log:empty):not(:has(#log[hidden])) #collapse { display:none; }
 
+  /* --- header row: title left, controls right (spec 014 FR1) -------------- */
+  #head {
+    display:flex; align-items:center; gap:.55rem; width:100%;
+  }
+  #head #headctl { margin-left:auto; display:flex; align-items:center; gap:.4rem; min-width:0; }
+
+  /* THE CLUSTER RULES WERE WRITTEN FOR A ROW UNDER THE ORB, and they do the wrong thing in a
+     header. `width:min(100%,24rem)` and the `.split` widening exist to keep the controls reading
+     as one GROUP centred beneath the orb; beside a title they just take space the title also
+     wants, and `flex-wrap:wrap` then drops the toggles onto a second line — which is exactly what
+     `scripts/layout.py` caught at 360px, 24 cases red on `switchesSameRow`.
+     Scoped to `#head` so the original reasoning stays intact wherever it still applies. */
+  #head #controls { width:auto; max-width:none; margin-top:0; flex-wrap:nowrap; }
+  /* The title yields first. A wordmark that truncates costs nothing; a control that wraps costs a
+     row of phone screen, which is the thing this whole spec is buying back. */
+  #head h1 { min-width:0; overflow:hidden; }
+
+  /* THE POWER BUTTON — the ONLY control that starts or stops the session (FR2, TC1).
+     ⚠ TC2: a browser will not open a microphone without a user gesture, and a bare power glyph
+     does not say "tap me first" the way the orb's "Tap to start" did. So while the session is
+     off it is deliberately loud — full colour, a soft halo — and it goes quiet once running. */
+  #power {
+    display:inline-grid; place-items:center;
+    width:44px; height:44px; padding:0; flex:0 0 44px;
+    border:1px solid var(--edge-2); border-radius:12px;
+    background:transparent; color:var(--faint); cursor:pointer;
+    transition:color .2s ease, border-color .2s ease, box-shadow .2s ease;
+  }
+  #power svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8;
+               stroke-linecap:round; stroke-linejoin:round; }
+  #power[aria-pressed="false"] {
+    color:var(--warm); border-color:var(--warm);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--warm) 14%,transparent);
+  }
+  #power[aria-pressed="true"] { color:var(--cool);
+    border-color:color-mix(in srgb,var(--cool) 45%,transparent); box-shadow:none; }
+
   /* --- wordmark ---------------------------------------------------------- */
   h1 {
     margin:0; font-family:var(--mono);
@@ -154,6 +191,130 @@
     letter-spacing:.44em; text-indent:.44em;   /* indent cancels the trailing track */
     text-transform:uppercase; color:var(--faint);
   }
+
+  /* --- one orb per agent (spec 014 FR4-FR7) ------------------------------- */
+  /* NEVER WRAPS. Orbs that wrap to a second line cost the transcript a whole row, and the first
+     attempt at "make them bigger" did exactly that on a 412px phone: three 126px discs computed
+     from the VIEWPORT did not fit the row once the stage's own padding was taken out, so the
+     third dropped underneath and the orb band went from 166px to 358px. Shrinking is the right
+     answer at high lane counts; wrapping never is. */
+  #orbs {
+    display:flex; align-items:flex-start; justify-content:center;
+    gap:.55rem; width:100%; flex-wrap:nowrap;
+    /* Room for the two things that live OUTSIDE a disc's box: the live lane's 26px glow and the
+       raised hand at `right:-5px`. Without it the first orb's ring and the last orb's badge are
+       clipped by the screen edge — which the width arithmetic cannot see, because both are drawn
+       past the element they belong to. */
+    padding:0 .8rem;
+  }
+  #orbs[hidden] { display:none; }
+  /* `flex:1 1 0` gives every lane an EQUAL SHARE OF THE REAL ROW — which is the number the disc
+     below needs and the one no viewport arithmetic can guess, because it is the row's width after
+     the stage's padding and the gaps have already been taken out. */
+  .laneorb {
+    flex:1 1 0; min-width:0; padding:0; border:0; background:transparent; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:.35rem;
+  }
+  .laneorb .disc {
+    position:relative;
+    /* SIZED OFF WHICHEVER AXIS IS SCARCE, not off width alone. `clamp(74px,22vw,104px)` reads
+       fine in portrait and is a disaster in landscape: at 915x412 it takes 22vw of a wide screen
+       and leaves the transcript 12px tall. The layout sweep still reported ALL PASS, because it
+       asserts touch targets and overflow and does not assert a floor on the log — a reminder that
+       a green harness is a set of specific claims, not a verdict on the design. */
+    /* 🔴 AS BIG AS THE ROW ACTUALLY ALLOWS, rather than a fixed fraction of the viewport.
+       JJ, 2026-08-25: *"maybe we should make sure that we try to reach the height available,
+       the same height we use on the solo one."* The old `min(22vw,15vh)` gave 91px on his phone
+       against a 189px solo orb — it was sized as if the row always held three, so two lanes got
+       the same small disc as three and the spare width went to nothing.
+
+       `100%` is this lane's share of the row, handed over by `flex:1 1 0` above — measured, not
+       computed from `100vw`, which overstates it by the stage's padding and is what made the
+       first attempt wrap.
+       ⚠ The `dvh` term is what keeps landscape honest: 915x412 once left the transcript 12px tall
+       because only the width was considered.
+       190px matches the solo orb (74% of `min(62vw,40dvh,300px)`), so two lanes on a phone land
+       on the same disc the single orb had — which is the size he asked to reach. */
+    width:min(100%, 32dvh, 190px); aspect-ratio:1; height:auto;
+    /* The words inside scale with the circle, and `cqw` is the only unit that can say that
+       without a second copy of the sizing arithmetic drifting out of step with the first. */
+    container-type:inline-size;
+    border-radius:50%;
+    background:radial-gradient(circle at 38% 32%, #2a3340, #12161c 70%);
+    /* IDENTITY AT ALL TIMES: the ring is the lane's hue whether it is live or not. Being live
+       changes the ring's WEIGHT and adds the pulse — never its colour, which is the whole of
+       FR5. */
+    border:1px solid color-mix(in srgb, var(--lane-c) 55%, var(--edge-2));
+    display:grid; place-items:center; transition:transform .18s ease, box-shadow .18s ease;
+  }
+  /* 🔴 `place-content`, NOT `place-items` — this is the bug he described, and the two properties
+     are one word apart.
+     JJ, 2026-08-25: *"since we have added the seconds counter below the statuses, the status is
+     shown too high above and the seconds are too far below in the orb. They're not centered at
+     the middle."*
+     `place-items:center` above centres each item INSIDE ITS OWN ROW. A grid's row tracks default
+     to `align-content:stretch`, so with two children the disc splits into two half-height rows —
+     the word centres in the top half, the seconds in the bottom half, and the pair straddles the
+     middle instead of sitting on it. With ONE child the single stretched row fills the disc and
+     everything looks right, which is exactly why this appeared the day the timer did. */
+  .laneorb .disc { grid-auto-flow:row; gap:.1rem; place-content:center; }
+  /* SIZED OFF THE DISC, so a bigger orb gets bigger words. Both were pinned in rem and stayed
+     ~8px however large the circle grew: *"they're too small, barely readable."* */
+  .laneorb .stat {
+    font-family:var(--mono);
+    font-size:clamp(.5rem, 10.5cqw, .74rem);
+    letter-spacing:.07em; line-height:1.25;
+    color:#9aa4b0; text-align:center; padding:0 .5rem;
+  }
+  /* THE SECONDS, UNDER THE WORD (reported 2026-08-24: the timer vanished with the single orb).
+     Tabular figures so a growing number does not make the orb twitch. */
+  .laneorb .lanetimer {
+    font-family:var(--mono);
+    font-size:clamp(.48rem, 9.2cqw, .68rem);
+    font-variant-numeric:tabular-nums;
+    letter-spacing:.04em; color:color-mix(in srgb, var(--lane-c) 70%, #cfd6de);
+  }
+  .laneorb.live .disc {
+    border-color:var(--lane-c);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--lane-c) 22%,transparent),
+               0 0 26px color-mix(in srgb,var(--lane-c) 42%,transparent);
+  }
+  .laneorb.live .stat { color:color-mix(in srgb, var(--lane-c) 65%, #e8edf3); }
+  /* 🔴 THE PULSE FOLLOWS THE LIVE LANE, and it is driven by `--level` — the SAME live audio level
+     the single orb's ring and aura already scale from, not a decorative animation. He asked for
+     exactly this: *"if I am addressing the Atlas agent, whenever I speak, that's the orb that will
+     pulse with my speech."* Reusing the real signal is what makes it his voice rather than a timer
+     that merely looks busy, and it is why only the LIVE orb moves: `--level` is one microphone. */
+  .laneorb.live .disc {
+    transform:scale(calc(1 + var(--level) * .085));
+    transition:transform .1s linear, box-shadow .18s ease;
+  }
+  .laneorb.live .disc::after {
+    content:""; position:absolute; inset:-6px; border-radius:50%;
+    border:1px solid var(--lane-c); pointer-events:none;
+    transform:scale(calc(1 + var(--level) * .22));
+    opacity:calc(.16 + var(--level) * .7);
+    transition:transform .1s linear, opacity .1s linear;
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .laneorb.live .disc, .laneorb.live .disc::after { transform:none; }
+  }
+  .laneorb .hand {
+    position:absolute; top:-3px; right:-5px;
+    min-width:26px; height:26px; padding:0 .3rem; border-radius:13px;
+    background:var(--bg-deep); border:1px solid var(--lane-c); color:var(--lane-c);
+    display:inline-flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-size:.6rem; font-weight:700;
+    box-shadow:0 0 12px color-mix(in srgb,var(--lane-c) 40%,transparent);
+  }
+  .laneorb .nm {
+    font-family:var(--mono); font-size:.55rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--lane-c); opacity:.6;
+  }
+  .laneorb.live .nm { opacity:1; }
+  /* The session being off is a fact about the SESSION, so it is said once, on every orb, rather
+     than by each of them inventing a state. */
+  #orbs[data-off="true"] .disc { filter:grayscale(1) brightness(.75); }
 
   /* --- stage ------------------------------------------------------------- */
   #stage {
@@ -169,6 +330,13 @@
      the scale) → .bezel (a fixed graduated scale to read it against) → .aura (the room
      light).  #orb comes FIRST in the DOM so the decoration can be selected off its state
      class with a plain sibling combinator; z-index puts it back on top. */
+  /* ⚠ `display:grid` BEATS THE `hidden` ATTRIBUTE, so hiding this needs a rule of its own.
+     Spec 014 hides the single orb once the per-lane row is up; without this the big orb kept
+     rendering underneath it and took min(62vw,40dvh,300px) of height — 165px in landscape, which
+     left the transcript 12px tall. **The layout sweep reported ALL PASS throughout**, because it
+     asserts touch targets and overflow and never asserted a floor on the log. The defect was
+     visible only in a number nobody was checking. */
+  #orbwrap[hidden] { display:none; }
   #orbwrap {
     position:relative; display:grid; place-items:center;
     width:min(62vw,40dvh,300px); aspect-ratio:1;
@@ -361,6 +529,12 @@
   /* One row under the orb: mute, the device pickers, verbose, collapse. */
   /* One compact row of chips, no wider than the controls beside them, so the cluster under the
      orb stays a cluster rather than becoming a bar that spans the screen. */
+  /* ⚠ SECOND TIME IN ONE SPEC: `display:flex` beats the `hidden` attribute. `#orbwrap` had the
+     same defect and cost the transcript 165px; here the chip strip stayed on screen UNDER the orb
+     row that replaced it, so the page showed both. Every harness was green — none of them asserts
+     that a superseded control is gone, and the strip's own sweep had just been retargeted to the
+     orbs. **It was visible in the first screenshot of the real page and nowhere else.** */
+  #lanes[hidden] { display:none; }
   #lanes {
     display:flex; align-items:center; justify-content:center;
     gap:.35rem; flex-wrap:wrap; row-gap:.35rem;
@@ -386,6 +560,12 @@
   #lanes .dot { width:.45rem; height:.45rem; border-radius:50%; background:currentColor; opacity:.3; }
   #lanes .dot.busy { opacity:1; animation:lanepulse 1.1s ease-in-out infinite; }
   #lanes .n { font-variant-numeric:tabular-nums; }
+  /* THE STATE, IN WORDS (spec 013 FR5) — "I should know if an agent is listening or thinking or
+     something else". Smaller and dimmer than the name, because the name is what he taps and the
+     state is what he glances at. ⚠ TC4 leaves the FORM open; this is the smallest legible
+     version, and the layout sweep pins that it costs no row and no touch target. */
+  #lanes .st { font-size:.8em; opacity:.7; font-style:italic; }
+  #lanes button.waiting .st { opacity:1; font-style:normal; }
   @keyframes lanepulse { 0%,100% { opacity:.3; } 50% { opacity:1; } }
   @media (prefers-reduced-motion:reduce) { #lanes .dot.busy { animation:none; opacity:1; } }
 
@@ -421,8 +601,8 @@
      cluster could be granted the two-pill width with one pill in it. */
   #controls.split { width:min(100%,29rem); }
   #controls > * { min-width:0; }
-  /* Shrink-to-fit with a ceiling, not grow-to-fill. */
-  .pick         { flex:0 1 10.5rem; max-width:10.5rem; }
+  /* THE PILL NO LONGER STRETCHES, BECAUSE IT NO LONGER HOLDS TEXT. See `.pick select` below. */
+  .pick         { flex:0 0 auto; }
 
   /* The round toggles. 44px is the platform minimum for a touch target. */
   .orbbtn {
@@ -539,26 +719,79 @@
             mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.4 15.4v-3a7.6 7.6 0 0 1 15.2 0v3'/%3E%3Crect x='2.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Crect x='17.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Cpath d='M19.5 19.6v.7a2.3 2.3 0 0 1-2.3 2.3H13'/%3E%3C/svg%3E");
   }
 
+  /* 🔴 A GLYPH AND A CARET, AND NOTHING ELSE. Asked for on 2026-08-24 and again on 2026-08-25
+     after seeing the two pills side by side reading "Headset Microp…" and "Default – Head…":
+     *"just the microphone button and that mutes and it has the arrow next to it that expands the
+     drop-down. I wouldn't like to display the full text of the selected value."*
+
+     WHY THE NAME WAS THERE, and why removing it is not a loss. The label was the answer to "where
+     is my audio going" — but it was never a reliable one, which is the whole story of the 08-15
+     and 08-18 reports: a pill reading "Bluetooth" while sound came out of the earpiece. `#route`
+     now answers that question from the LIVE AudioContext and says nothing when it cannot, so the
+     pill is free to stop guessing. What it kept is the only job it was ever right about: opening
+     the list.
+
+     ⚠ **STILL A NATIVE `<select>`.** The text is hidden with `color:transparent`, not removed —
+     so the OPEN list is the platform's own, with real labels, keyboard support and the phone's
+     full-screen picker. A hand-rolled menu would have to reimplement all three and would be worse
+     on the one device this is for. `aria-label` and `title` keep the name reachable for anyone
+     who needs it read out or hovered.
+
+     The width is the glyph plus the caret plus the gap between them — it does not stretch, and
+     it does not depend on how long a device decided to call itself. */
   .pick select {
     appearance:none; -webkit-appearance:none;
-    width:100%; max-width:100%;
     /* 44px to match the switch beside it — the platform minimum for a touch target, and two
        controls of different heights on one row read as a mistake rather than a hierarchy. */
-    min-height:44px;
-    /* The extra 1rem on the left is the glyph's room. The pill grew by exactly that much, so the
-       text well is the same width it was with one picker — an ellipsis that appeared today would
-       have appeared yesterday too. */
-    padding:.46rem 2.1rem .46rem 1.9rem; border-radius:999px;
+    width:4.05rem; min-height:44px;
+    padding:.46rem 1.15rem .46rem 1.9rem; border-radius:999px;
     background-color:color-mix(in srgb, var(--card) 70%, transparent);
     background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),
                      linear-gradient(135deg,var(--dim) 50%,transparent 50%);
-    background-position:calc(100% - 1.08rem) 53%, calc(100% - .82rem) 53%;
+    background-position:calc(100% - .92rem) 53%, calc(100% - .66rem) 53%;
     background-size:5px 5px,5px 5px; background-repeat:no-repeat;
-    color:var(--dim); font-family:var(--mono); font-size:.68rem; letter-spacing:.02em;
+    /* The closed state paints no text. The open list is untouched. */
+    color:transparent;
+    font-family:var(--mono); font-size:.68rem; letter-spacing:.02em;
     border:1px solid var(--edge); cursor:pointer;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; overflow:hidden;
   }
-  .pick select:hover { color:var(--fg); border-color:var(--edge-2); }
+  /* Chromium paints option text in the closed control from the OPTION's own colour on some
+     platforms, so the transparency has to reach it too. The popup repaints its own. */
+  .pick select option { color:var(--fg); }
+
+  /* 🔴 ONE CONTROL, TWO HALVES — the mute button IS the input pill's icon.
+     *"just the microphone button and that mutes and it has the arrow next to it that expands the
+     drop-down."* Two separate round buttons carrying the same microphone glyph is what that
+     sentence was written against, and 2026-08-25's shot showed exactly that: a mute circle and a
+     picker circle, indistinguishable at a glance, with the row overflowing a 412px phone because
+     of the extra one.
+
+     WELDED IN CSS RATHER THAN WRAPPED IN A DIV, deliberately. A wrapper would reparent `#mute`
+     and every rule and harness keyed on `#controls > *` — the same trap spec 014 avoided by
+     moving the `#controls` ELEMENT into the header instead of its children.
+
+     `:has()` is the guard: until the microphone permission is granted there is no pill to weld
+     to, and a mute button with one flat edge and nothing beside it is worse than the plain one.
+     The page already relies on `:has()` for the empty-log rule above. */
+  #controls:has(.pick.input:not([hidden])) #mute {
+    border-top-right-radius:0; border-bottom-right-radius:0;
+    border-right-color:transparent;
+    width:2.6rem;
+  }
+  /* Cancels the flex gap so the two halves touch. */
+  #controls:has(#mute) .pick.input { margin-left:-.45rem; }
+  #controls:has(#mute) .pick.input select {
+    border-top-left-radius:0; border-bottom-left-radius:0;
+    border-left-color:transparent;
+    /* No glyph on this half any more, so the well is caret-only. */
+    width:2.15rem; padding-left:.35rem;
+  }
+  /* The mute button's microphone is the pair's icon; a second one inside the pill would be the
+     duplicate this whole rule exists to remove. */
+  #controls:has(#mute) .pick.input::before { display:none; }
+  /* Hover no longer has text to brighten, so it brightens the GLYPH — see `.pick:hover::before`. */
+  .pick select:hover { border-color:var(--edge-2); }
   .pick select:focus-visible { outline:2px solid var(--warm); outline-offset:3px; }
 
   /* --- transcript -------------------------------------------------------- */
@@ -584,7 +817,13 @@
   #log::-webkit-scrollbar-thumb { background:var(--edge-2); border-radius:99px; }
 
   .row {
-    display:grid; grid-template-columns:3.5rem minmax(0,1fr);
+    /* THE TAG COLUMN SIZES TO ITS CONTENT NOW (spec 013 FR3). It was a fixed 3.5rem, which fit
+       "YOU" and "CLAUDE" and nothing else — and the tag has `white-space:nowrap`, so "YOU → CODEX"
+       ran straight out of its column and over the words. Reported live 2026-08-24: "the text of
+       what I'm saying is overlapping with the names of the agents whenever I am addressing the
+       agent." The floor keeps the old alignment when the tag is short; `max-content` lets a
+       lane name have the room it needs. */
+    display:grid; grid-template-columns:minmax(3.5rem,max-content) minmax(0,1fr);
     gap:.7rem; align-items:baseline;
     padding:.55rem .95rem;
     font-size:.92rem;
@@ -606,8 +845,28 @@
   }
   .row.addressed          { color:var(--fg); }
   .row.addressed .tag     { color:var(--warm); }
+  /* THE RECEIPT (spec 013 FR7). WhatsApp's SEMANTICS, this page's palette — he asked for
+     "something similar, but respecting this design", so the states are carried by the same
+     warm/cool tokens everything else uses rather than by WhatsApp's blue. Small, trailing, and
+     dim until it means something: one tick is the resting state and must not draw the eye. */
+  .row .tick {
+    margin-left:.5em; font-size:.78em; letter-spacing:-.08em; vertical-align:.08em;
+    opacity:.45; color:var(--fg);
+  }
+  /* ONE tick, and the COLOUR is the whole signal (013 FR7, ruled 2026-08-24). He cut the three
+     states to two himself, from the sharper observation: *"as soon as one of my terms enters your
+     context window, that's read by you"* — delivered and read are the same instant here, so a
+     second tick was drawing a distinction that does not exist. What is left is honest: grey means
+     no agent has taken it, blue means it is in one's context. */
+  .row .tick[data-state="read"]      { opacity:1; color:var(--cool); }
   .row.claude             { color:color-mix(in srgb, var(--fg) 86%, var(--cool)); }
   .row.claude .tag        { color:var(--cool); }
+  /* PER-LANE HUE IN THE TRANSCRIPT (spec 014 FR8). His reason for wanting colours at all was as
+     much about this as about the orbs: "that way it's easier to recognize them in the transcript
+     as well." Set only on an AGENT's row — his own rows keep the warm, which has meant "you" on
+     this page since long before lanes existed, and `--row-c` is only written above two lanes. */
+  .row.claude[style*="--row-c"] .tag { color:var(--row-c); }
+  .row.claude[style*="--row-c"] { color:color-mix(in srgb, var(--fg) 86%, var(--row-c)); }
   .row.partial            { color:var(--faint); }
   .row.partial .tag       { color:color-mix(in srgb, var(--warm) 62%, transparent); }
   .row.partial > span:last-child::after {
@@ -674,7 +933,29 @@
 </style>
 </head>
 <body>
-  <h1>voice&#8209;tunnel</h1>
+  <!-- ONE HEADER ROW (spec 014 FR1/FR2). Title left, session and audio controls right.
+       JJ, 2026-08-24: "the voice tunnel title that's rendered at the very top of the page, I would
+       like to move it to the left. And in that same line, I would like to place the mute button and
+       the device selectors and the virtual vose [verbose] mode... these controls will be aligned to
+       the right instead."
+
+       WHY IT IS WORTH A ROW OF ITS OWN AND STILL SAVES SPACE: the title had a full line and the
+       controls had another under the orb. This is one line carrying both, and everything it
+       reclaims goes to the transcript — the same trade as the 2026-08-07 collapse request and the
+       picker tightening.
+
+       ⚠ THE POWER BUTTON IS THE ONLY THING THAT OWNS THE SESSION (FR2, TC1). The orb used to mean
+       two things — is the session live, and which agent is this — which was coherent while there
+       was exactly one agent and stops being coherent the moment there are three. -->
+  <header id="head">
+    <button id="power" aria-label="Start the conversation" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3.5v8"/><path d="M7.2 6.4a7.5 7.5 0 1 0 9.6 0"/>
+      </svg>
+    </button>
+    <h1>voice&#8209;tunnel</h1>
+    <div id="headctl"></div>
+  </header>
 
   <main id="stage">
     <!-- #orb is first so the decoration can be selected off its state class with a sibling
@@ -685,6 +966,10 @@
       <div class="bezel" aria-hidden="true"></div>
       <div class="aura" aria-hidden="true"></div>
     </div>
+    <!-- ONE ORB PER AGENT (spec 014 FR4). Replaces the single orb entirely once a second lane
+         exists, and stays hidden below that — a row of one is the orb this page has always had,
+         and rebuilding it as a lane would cost the solo session its look for nothing. -->
+    <div id="orbs" role="group" aria-label="Agents in this session" hidden></div>
     <!-- ONE row under the orb, as close to it as the layout allows, so everything below is
          transcript. Reported 2026-08-07: "lower the mute and verbose buttons in the same row where
          the microphone selector is and move all of those up closer to the orb so that the
@@ -732,14 +1017,20 @@
            cannot be paired, one control would silently move only one of them, and the recorded
            lesson from the last picker is that offering a dead switch is worse than offering
            nothing. So exactly one of these two layouts is on screen at any moment. -->
-      <label class="pick" id="devpick" hidden>
+      <!-- `input` / `output` say which HALF of the audio a pill governs, and the CSS uses it to
+           weld the input one onto the mute button beside it — one control with two halves, the
+           icon toggling and the caret opening the list. Asked for twice, most recently on
+           2026-08-25 with both pills on screen printing their device names at him. Keying that
+           off the ids instead would mean naming `#devpick` and `#micpick` in every joint rule
+           and getting the paired case wrong the first time one of them is hidden. -->
+      <label class="pick input" id="devpick" hidden>
         <select id="dev" aria-label="Audio device"
                 title="Audio device — where you are heard and where replies are played"></select>
       </label>
-      <label class="pick" id="micpick" hidden>
+      <label class="pick input" id="micpick" hidden>
         <select id="mic" aria-label="Microphone" title="Microphone — where you are heard"></select>
       </label>
-      <label class="pick" id="spkpick" hidden>
+      <label class="pick output" id="spkpick" hidden>
         <select id="spk" aria-label="Speaker" title="Speaker — where replies are played"></select>
       </label>
       <button id="verbose" class="orbbtn" role="switch" aria-checked="false" aria-label="Verbose narration">
@@ -813,6 +1104,10 @@
   const $dev = document.getElementById("dev");
   const $devpick = document.getElementById("devpick");
   const $controls = document.getElementById("controls");
+  const $power = document.getElementById("power");
+  const $headctl = document.getElementById("headctl");
+  const $orbwrap = document.getElementById("orbwrap");
+  const $orbs = document.getElementById("orbs");
   const $lanes = document.getElementById("lanes");
   const $route = document.getElementById("route");
   const $verbose = document.getElementById("verbose");
@@ -820,7 +1115,7 @@
 
   const token = new URLSearchParams(location.search).get("token") || "";
   let ws = null, ctx = null, micStream = null, node = null, source = null;
-  let wakeLock = null, running = false, pendingClip = null, $partial = null, $divider = null;
+  let wakeLock = null, running = false, pendingClip = null, $partial = null;
   // Clips wait their turn here. A single `pendingClip` variable was not enough: a cue arriving
   // between a reply's header and its audio OVERWROTE the reply, so the reply either played
   // labelled as a cue (no transcript row, no `played` receipt) or was dropped outright — and
@@ -960,13 +1255,76 @@
     if (t) diag.errors.push(t);
   };
 
-  function addRow(tag, text, cls, id) {
+  // WHO A ROW IS FROM OR TO (spec 013 FR3/FR4) — a PURE function, painted in exactly one place,
+  // the same discipline as `orbView` and `lanesView`. A harness can assert what the transcript
+  // says without a browser, which is the only reason the old literal tag went unnoticed.
+  //
+  // JJ, 2026-08-24, running three agents: *"in the transcript, I don't know who's talking to me.
+  // And I want to know on the UI who I am addressing."* / *"In the transcript everybody shows as
+  // Claude."* Both halves are one gap: nothing on the page said WHICH agent.
+  //
+  // ⚠ **Silent below two lanes, deliberately** — but silent about the ROUTE, not about the
+  // SPEAKER. With one agent "you → magnus" on every row conveys nothing, because there is nowhere
+  // else a turn could have gone. Who is speaking is a different question, and it has an answer at
+  // every lane count.
+  //
+  // 🔴 **THE LITERAL "claude" LIVED HERE, and it is the same class of bug as the runtime incident:
+  // this tool holds no model and cannot know what is driving it.** The solo branch returned the
+  // string "claude" no matter who was on the other end. Caught 2026-08-25 by JJ, one lane, named
+  // magnus: *"even though we have named this lane Magnus, you are speaking as Claude."* The
+  // `many` test was doing two jobs — suppressing the arrow AND choosing the speaker's name — and
+  // only the first of those depends on the lane count.
+  function tagView(m) {
+    const many = (m.lanes || []).length >= 2;
+    if (m.from === "agent") {
+      // The clip's OWN lane, never the live one: a reply can arrive after he has moved on to
+      // somebody else, and it is still that agent speaking. `fallback` is the default lane —
+      // the name this server was started under, which is the right answer for a clip that
+      // predates lanes. "agent" is the last resort, and it is deliberately not a model name.
+      return m.lane || m.fallback || "agent";
+    }
+    if (!m.addressed) return "heard";
+    if (!many) return "you";
+    // `lane: null` is NOT the same as absent. Absent means the default lane, the rule the turn log
+    // already keeps. Null means the wake gate refused to resolve one, so the turn reached nobody —
+    // and showing a name there would claim a delivery that did not happen.
+    if ("lane" in m && m.lane === null) return "you → nobody";
+    const to = ("lane" in m) ? m.lane : (m.fallback || null);
+    return to ? "you → " + to : "you";
+  }
+
+  // WHICH LANE A ROW BELONGS TO, for its hue (spec 014 FR8). His reason for wanting the colours
+  // at all was as much about the transcript as the orbs: *"that way it's easier to recognize them
+  // in the transcript as well."*
+  //
+  // ⚠ **Only above two lanes**, same rule as everything else here: with one agent every row would
+  // be tinted to distinguish it from nobody. And HIS rows keep the warm — colour identifies the
+  // speaker, and he is a speaker too.
+  function rowHue(lane) {
+    if (!lane || lanes.length < 2) return null;
+    if (lane === broadcastLane) return null;
+    return laneHue(lanes, lane);
+  }
+
+  function addRow(tag, text, cls, id, lane) {
     const d = document.createElement("div");
     d.className = "row" + (cls ? " " + cls : "");
+    // The hue rides on the ROW as a custom property, so the tag picks it up from CSS rather than
+    // from a second place in JS deciding what colour a row is.
+    const hue = rowHue(lane);
+    if (hue) d.style.setProperty("--row-c", hue);
+    // The row remembers WHOSE turn it is, so its receipt reads against that lane's own cursor
+    // rather than a session-wide one (spec 015 FR1).
+    if (lane) d.dataset.lane = lane;
     if (id !== undefined) d.dataset.id = String(id);
     const s = document.createElement("span");
     s.className = "tag"; s.textContent = tag;
     const t = document.createElement("span");
+    // Named so the receipt can be appended INSIDE the text cell. It used to go on the row itself,
+    // which is a two-column grid — a third child lands in an implicit cell of its own rather than
+    // trailing the words, so the tick was both misplaced and, being outside `.row.addressed`'s
+    // flow, never read as part of the line it belonged to.
+    t.className = "text";
     t.textContent = text;
     d.appendChild(s); d.appendChild(t);
     // A reply is PROOF the turns above it were read, and that guarantee is still enforced — but
@@ -986,9 +1344,6 @@
     // the original promise, because speaking IS the proof — it does not depend on a cursor
     // having caught up first.
     $log.appendChild(d);
-    if (cls === "claude" && $divider && $divider.parentNode === $log) {
-      $log.insertBefore($divider, d);
-    }
     revealRow(d);
   }
 
@@ -1020,23 +1375,72 @@
   // so anything below the line is visibly still unread. Same idea as mc view's
   // "agent consumed through #N" divider: a position in the transcript says more than a count
   // floating above it, because you can see WHICH turns are still waiting.
-  function placeDivider() {
-    const cursor = diag.consumed;
-    if (cursor === undefined || cursor < 0) { if ($divider) $divider.remove(); return; }
-    if (!$divider) {
-      $divider = document.createElement("div");
-      $divider.className = "divider";
+  // WHAT HAPPENED TO ONE TURN (spec 013 FR7) — a PURE function, asserted without a browser.
+  //
+  // JJ, 2026-08-24: *"once it's sent, it's one check. Once it arrives to the destination, it's two
+  // checks. And once the recipient has read the message, the two checks turn blue. I would like
+  // something similar, but respecting this design."*
+  //
+  // ⚠ **"Delivered" and "read" are the same event in this tool** — a `watch` hands a turn over AND
+  // moves the cursor — so mapping them naively would make two ticks and blue ticks rise together
+  // and one of the three states would never be seen. The honest third state is ANSWERING: the
+  // cursor proves an agent was given it, a clip spoken afterwards proves something was done with
+  // it. That is the difference he actually wants to see, and the only one this tool can prove.
+  function receiptView(m) {
+    if (m.id === undefined || m.id === null) return { state: "", ticks: "" };
+    if (m.consumed !== undefined && m.consumed !== null && m.id <= m.consumed) {
+      return { state: "read", ticks: "✓", aria: "read" };
     }
-    const pending = diag.pending || 0;
-    $divider.textContent = pending > 0
-      ? `claude has read to here — ${pending} more below`
-      : "claude has read to here";
-    $divider.classList.toggle("behind", pending > 0);
-    const anchor = $log.querySelector(`.row[data-id="${cursor}"]`);
-    if (anchor) anchor.after($divider);
-    else $log.appendChild($divider);
-    // The insert lands below whatever was last scrolled to, so it MUST re-scroll. This is the
-    // line whose absence put the read boundary permanently off screen.
+    return { state: "sent", ticks: "✓", aria: "sent" };
+  }
+
+  // Paint a receipt onto every one of HIS rows. Agent rows carry none — a receipt is about
+  // whether the other side got it, and he knows what he heard.
+  // 🔴 A RECEIPT IS ABOUT ONE LANE, so it is read against THAT lane's cursor (spec 015 FR1).
+  //
+  // It used to use the session-wide `consumed`, which is a single integer overwritten by whichever
+  // lane's watch reported last — so Atlas reading turn 2510 painted Claude's earlier turns blue,
+  // turns Claude was never given. JJ caught it on the page: *"whenever one lane reads, I think
+  // we're marking everything as read."*
+  //
+  // ⚠ **A turn with no lane falls back to the session cursor**, which is exactly right for the
+  // thousands of turns that predate lanes: there was one reader then, and the session-wide number
+  // is that reader's cursor.
+  function consumedFor(lane) {
+    if (lane && laneConsumed[lane] !== undefined) return laneConsumed[lane];
+    if (lane && lanes.length >= 2) return -1;   // a lane we have no cursor for has read nothing
+    return diag.consumed;
+  }
+
+  function paintReceipts() {
+    $log.querySelectorAll(".row.addressed").forEach((row) => {
+      const id = Number(row.dataset.id);
+      if (!Number.isFinite(id)) return;
+      const v = receiptView({ id, consumed: consumedFor(row.dataset.lane) });
+      const cell = row.querySelector(".text") || row;
+      let tick = row.querySelector(".tick");
+      if (!v.ticks) { if (tick) tick.remove(); return; }
+      if (!tick) {
+        tick = document.createElement("span");
+        tick.className = "tick";
+        cell.appendChild(tick);
+      }
+      tick.textContent = v.ticks;
+      tick.dataset.state = v.state;
+      tick.setAttribute("aria-label", v.aria);
+    });
+  }
+
+  // 🔴 **THE READ-BOUNDARY DIVIDER IS GONE**, and the per-turn tick replaced it outright.
+  //
+  // JJ, 2026-08-24: *"I think we should remove the red to here line as well. That's redundant
+  // now."* He is right — the divider marked ONE position for ONE reader, which stopped being a
+  // coherent thing to draw the moment three agents shared the log. A tick per turn says the same
+  // thing per turn, and says it for whichever lane the turn belongs to.
+  //
+  // The name is kept because three call sites read better with it; all it does now is repaint.
+  function placeDivider() {
+    paintReceipts();
     scrollToEnd();
   }
 
@@ -1197,6 +1601,16 @@
   let laneWaiting = {};      // lane -> how many clips it is holding
   let laneStates = {};       // lane -> idle | transcribing | thinking | synthesizing | speaking
   let broadcastLane = "everyone";
+  // The lane a turn with NO `lane` key belongs to — the name the server was started as. Thousands
+  // of turns predate lanes, and rendering them as addressed to nobody would rewrite the history
+  // he scrolls back through.
+  let defaultLane = null;
+  // Per lane, the highest turn id it had in hand when it last spoke — the blue tick (013 FR7).
+  let laneReadThrough = {};
+  // How far EACH lane has read — the receipt's cursor, per reader (spec 015 FR1).
+  let laneConsumed = {};
+  // Which lanes are sitting in a `watch` right now — the server's own answer, not a guess.
+  let watchingLanes = [];
 
   const LANE_BUSY = ["transcribing", "thinking", "synthesizing", "speaking"];
 
@@ -1221,6 +1635,16 @@
         // The label is built HERE, not in the painter, so a harness can assert what the row says
         // without a browser. Same argument as `orbView` returning its own label.
         label: name,
+        // WHAT THIS AGENT IS DOING, IN WORDS (spec 013 FR5). The dot already carried `busy`, and
+        // a dot that is either on or off cannot answer the question he actually asked:
+        // *"I should know if an agent is listening or thinking or something else."* A binary
+        // indicator collapses four distinct states into one, so the state has to be said.
+        //
+        // ⚠ **`waiting` outranks the state**, because a held clip is the one thing he can act on:
+        // *"I need a way to know that an agent is trying to talk to me so that I can divert my
+        // attention to that agent."* An agent that is thinking wants nothing from him; an agent
+        // holding speech does.
+        stateLabel: waiting ? "wants you" : (state && state !== "idle" ? state : ""),
         // What a screen reader is told, which has to carry everything the colour carries.
         aria: name + (live ? ", live" : "")
               + (waiting ? ", " + waiting + " waiting to be heard" : "")
@@ -1255,6 +1679,12 @@
       const dot = document.createElement("span");
       dot.className = "dot" + (row.busy ? " busy" : "");
       b.append(dot, document.createTextNode(row.label));
+      if (row.stateLabel) {
+        const st = document.createElement("span");
+        st.className = "st";
+        st.textContent = row.stateLabel;
+        b.append(st);
+      }
       if (row.waiting > 0) {
         const n = document.createElement("span");
         n.className = "n";
@@ -1277,13 +1707,201 @@
     // round trip to repaint — makes his own tap feel like it did not register, which is the
     // ambiguity the orb's "No mic" label exists to kill.
     liveLane = name;
-    applyLanes();
+    applyLanes(); applyLaneOrbs();
     fetch("/lane" + location.search, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "switch", name }),
     }).catch(() => {});
   });
+
+  // ================= spec 014: ONE ORB PER AGENT ==================================
+  //
+  // JJ, 2026-08-24, after an hour with three agents: *"now that we have multiple lanes and I can
+  // talk to multiple agents, I think having a single orb in the middle makes no sense… gives each
+  // lane its own orb with the same functionality and same behaviors that the current middle orb
+  // has."* Chosen against a clickable preview (`scripts/uipreview.py`, arrangement C) rather than
+  // a description, and the reason it wins is not the pixels: with one centre orb, "which agent is
+  // this" is a label on a shape that means something else. With one orb each it cannot be asked.
+
+  // COLOUR IS IDENTITY, NEVER STATUS (FR5) — his ruling: *"we shouldn't make the colors represent
+  // the statuses, because the statuses are represented within the orb."*
+  //
+  // Deterministic by POSITION so two devices watching one session agree without the server holding
+  // a preference. ⚠ TC3: these differ in lightness as well as hue, so they survive the common
+  // colour blindnesses and hold 4.5:1 on the page's light ground. TC4: the list repeats rather than
+  // running out, and name plus position still separate lanes past its length.
+  // 🔴 EVERY ORB COUNTS ITS OWN SECONDS. Reported live 2026-08-24, minutes after the row shipped:
+  // *"I no longer see the seconds counter, the timer, whenever you're doing something. I think
+  // that should display… whenever they're doing something."*
+  //
+  // The timer was a child of the single orb, so replacing that orb silently took it away — a
+  // regression no harness caught, because `orbView` still returns its `timer` and the golden still
+  // matches. **The model was intact and the thing that showed it was gone.**
+  //
+  // ⚠ **Per lane, not just the live one**, which is what he asked for and is also the only version
+  // that means anything now: a background agent thinking for ninety seconds is exactly the thing
+  // the number exists to make visible, and it is the one the old single orb could never show.
+  // Timed client-side from the state change, because the server reports what a lane IS doing and
+  // not when it started.
+  const laneBusySince = {};
+  const LANE_BUSY_STATES = ["transcribing", "thinking", "synthesizing", "speaking"];
+  function noteLaneBusy(name, state) {
+    if (LANE_BUSY_STATES.includes(state)) {
+      if (!laneBusySince[name]) laneBusySince[name] = Date.now();
+    } else {
+      delete laneBusySince[name];
+    }
+  }
+  function laneElapsed(name) {
+    const since = laneBusySince[name];
+    if (!since) return "";
+    const s = Math.floor((Date.now() - since) / 1000);
+    return s < 1 ? "" : (s < 60 ? s + "s" : Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0"));
+  }
+
+  const LANE_HUES = ["#3559bd", "#0f7a63", "#8a3fa8", "#a8501f", "#1f6f8a", "#7a2f4f"];
+  function laneHue(names, name) {
+    const i = (names || []).indexOf(name);
+    return i < 0 ? "var(--faint)" : LANE_HUES[i % LANE_HUES.length];
+  }
+
+  // The pure half, swept by scripts/lanestrip.py without a browser — same discipline as `orbView`
+  // and `lanesView`, and the reason a literal tag went unnoticed the one time it was skipped.
+  function laneOrbsView(m) {
+    const names = (m.lanes || []).slice();
+    // BELOW TWO AGENTS THE PAGE IS UNCHANGED (NFR1). One orb in a row of one is the orb this page
+    // has always had, and rebuilding it as a lane would cost the solo session its whole look for
+    // no information gained — the same rule the lane strip and the device pickers already follow.
+    const shown = names.length >= 2;
+    return {
+      shown,
+      rows: names.map((name) => {
+        // 🔴 "IDLE" WAS A LIE FOR EVERY AGENT THAT WAS ACTUALLY WORKING. JJ, 2026-08-24:
+        // *"the agents say idle, but in reality, you are not idle, right? Whenever you're not
+        // listening and whenever you're doing something, you're thinking."*
+        //
+        // The cause: `lane_states` only ever holds what an agent REPORTED. The tunnel's own stages
+        // fire for the live lane; a background agent heads-down in a long task reports nothing, so
+        // it read exactly like one sitting doing nothing.
+        //
+        // 🎯 **The fact the server already has is whether the lane is WAITING.** A lane sitting in
+        // `watch` is listening; a lane that has read turns and is NOT in a watch is between the
+        // two, which is the definition of working. A lookup over `watching_lanes` — no inference
+        // about content, so it stays on the dumb side of the line.
+        //
+        // ⚠ A lane that has never read anything stays "idle": it has not started, and calling that
+        // "working" would be the same overclaim pointing the other way.
+        let state = (m.states && m.states[name]) || "idle";
+        if (state === "idle") {
+          const watching = (m.watching || []).includes(name);
+          const seen = m.consumed && m.consumed[name] !== undefined;
+          state = watching ? "listening" : (seen ? "working" : "idle");
+        }
+        const waiting = (m.waiting && m.waiting[name]) || 0;
+        const live = name === m.live;
+        return {
+          name, live, waiting, state,
+          hue: laneHue(names, name),
+          // The status word lives INSIDE the orb (FR6), and it is always the LANE's own state.
+          //
+          // ⚠ It used to read "off" on every orb while the session was down, which was wrong on
+          // two counts: the session being off is already said by the power button and by the whole
+          // row going grey, so repeating it N times adds nothing — and it DESTROYED the per-lane
+          // information at exactly the moment it is most useful. An agent that has been thinking
+          // for two minutes while he had the orb closed is the thing he most wants to see on
+          // coming back, and the old rule painted it as "off".
+          status: state,
+          aria: name + (live ? ", live" : "")
+                + (waiting ? ", " + waiting + " waiting to be heard" : "")
+                + (state && state !== "idle" ? ", " + state : ""),
+        };
+      }),
+    };
+  }
+
+  // ONE painter, and the ONLY thing allowed to touch the orb row.
+  function applyLaneOrbs() {
+    // Stamp the busy clocks BEFORE building the view, so a state that just changed is timed from
+    // the moment it changed rather than from the next repaint.
+    lanes.forEach((n) => noteLaneBusy(n, laneStates[n] || "idle"));
+    const view = laneOrbsView({
+      lanes, live: liveLane, waiting: laneWaiting, states: laneStates,
+      // The two facts that separate "listening" from "working" from "never started".
+      watching: watchingLanes, consumed: laneConsumed,
+      sessionOff: !(running && channelOpen),
+    });
+    view.sessionOff = !(running && channelOpen);
+    diag.laneOrbs = view;
+    if ($orbs) {
+      $orbs.hidden = !view.shown;
+      // HOW MANY ORBS SHARE THE ROW — the CSS sizes each disc off its actual share of the width,
+      // so two lanes get a bigger orb than three. Published rather than inferred, the same rule
+      // the rest of this file follows: a stylesheet cannot count its own elements.
+      $orbs.style.setProperty("--n", String(view.rows.length || 1));
+      $orbs.replaceChildren(...(view.shown ? view.rows.map((row) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "laneorb" + (row.live ? " live" : "") + (row.waiting ? " waiting" : "");
+        b.dataset.lane = row.name;
+        b.style.setProperty("--lane-c", row.hue);
+        b.setAttribute("aria-pressed", String(row.live));
+        b.setAttribute("aria-label", row.aria);
+
+        const disc = document.createElement("span");
+        disc.className = "disc";
+        const st = document.createElement("span");
+        st.className = "stat";
+        st.textContent = row.status;
+        disc.append(st);
+        // The seconds, under the word, and only while this lane is actually busy.
+        const el = laneElapsed(row.name);
+        if (el) {
+          const t = document.createElement("span");
+          t.className = "lanetimer";
+          t.textContent = el;
+          disc.append(t);
+        }
+        if (row.waiting) {
+          // A RAISED HAND WITH A COUNT (FR7), replacing the words "wants you". His words:
+          // "instead of codex wants you, I would like to have a count or a raised hand, with the
+          // count of messages that are waiting for me." The count is what the label never carried.
+          const hand = document.createElement("span");
+          hand.className = "hand";
+          hand.textContent = "✋" + row.waiting;
+          disc.append(hand);
+        }
+        const nm = document.createElement("span");
+        nm.className = "nm";
+        nm.textContent = row.name;
+        b.append(disc, nm);
+        return b;
+      }) : []));
+    }
+    // The single orb and the row are alternatives, never both: one of them is always the whole
+    // answer to "who am I talking to".
+    if ($orbwrap) $orbwrap.hidden = view.shown;
+    // The chip strip said exactly what the orbs now say, in less space and with less meaning.
+    // Two controls for one fact is how a page starts disagreeing with itself.
+    if ($lanes) $lanes.hidden = view.shown || lanes.length < 2;
+  }
+
+  // A TAP SWITCHES THE LANE AND NOTHING ELSE (FR9). The session moved to the power button, so an
+  // orb no longer has a second meaning to be ambiguous about.
+  function tapLaneOrb(ev) {
+    const btn = ev.target.closest("button[data-lane]");
+    if (!btn) return;
+    const name = btn.dataset.lane;
+    if (name === liveLane) return;
+    liveLane = name;
+    applyLaneOrbs();
+    applyLanes();
+    fetch("/lane" + location.search, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "switch", name }),
+    }).catch(() => {});
+  }
 
   // ONE painter, and it is the ONLY thing allowed to touch the orb. Every handler updates the
   // model and calls this; none of them writes a label or a class directly.
@@ -1297,6 +1915,21 @@
     $orb.classList.toggle("thinking", Boolean(view.timer));
     $orb.classList.toggle("speaking", view.label === "Speaking");
     setBusyTimer(view.timer);
+    // The power button reflects the SESSION, which is the one thing it owns (spec 014 FR2). It is
+    // painted from the same view as the orb so the two can never disagree about whether the
+    // conversation is live — a second source of truth for one boolean is how the picker came to
+    // read "Bluetooth" while the earpiece was playing.
+    if ($power) {
+      const on = Boolean(running && channelOpen);
+      $power.setAttribute("aria-pressed", String(on));
+      $power.setAttribute("aria-label", on ? "Stop the conversation" : "Start the conversation");
+      // The orb row states the SESSION once, rather than each orb inventing a state for it.
+      if ($orbs) $orbs.dataset.off = String(!on);
+    }
+    // The lane orbs' status word reads "off" while the session is down, so they repaint with the
+    // orb and not only when the lane set changes — otherwise the row would keep claiming
+    // "listening" over a released microphone.
+    applyLaneOrbs();
     diag.orb = view;
   }
 
@@ -1374,7 +2007,21 @@
   // control would flip and flip back.
   diag.orbView = orbView;
   diag.lanesView = lanesView;
+  diag.tagView = tagView;
+  diag.receiptView = receiptView;
+  diag.laneOrbsView = laneOrbsView;
+  diag.laneHue = laneHue;
   diag.deliver = (msg) => onMessage({ data: JSON.stringify(msg) });
+  // An agent's transcript row WITHOUT synthesizing audio, for the screenshot harness.
+  //
+  // A reply only reaches the log when a clip actually plays, so a harness with no audio can never
+  // see one — which is how spec 013 shipped an agent-name fix nobody had looked at. This takes the
+  // same two steps the play path takes (`tagView`, then `addRow`) and skips only the sound, so
+  // what it renders is what he sees. ⚠ It deliberately does NOT stub the queue: a harness that
+  // fakes the delivery path would stop being evidence about the delivery path.
+  diag.renderAgentRow = (lane, text) =>
+    addRow(tagView({ from: "agent", lane, lanes, fallback: defaultLane }), text, "claude",
+           undefined, lane || defaultLane);
 
   // Collapse the transcript. Reported 2026-08-07: "I want to make that collapsible so that I can just
   // collapse it and hide it and just have the orb and the buttons and not see the transcript
@@ -1929,8 +2576,11 @@
       if (msg.type === "turn") {
         diag.turns.push(msg);
         if ($partial) { $partial.remove(); $partial = null; }   // the final supersedes it
-        addRow(msg.addressed ? "you" : "heard", msg.text,
-               msg.addressed ? "addressed" : "", msg.id);
+        addRow(tagView({ from: "you", addressed: msg.addressed, lanes,
+                         fallback: defaultLane,
+                         ...("lane" in msg ? { lane: msg.lane } : {}) }),
+               msg.text, msg.addressed ? "addressed" : "", msg.id,
+               ("lane" in msg) ? msg.lane : defaultLane);
         placeDivider();
       } else if (msg.type === "audio_header") {
         pendingClip = msg;                       // the bytes follow in the next frame
@@ -1947,9 +2597,12 @@
           lanes = msg.lanes;
           liveLane = msg.lane;
           laneStates = msg.lane_states || {};
+          watchingLanes = msg.watching_lanes || [];
+          laneConsumed = msg.lane_consumed || {};
           laneWaiting = msg.waiting || {};
           if (msg.broadcast) broadcastLane = msg.broadcast;
-          applyLanes();
+          if (msg.default_lane) defaultLane = msg.default_lane;
+          applyLanes(); applyLaneOrbs();
         }
         applyOrb();
       } else if (msg.type === "verbose") {
@@ -1998,7 +2651,12 @@
         // transcribing, or synthesizing."* The orb still follows only the LIVE lane: a background
         // agent's work must not repaint the state of the agent he is talking to, which is the
         // same separation `muted` and `agent_state` already have from each other.
-        if (msg.lane) { laneStates[msg.lane] = msg.state; applyLanes(); }
+        // WHO IS WAITING arrives with every state change (015 FR2) — it is what separates a lane
+        // that is listening from one that is heads-down, and neither reports itself.
+        if (Array.isArray(msg.watching_lanes)) watchingLanes = msg.watching_lanes;
+        if (msg.lane_consumed) laneConsumed = msg.lane_consumed;
+        if (msg.lane) { laneStates[msg.lane] = msg.state; applyLanes(); applyLaneOrbs(); }
+        else { applyLaneOrbs(); }
         if (msg.lane === undefined || msg.live !== false) {
           agentState = msg.state;
           applyOrb();
@@ -2010,14 +2668,15 @@
         lanes = Array.isArray(msg.lanes) ? msg.lanes : lanes;
         liveLane = msg.lane;
         if (msg.waiting) laneWaiting = msg.waiting;
-        applyLanes();
+        if (msg.default_lane) defaultLane = msg.default_lane;
+        applyLanes(); applyLaneOrbs();
       } else if (msg.type === "lane_waiting") {
         // An off-lane agent has something to say, or has just been heard. This is FR7's visible
         // half and it must arrive as an event: a mark that only appears on the next poll lags
         // the thing it describes, and he is looking at the screen when he switches.
         if (msg.waiting) laneWaiting[msg.lane] = msg.waiting;
         else delete laneWaiting[msg.lane];
-        applyLanes();
+        applyLanes(); applyLaneOrbs();
       } else if (msg.type === "partial") {
         // Live preview of the utterance still being spoken. Replaced in place, then removed
         // when the final turn lands — so it reads as one sentence firming up rather than a
@@ -2040,6 +2699,8 @@
       } else if (msg.type === "consumed") {
         diag.consumed = msg.cursor;
         diag.pending = msg.pending;
+        if (msg.read_through) laneReadThrough = msg.read_through;
+        if (msg.lane_consumed) laneConsumed = msg.lane_consumed;
         placeDivider();
       }
       return;
@@ -2099,7 +2760,8 @@
       if (!isCue) {
         playing = true;       // the client owns this: it knows when audio actually starts
         applyOrb();
-        addRow("claude", header.text || "", "claude");
+        addRow(tagView({ from: "agent", lane: header.lane, lanes, fallback: defaultLane }),
+               header.text || "", "claude", undefined, header.lane || defaultLane);
       }
       await new Promise((res) => {
         let guard = 0;
@@ -2723,7 +3385,36 @@
   paintSink();
   paintGroup();
 
-  $orb.addEventListener("click", orbTapped);
+  // THE CONTROLS MOVE INTO THE HEADER ROW (spec 014 FR1) — the `#controls` ELEMENT itself, not its
+  // children. Rebuilding them in the header would fork four controls into two definitions, which is
+  // how the mute button and the picker drifted apart the first time; moving the children instead
+  // would orphan every rule and harness keyed on `#controls`, including the `.split` case
+  // `scripts/layout.py` fakes to reproduce a two-pill desktop. `append` moves a live node, so
+  // listeners, ids and accessible names all survive intact.
+  $headctl.append($controls);
+
+  // 🔴 SESSION LIFECYCLE LIVES ON THE POWER BUTTON, AND NOWHERE ELSE (spec 014 FR2, TC1, AC-2).
+  //
+  // The orb carried it until now, which was coherent while one orb meant one agent. Spec 014 gives
+  // every lane an orb, and a lifecycle handler on each of them would mean N controls racing to own
+  // one microphone. So it moved out to a control that is about the session rather than about an
+  // agent, exactly as he asked: *"Maybe we add that button as a power button right to the left of
+  // the voice tunnel title... And that means that the orbs, each orb for each agent or each lane
+  // is just clicking on it, is just switching to that lane."*
+  //
+  // ⚠ THE ORB STAYS TAPPABLE WHILE THE SESSION IS OFF, and only then (TC2). A browser opens no
+  // microphone without a gesture, and "Tap to start" written across the orb is what has taught
+  // every first use so far; a bare power glyph teaches nothing. Once running, the orb is display.
+  $power.addEventListener("click", orbTapped);
+  $orbs.addEventListener("click", tapLaneOrb);
+
+  // The seconds have to ADVANCE, and nothing else repaints the row between state changes — which
+  // is precisely the window the number exists to fill. One second is the resolution shown, so one
+  // second is the tick; it does nothing at all when no lane is busy, which is most of the time.
+  setInterval(() => {
+    if (Object.keys(laneBusySince).length) applyLaneOrbs();
+  }, 1000);
+  $orb.addEventListener("click", () => { if (!running) orbTapped(); });
 
   // Connect on load, before any tap. The socket needs no permission and no gesture — only the
   // microphone does — so making the page arrive already connected costs nothing and is what the owner

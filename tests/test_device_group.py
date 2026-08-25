@@ -93,7 +93,13 @@ def test_the_grouped_pill_inherits_the_touch_target_the_others_have():
     assert the cheap structural reason it is the same: it wears the same class, and `.pick select`
     carries the 44px minimum."""
     raw = page()
-    assert re.search(r'<label class="pick" id="devpick"', raw), (
+    # MATCHED AS A CLASS, NOT AS THE WHOLE ATTRIBUTE. The literal `class="pick"` broke the day a
+    # second class was added beside it (2026-08-25, `input`/`output`, which tell the CSS which
+    # half of the audio a pill governs) — and it broke on a change that took nothing away, which
+    # is the wrong reason for a test to fail. What this asserts is that `pick` is still ONE of
+    # the classes, because that is what carries the 44px minimum.
+    devpick = re.search(r'<label class="([^"]*)" id="devpick"', raw)
+    assert devpick and "pick" in devpick.group(1).split(), (
         "the grouped pill no longer uses the shared .pick class, so it no longer inherits the "
         "44px touch minimum that `layout.py` enforces on its siblings"
     )

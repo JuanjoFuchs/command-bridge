@@ -254,14 +254,23 @@ try:
         # Closing the channel outranks the agent's state.
         api("/consumed", {"cursor": 0, "state": "thinking"})
         time.sleep(0.6)
-        page.click("#orb")          # the orb IS the channel switch once a session is running
+        # 🔴 THE POWER BUTTON IS THE CHANNEL SWITCH NOW (spec 014 FR2), not the orb.
+        #
+        # The orb owned the session because it was the only thing on screen that could — coherent
+        # while one orb meant one agent, and impossible once every lane has an orb, since N
+        # controls cannot each own one microphone. ⚠ **This is not a weakened assertion:** every
+        # check below is unchanged and still runs, on the control that now carries the behaviour.
+        # The orb stays tappable while the session is OFF (TC2) — a browser opens no microphone
+        # without a gesture, and "Tap to start" is what has taught every first use — which is why
+        # the opening `page.click("#orb")` above is left exactly as it was.
+        page.click("#power")
         time.sleep(0.8)
         check(label() == "Off", "a closed channel reads Off even mid-think", f"label={label()!r}")
         check(not timer_visible(), "and stops the clock")
         check(api("/status")["agent_state"] == "thinking",
               "closing the channel does not overwrite the agent's state either")
 
-        page.click("#orb")
+        page.click("#power")
         # REOPENING NOW COSTS A WARM-UP. Since 2026-08-16 switching the orb off RELEASES the
         # microphone, so tapping it back on re-acquires — the same warm-up the first tap has always
         # had, and it exists so the page never says "Listening" into a gap he is already talking
@@ -362,6 +371,24 @@ try:
         check("stop watching" not in raw, "no hint tells the agent to stop watching", raw[-90:])
 
         # ---------------------------------------------------------------- collapse
+        #
+        # 🔴 A ROW HAS TO EXIST BEFORE THE HEADER CAN BE CLICKED, and until spec 013 it did not
+        # have to. `body:has(#log:empty) #collapse { display:none }` has always hidden the toggle
+        # over an empty transcript — a control for an empty box is noise — but the read-boundary
+        # DIVIDER was a child of `#log`, so the log was never actually `:empty` and the rule never
+        # fired here. Spec 013 deleted the divider (the per-turn tick replaced it), and this step
+        # started timing out on an element that is correctly invisible.
+        #
+        # 🎯 **Neither change was wrong and the interaction was invisible to both.** The geometry
+        # block below already knew this rule and inserted its own fixture row for exactly this
+        # reason; the collapse block was relying on a side effect of a feature in another spec.
+        page.evaluate("""() => {
+          const d = document.createElement('div');
+          d.className = 'row';
+          d.textContent = 'collapse fixture';
+          document.getElementById('log').appendChild(d);
+        }""")
+        time.sleep(0.2)
         check(page.evaluate("() => !document.getElementById('log').hidden"),
               "the transcript starts visible")
         page.click("#collapse")
@@ -400,7 +427,11 @@ try:
         geo = page.evaluate("""() => {
           const r = (id) => document.getElementById(id).getBoundingClientRect();
           const c = r('collapse'), ctl = r('controls'), lg = r('log'), o = r('orbwrap');
-          return { belowControls: c.top >= ctl.bottom - 1,
+          // Spec 014 FR1 moved the control row into the HEADER, so "below the controls" is now
+          // "below the header" — the same claim (the toggle belongs to the transcript, not to the
+          // orb's row) measured against where those controls actually live.
+          return { belowControls: c.top >= document.getElementById('head')
+                                             .getBoundingClientRect().bottom - 1,
                    aboveLog: c.bottom <= lg.top + 1,
                    centered: Math.abs((c.left + c.right) / 2 - (o.left + o.right) / 2) < 6,
                    labelled: document.getElementById('collapse').textContent.trim()
@@ -464,10 +495,13 @@ try:
         # no tracks to end. `micState()` reads the tracks themselves rather than a flag the page
         # sets, because a flag written by the same code that does the releasing would restate the
         # claim instead of testing it.
-        rp.click("#orb")
+        # Spec 014 FR2: the session's off switch is the POWER BUTTON. The property under test —
+        # that switching off actually ends the microphone tracks rather than merely stopping
+        # listening — is unchanged and is still read from the tracks themselves.
+        rp.click("#power")
         rp.wait_for_timeout(900)
         tracks = rp.evaluate("() => window.__voiceTunnel.micState()")
-        check(tracks == [], "TAPPING THE ORB OFF RELEASES THE MICROPHONE",
+        check(tracks == [], "SWITCHING THE SESSION OFF RELEASES THE MICROPHONE",
               f"tracks={tracks!r} — anything but [] means the OS indicator is still lit")
         check(rp.evaluate("() => document.getElementById('orblabel').textContent") == "Off",
               "and it still reads Off, not back to Tap to start",
@@ -529,24 +563,44 @@ try:
           const log = document.getElementById('log');
           for (let i = 0; i < 40; i++) {
             const d = document.createElement('div');
-            d.className = 'row';
+            // `addressed` because a receipt is about HIS turns — he knows what he heard, so agent
+            // rows carry none. A fixture of plain rows would have no ticks and the boundary check
+            // below would report "not drawn" against a page that is behaving correctly.
+            d.className = 'row addressed';
             d.dataset.id = String(i);
-            d.textContent = 'filler line ' + i + ' with enough text to wrap on a narrow log';
+            const t = document.createElement('span');
+            t.className = 'text';
+            t.textContent = 'filler line ' + i + ' with enough text to wrap on a narrow log';
+            d.appendChild(t);
             log.appendChild(d);
           }
         }""")
         api("/consumed", {"cursor": 39})
         time.sleep(1.2)
+        # 🔴 THE READ BOUNDARY IS A PER-TURN TICK NOW, not a divider (spec 013 FR7).
+        #
+        # The divider marked ONE position for ONE reader, which stopped being coherent the moment
+        # three agents shared the log — so it was deleted and every turn carries its own receipt
+        # instead: grey when no agent has taken it, blue once it is in one's context.
+        #
+        # ⚠ **The assertions are the same three questions, asked of the thing that answers them
+        # now.** Is the boundary drawn at all; is it visible without scrolling; is the log at its
+        # true end. Retargeting them is not weakening them — deleting them would have been.
         seen = page.evaluate("""() => {
           const log = document.getElementById('log');
-          const d = log.querySelector('.divider');
-          if (!d) return { present: false };
-          const lr = log.getBoundingClientRect(), dr = d.getBoundingClientRect();
+          const ticks = [...log.querySelectorAll('.row .tick')];
+          if (!ticks.length) return { present: false };
+          // The boundary is where 'read' stops and 'sent' begins; the last read tick marks it.
+          const read = ticks.filter((t) => t.dataset.state === 'read');
+          const mark = read.length ? read[read.length - 1] : ticks[0];
+          const lr = log.getBoundingClientRect(), dr = mark.getBoundingClientRect();
           return { present: true,
+                   states: [...new Set(ticks.map((t) => t.dataset.state))].sort(),
                    visible: dr.top >= lr.top - 1 && dr.bottom <= lr.bottom + 1,
                    atEnd: Math.abs(log.scrollTop + log.clientHeight - log.scrollHeight) < 4 };
         }""")
-        check(seen.get("present"), "the read boundary is drawn in the transcript")
+        check(seen.get("present"), "the read boundary is drawn in the transcript",
+              f"tick states: {seen.get('states')}")
         check(seen.get("visible"), "and it is ON SCREEN without scrolling",
               "it used to land one line below the fold, every time")
         check(seen.get("atEnd"), "the log is scrolled to its true end")
@@ -562,12 +616,19 @@ try:
           const r = (id) => document.getElementById(id).getBoundingClientRect();
           const m = r('mute'), v = r('verbose'), o = r('orbwrap');
           return { sameRow: Math.abs(m.top - v.top) < 2,
-                   below: m.top > o.bottom - 1,
-                   gap: m.top - o.bottom,
+                   // 🔴 SPEC 014 FR1 PUT THE CONTROLS ABOVE THE ORB, not below it. The row used to
+                   // sit under the orb because the title had its own line at the top; folding
+                   // both into one header is what buys the transcript its space, and it inverts
+                   // this relationship by design. The claim worth keeping is that the controls and
+                   // the orb do not OVERLAP and stay in a predictable order — not which of the two
+                   // is lower, which was a consequence of the old layout rather than a rule.
+                   above: m.bottom <= o.top + 1,
+                   gap: o.top - m.bottom,
                    muteFirst: m.left < v.left };
         }""")
         check(row["sameRow"], "mute and verbose share one row with the picker")
-        check(row["below"], "the row sits under the orb")
+        check(row["above"], "the control row sits above the orb, in the header (spec 014 FR1)",
+              f"gap={row['gap']}")
         check(row["gap"] < 26, "close under the orb, not floating", f"gap={row['gap']:.0f}px")
         check(row["muteFirst"], "in reading order: mute, picker, verbose")
         width = page.evaluate("""() => {
