@@ -67,6 +67,19 @@ class TunnelState:
         on disk belongs to — those turns carry no `lane` key, and a live session has thousands of
         them. Until a second lane is registered this is a one-element registry that can neither
         switch nor refuse, which is what makes NFR3 true by construction rather than by care."""
+        # 🔴 THE ROOM SURVIVES A RESTART (spec 019 FR1). The registry itself is pure state with no
+        # I/O — deliberately, so the routing rules stay unit-testable without a session directory —
+        # so the RESTORE lives here, at the one place that has both a session name and a registry.
+        #
+        # ⚠ **The DEFAULT is not restored, only the guests.** `--wake` is what he typed on THIS
+        # start; a persisted default silently overriding it would make the flag a suggestion. A
+        # name that is already the default is skipped rather than re-added.
+        for _name in store.read_lanes(session):
+            if _name != self.lanes.default:
+                try:
+                    self.lanes.add(_name)
+                except lanes_mod.LaneError:
+                    pass       # a stale or now-invalid name must not stop the server starting
         self.recognizer = asr_mod.Recognizer()
         # The one place the model meets the pure segmenter. Injected rather than imported
         # so UtteranceBuffer stays testable without an 8 MB download — see its docstring.
@@ -1675,10 +1688,16 @@ async def handle_lane(request: web.Request) -> web.Response:
         )
 
     if action in ("add", "remove"):
+                # PERSISTED ON THE CHANGE, not on shutdown (spec 019 FR2). A server is stopped by
+                # `stop`, by Ctrl-C, by a crash and by the machine sleeping, and only the first of
+                # those runs anything — a save-on-exit would be absent in exactly the cases the
+                # restart is most likely to follow.
+                store.write_lanes(state.session, state.lanes.names)
         # The set changed even though the live lane may not have. Publish it, or the page keeps
         # offering a lane that is gone.
         await _set_lane(state, state.lanes.current, why=action)
     return web.json_response({
+                store.write_lanes(state.session, state.lanes.names)
         "lane": state.lanes.current,
         "lanes": list(state.lanes.names),
         "default_lane": state.lanes.default,

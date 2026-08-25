@@ -23,6 +23,7 @@ import json
 import os
 import re
 import time
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -274,6 +275,54 @@ def read_consumed_cursor(session: str, base: str | None = None) -> int:
             return int(json.load(fh).get("cursor", -1))
     except (json.JSONDecodeError, OSError, TypeError, ValueError):
         return -1
+
+
+def _lanes_path(session: str, base: str | None = None) -> str:
+    validate_session(session)
+    base = base or config.session_dir()
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, f"{session}.lanes.json")
+
+
+def read_lanes(session: str, base: str | None = None) -> list[str]:
+    """The agent lanes registered before the last restart (spec 019 FR1).
+
+    🔴 **A RESTART USED TO UN-INVITE THE ROOM.** The registry is built at startup from
+    `serve --wake` alone, so every lane added with `lane add` vanished and every one of those
+    agents' blocking `watch` calls died with the socket. Found 2026-08-24 answering his question
+    *"will restarting the tunnel kill the other lanes?"* — the answer was yes on both counts.
+
+    ⚠ **The loss is easy to miss, which is why it survived four restarts in one day:** the turn log
+    is on disk and comes back intact, so the CONVERSATION is all there and only the ROOM is gone.
+    The cost is paid by the other agents, who cannot see it happen — they get a dead socket and no
+    reason.
+
+    Empty list when nothing was ever registered, which is exactly a single-agent session.
+    """
+    path = _lanes_path(session, base)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            names = json.load(fh).get("lanes", [])
+        return [str(n) for n in names if isinstance(n, str)]
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return []
+
+
+def write_lanes(session: str, names: Iterable[str], base: str | None = None) -> None:
+    """Persist the lane set beside the log it belongs to.
+
+    Best-effort for the same reason as the cursor above: a disk error must never break the `lane`
+    call itself. The cost of failing is that the next restart asks him to re-add a lane, which is
+    the behaviour this replaces rather than a new failure.
+    """
+    path = _lanes_path(session, base)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"lanes": [str(n) for n in names]}, fh)
+    except OSError:
+        pass
 
 
 def write_consumed_cursor(session: str, cursor: int, base: str | None = None) -> None:
