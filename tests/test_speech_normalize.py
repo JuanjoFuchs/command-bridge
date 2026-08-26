@@ -190,10 +190,19 @@ def handed(monkeypatch):
             return b"\x00\x00" * 64, 22050
         return _synth
 
+    def record_kokoro(name):
+        # The resident kokoro method returns THREE values since spec 020 — pcm, rate, schedule —
+        # while the module-level `_synth_*` helpers still return two. Two shapes, so two stubs: a
+        # single one would have to guess which caller it was standing in for.
+        def _synth(text, *a, **k):
+            seen[name] = text
+            return b"\x00\x00" * 64, 22050, None
+        return _synth
+
     monkeypatch.setattr(tts, "_synth_sapi", record("sapi"))
     monkeypatch.setattr(tts, "_synth_piper", record("piper"))
     monkeypatch.setattr(tts, "_synth_none", record("none"))
-    monkeypatch.setattr(tts._KOKORO, "synthesize", record("kokoro"))
+    monkeypatch.setattr(tts._KOKORO, "synthesize", record_kokoro("kokoro"))
     return seen
 
 
@@ -298,9 +307,11 @@ def test_the_kokoro_path_inserts_the_shorter_gap_for_a_comma(monkeypatch):
     monkeypatch.setattr(tts._KOKORO, "_load", lambda: _Stub())
     pause = 0.85                                   # his live setting
 
-    one_clause, rate = tts._KOKORO.synthesize("Alpha beta.", "bm_daniel", 1.2, pause)
-    comma, _ = tts._KOKORO.synthesize("Alpha, beta.", "bm_daniel", 1.2, pause)
-    full_stop, _ = tts._KOKORO.synthesize("Alpha. Beta.", "bm_daniel", 1.2, pause)
+    # Three values since spec 020; the schedule is None here because the stub export carries no
+    # durations, which is exactly the state this pacing test wants — it measures SILENCE, not words.
+    one_clause, rate, _ = tts._KOKORO.synthesize("Alpha beta.", "bm_daniel", 1.2, pause)
+    comma, _, _ = tts._KOKORO.synthesize("Alpha, beta.", "bm_daniel", 1.2, pause)
+    full_stop, _, _ = tts._KOKORO.synthesize("Alpha. Beta.", "bm_daniel", 1.2, pause)
 
     speech_bytes = 240 * 2 * 2                      # two pieces of stub audio, 16-bit
     comma_gap = len(comma) - speech_bytes

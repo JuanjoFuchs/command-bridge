@@ -979,11 +979,35 @@ DESCRIBE: dict[str, Any] = {
                                "session and nothing changes. Refused with code `off_lane` when "
                                "he is talking to somebody else -- nothing is synthesized and "
                                "nothing is queued, and the remedy is the watch that returns when "
-                               "he comes back to you"},
+                               "he comes back to you",
+                     "--timings": "ALSO RETURN WHEN EACH WORD IS SPOKEN, in seconds from the "
+                                  "start of the clip, so you can drive a pointer, a highlight or "
+                                  "a slide IN STEP with the speech instead of estimating from "
+                                  "the total duration. The schedule is known at synthesis, which "
+                                  "is why it comes back in this response and not during "
+                                  "playback: set your timers before the audio starts. Kokoro "
+                                  "with the timestamped model only — anywhere else you get "
+                                  "`timings_unavailable` and a reason, NEVER an estimate wearing "
+                                  "the same shape. Cannot be combined with --now, which returns "
+                                  "before the clip exists"},
             "returns": {
                 "queued": "bool — the clip was synthesized and handed to the transport",
                 "id": "str — clip id",
                 "seconds": "float — how long the audio runs",
+                "words": "[{w, t}, ...] — ONLY with --timings. `t` is seconds from the start of "
+                         "the clip, and it already accounts for the leading silence, the "
+                         "sentence gaps and any trimming, so it is an offset into the audio you "
+                         "will actually hear. Word one starts after the ~0.1s Bluetooth lead-in.",
+                "words_aligned": "bool — ONLY with --timings. TRUE means each `w` is a word of "
+                                 "your text. FALSE means phonemization merged or split something "
+                                 "(`on the` becomes one sound; `54` becomes two) so `w` carries "
+                                 "the sound group instead. **The TIMES are correct either way** "
+                                 "— only the labels degrade, and they degrade loudly rather "
+                                 "than being guessed at.",
+                "timings_unavailable": "str — ONLY with --timings, and only when no schedule "
+                                       "could be produced. Says which backend and why. Its "
+                                       "presence is the signal to fall back to your own "
+                                       "estimate KNOWING it is one.",
                 "held_for": "float — SECONDS THE SERVER SAT ON THIS CLIP because he was still "
                             "speaking when it was ready (up to 15s). **Non-zero means he kept "
                             "talking while you were composing, so your reply may be answering a "
@@ -2894,6 +2918,17 @@ def cmd_say(args) -> dict[str, Any]:
         payload["async"] = True
     if getattr(args, "lane", None):
         payload["lane"] = args.lane
+    if getattr(args, "timings", False):
+        # REFUSED RATHER THAN SILENTLY EMPTY. `--now` returns before synthesis runs, so there is
+        # no schedule to report — and a `--now --timings` call that came back without `words`
+        # would read as "this engine cannot do timings" when the real answer is "you asked for
+        # them on the one path that returns too early to have them".
+        if payload.get("async"):
+            return {"error": "--timings cannot be combined with --now",
+                    "code": "bad_request",
+                    "remedy": "drop --now: the schedule only exists once the clip is synthesized, "
+                              "and --now returns before that happens"}
+        payload["timings"] = True
     result = _request(args.session, "/say", payload)
     if isinstance(result, dict) and result.get("held_off_lane"):
         # HELD, NOT LOST AND NOT REFUSED. He is talking to somebody else, so this reply is waiting
@@ -4343,6 +4378,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="return immediately, synthesize in the background — use for a quick ack so you "
         "can keep working while it speaks",
+    )
+    y.add_argument(
+        "--timings",
+        action="store_true",
+        help="also return WHEN each word is spoken, in seconds from the start of the clip, so a "
+             "caller can drive a pointer or a highlight in step with the speech. Kokoro with the "
+             "timestamped model only; anywhere else it reports that it cannot rather than "
+             "estimating. Cannot be combined with --now, which returns before synthesis happens",
     )
     y.add_argument("text")
 

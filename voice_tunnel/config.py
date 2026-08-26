@@ -943,17 +943,61 @@ def kokoro_speed(speed: float) -> float:
     return max(SPEED_MIN, min(KOKORO_SPEED_MAX, float(speed)))
 
 
+KOKORO_TIMESTAMPED_MODEL = "kokoro-v1.0-timestamped.onnx"
+"""The export that returns per-token durations beside the waveform (spec 020).
+
+**Preferred over the plain export because it is the same weights.** Measured 2026-08-26 on this
+machine: identical inputs produce audio with `max abs diff 0.0` against `kokoro-v1.0.onnx`, so
+choosing it costs nothing in sound and buys the schedule `say --timings` reports. When it is
+absent the plain model still loads and timings are reported as unavailable rather than estimated.
+
+⚠ **It is NOT a drop-in for `kokoro_onnx.Kokoro.create`.** It names its first input `input_ids`
+rather than `tokens`, and on that branch kokoro-onnx 0.5.0 sends `speed` as `np.int32` — so a
+1.2 becomes 1 and every reply is silently slower. The resident backend issues its own model call
+for exactly this reason; see `tts._ResidentKokoro`."""
+
+
 def kokoro_model() -> str:
     """Path to the Kokoro `.onnx`, or "" if it is not on disk.
 
     Kokoro is ONE model plus ONE voice pack, a different shape from Piper's one-file-per-voice.
     So there is no directory scan here: the voices live inside `kokoro_voices_bin()` and only the
     loaded model can enumerate them.
+
+    **The timestamped export wins when both are present** — same audio, plus the durations. An
+    explicit `VOICE_TUNNEL_KOKORO_MODEL` still outranks both, so pinning a specific file remains
+    possible.
     """
     explicit = _env("VOICE_TUNNEL_KOKORO_MODEL")
     if explicit:
         return explicit
-    path = os.path.join(models_dir(), "kokoro-v1.0.onnx")
+    # ONE DEFINITION OF WHICH MODEL IS LIVE. `doctor`, `status` and the loader all read this, and
+    # they were briefly allowed to disagree — the backend loading the timestamped export while
+    # `doctor` reported the plain one. A tool that misreports what it is running is the specific
+    # failure the runtime check in the Voice Tunnel Guide exists to catch.
+    for name in (KOKORO_TIMESTAMPED_MODEL, "kokoro-v1.0.onnx"):
+        path = os.path.join(models_dir(), name)
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def kokoro_timestamped_model() -> str:
+    """Path to the durations-bearing export, or "" if it is not on disk (spec 020).
+
+    ⚠ **This file is NOT a drop-in for `kokoro_onnx.Kokoro.create`, and the failure is loud.**
+    Measured 2026-08-26:
+
+        InvalidArgument: Unexpected input data type. Actual: (tensor(int32)), expected: (tensor(float))
+
+    It names its first input `input_ids`, and on that branch kokoro-onnx 0.5.0 sends `speed` as
+    `np.int32` while the graph declares it float — so every reply raises instead of speaking.
+    `tts._ResidentKokoro` issues its own model call for exactly this reason and takes that path
+    only when the loaded graph reports durations. **Preferring this export was held back until
+    that caller existed**, because flipping it first would have armed a tunnel that went silent on
+    its next restart.
+    """
+    path = os.path.join(models_dir(), KOKORO_TIMESTAMPED_MODEL)
     return path if os.path.isfile(path) else ""
 
 

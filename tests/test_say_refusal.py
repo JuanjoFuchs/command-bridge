@@ -235,7 +235,12 @@ def test_no_flag_anywhere_on_say_disables_the_check():
     # can only ever ADD a way to be refused. No value of it reaches synthesis, and the unread
     # check below it still runs on every path that does. It makes `say` strictly harder to use,
     # which is the opposite of the thing this test is guarding against.
-    assert flags == {"-h", "--help", "--session", "--voice", "--now", "--lane"}, (
+    # `--timings` (spec 020) was given the same look. It is NOT a bypass, and again structurally:
+    # it is read into a local at the top of the handler beside `async`, is never consulted by any
+    # guard, and only chooses WHICH synthesis function runs once every refusal has already been
+    # passed. It cannot reach a branch the check does not sit above, and it adds no branch of its
+    # own. What it changes is the SHAPE OF THE RESPONSE after a clip exists.
+    assert flags == {"-h", "--help", "--session", "--voice", "--now", "--lane", "--timings"}, (
         "a new flag on `say` needs a deliberate look: is it a way around the refusal?"
     )
     for banned in ("--force", "--anyway", "--no-check", "--skip-unread", "--ignore-unread",

@@ -1081,6 +1081,7 @@ async def handle_say(request: web.Request) -> web.Response:
     text = (body or {}).get("text", "")
     voice = (body or {}).get("voice") or None
     fire_and_forget = bool((body or {}).get("async"))
+    timings = bool((body or {}).get("timings"))
     if not isinstance(text, str) or not text.strip():
         return web.json_response({"error": "text is required"}, status=400)
 
@@ -1242,7 +1243,7 @@ async def handle_say(request: web.Request) -> web.Response:
         return web.json_response({"queued": True, "async": True, **unread})
 
     try:
-        result = await _speak(state, text, voice, lane=lane)
+        result = await _speak(state, text, voice, lane=lane, timings=timings)
     except tts.TTSError as exc:
         return web.json_response({"error": str(exc)}, status=500)
     return web.json_response({**result, **unread})
@@ -1271,7 +1272,7 @@ def record_spoken(session: str, clip_id: str, text: str, held_for: float) -> str
 
 
 async def _speak(state: TunnelState, text: str, voice: str | None,
-                 lane: str | None = None) -> dict[str, Any]:
+                 lane: str | None = None, timings: bool = False) -> dict[str, Any]:
     """Synthesize, hold if the speaker is mid-sentence, then push the audio.
 
     Shared by the blocking and fire-and-forget paths so the interruption guard cannot be
@@ -1289,12 +1290,20 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
     owner = lane or state.lanes.current
     await _set_agent_state(state, "synthesizing", owner)
     try:
-        pcm, rate = await asyncio.get_running_loop().run_in_executor(
-            None,
-            lambda: tts.synthesize(
-                text, voice=voice, speed=state.speech_speed, pause=state.sentence_pause
-            ),
-        )
+        # THE UNTIMED CALL IS THE ORIGINAL ONE, deliberately. `synthesize` is what nine test
+        # stubs and every caller before spec 020 name, and the overwhelmingly common path should
+        # not change shape to serve an opt-in flag. `synthesize_timed` is reached only when the
+        # schedule was actually asked for.
+        def _synth():
+            if timings:
+                return tts.synthesize_timed(
+                    text, voice=voice, speed=state.speech_speed,
+                    pause=state.sentence_pause, timings=True)
+            pcm_, rate_ = tts.synthesize(
+                text, voice=voice, speed=state.speech_speed, pause=state.sentence_pause)
+            return pcm_, rate_, None
+
+        pcm, rate, schedule = await asyncio.get_running_loop().run_in_executor(None, _synth)
     except tts.TTSError as exc:
         # `tts`, so that "SAPI produced no audio" survives a later voiceprint or capture error.
         # It did not, on 2026-08-10, and the person debugging TTS spent twenty-five minutes
@@ -1426,6 +1435,15 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         "queued": True,
         "id": clip_id,
         "seconds": round(len(pcm) / 2 / rate, 2),
+        # THE SCHEDULE, WHEN IT WAS ASKED FOR AND CAN BE ANSWERED (spec 020 FR1/FR4). Absent when
+        # `--timings` was not passed; `{"words": [], "aligned": false}` never stands in for an
+        # engine that has no durations — `timings_unavailable` says that in words instead, so a
+        # caller can tell "nothing to report" from "cannot report".
+        **({"words": schedule["words"], "words_aligned": schedule["aligned"]}
+           if schedule else
+           {"timings_unavailable":
+            f"the {config.tts_backend()} backend has no per-token durations on this model"}
+           if timings else {}),
         "held_for": round(waited, 1),
         # WAS IT HELD **BECAUSE HE WAS TALKING**, or is that just the grace pass?
         #

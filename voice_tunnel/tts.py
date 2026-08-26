@@ -294,6 +294,79 @@ class _ResidentVoice:
 _RESIDENT = _ResidentVoice()
 
 
+KOKORO_UNIT_SAMPLES = 600
+"""Samples of audio per duration unit in Kokoro's timestamped export — 25 ms at 24 kHz.
+
+**Measured, not derived, because the arithmetic disagrees with the model.** `config.json`
+(`upsample_rates=[10,6]`, `gen_istft_hop_size=5`) implies 300, which is wrong by exactly a factor
+of two. The relationship that holds is:
+
+    samples == sum(max(1, round(dᵢ))) * 600
+
+**exact — zero error — across 14 cases** on 2026-08-26: four voices and speeds 0.8 through 4.0.
+Both roundings carry weight. Rounding the SUM instead of each token matched 0 of 10; the
+`max(1, …)` floor is what closed the last two, because a token never costs less than one unit and
+at high speed many round to zero. See Local TTS for the Voice Tunnel - Research."""
+
+
+def word_offsets(tokens, durations, space_id):
+    """Start/end SAMPLE offsets for each spoken group, from per-token durations (spec 020 FR1).
+
+    A "group" is a run of tokens between spaces — which is what the model actually paces as a
+    unit. The first and last tokens are the pad the export brackets every sequence with, and the
+    leading one is not silence-adjacent decoration: measured at 11.946 units ≈ 299 ms against a
+    word-one start of 0.300 s, it IS the leading silence. It is excluded here rather than
+    highlighted (TC3).
+
+    ⚠ **Cumulate the ROUNDED values, never the raw floats.** The durations arrive as pre-round
+    float32 — the PyTorch reference rounds them and the ONNX export does not — so a naive
+    `cumsum(durations)` looks right and drifts: **567 ms by the end of a 7.5 s sentence** at the
+    speed he actually runs. That is the failure where a highlight is correct for three words and a
+    word behind by the end, which is the hardest kind to attribute later.
+    """
+    units = [max(1, int(round(float(d)))) for d in durations]
+    starts, acc = [], 0
+    for u in units:
+        starts.append(acc)
+        acc += u
+    spans: list[list[int]] = []
+    open_group = False
+    for i, tid in enumerate(tokens):
+        if i == 0 or i == len(tokens) - 1 or tid == space_id:
+            open_group = False
+            continue
+        if not open_group:
+            open_group = True
+            spans.append([starts[i], 0])
+        spans[-1][1] = starts[i] + units[i]
+    return [(a * KOKORO_UNIT_SAMPLES, b * KOKORO_UNIT_SAMPLES) for a, b in spans]
+
+
+def label_groups(text: str, groups: list[str]) -> tuple[list[str], bool]:
+    """Pair spoken groups with the words they came from. Returns `(labels, aligned)`.
+
+    🔴 **The pairing is not always one-to-one, and this reports that instead of guessing.**
+    Phonemization is free to merge and to split: measured 2026-08-26, *"The camera is on the
+    left."* is six words and FIVE groups because `on the` becomes a single `ɒnðə`, and *"We have
+    54 voices"* expands one token into two. The tokenizer returns a bare string with no alignment
+    back to the text, so nothing recoverable connects them when the counts differ.
+
+    **When they match, the labels are the real words and `aligned` is True.** When they do not,
+    the labels fall back to the phoneme groups and `aligned` is False — the caller still gets a
+    correct SCHEDULE, at the granularity the engine actually paces, and is told the words are not
+    a per-word mapping. FR4: an estimate presented in the shape of a measurement is the thing this
+    feature exists to remove.
+
+    ⚠ **Do not "fix" this by phonemizing each word separately and concatenating.** That would make
+    the mapping exact and change the audio: `ɒnðə` is the cross-word run a natural reading
+    produces, and NFR2 holds the sound constant.
+    """
+    words = text.split()
+    if len(words) == len(groups):
+        return words, True
+    return groups, False
+
+
 class _ResidentKokoro:
     """The Kokoro model held open in THIS process, for the same reason :class:`_ResidentVoice` is.
 
@@ -319,6 +392,9 @@ class _ResidentKokoro:
         # be clamped — None when nothing was clamped. Kept so the clamp is a reportable fact
         # rather than a thing that quietly happened; see `synthesize` and `available`.
         self.speed_clamped_from: float | None = None
+        # Whether the loaded export reports per-token durations. Decided at load from the graph's
+        # own outputs, never from the filename.
+        self._timed = False
 
     @property
     def loaded(self) -> bool:
@@ -329,10 +405,15 @@ class _ResidentKokoro:
             return None
         if self._kokoro is not None:
             return self._kokoro
+        # `kokoro_model` already prefers the timestamped export when it is on disk — identical
+        # weights (audio measured bit-for-bit equal, 2026-08-26) plus a per-token duration output.
+        # Asking it rather than choosing here is what keeps `doctor` and `status` naming the file
+        # this actually loaded, instead of the one they would have picked.
         model, voices = config.kokoro_model(), config.kokoro_voices_bin()
         # Named separately: having the model without the pack is the state `download` exists to
         # prevent, and "kokoro is broken" is a useless thing to tell someone who is missing one file.
-        missing = [n for n, p in (("kokoro-v1.0.onnx", model), ("voices-v1.0.bin", voices)) if not p]
+        missing = [n for n, p in (("kokoro-v1.0.onnx", model), ("voices-v1.0.bin", voices))
+                   if not p]
         if missing:
             self.unavailable_reason = (
                 f"{' and '.join(missing)} not in {config.models_dir()} — run "
@@ -350,7 +431,74 @@ class _ResidentKokoro:
             self.unavailable_reason = f"the kokoro model would not load ({exc})"
             self._kokoro = None
             return None
+        # ASK THE SESSION, NOT THE FILENAME. Whether this export reports durations is a property
+        # of the graph, and a path can be overridden by `VOICE_TUNNEL_KOKORO_MODEL` to anything.
+        # This flag is also what keeps the ORIGINAL synthesis path intact: without durations the
+        # backend still goes through `Kokoro.create` exactly as before, so swapping the model is
+        # the only thing that changes behaviour.
+        try:
+            self._timed = any(o.name == "durations" for o in self._kokoro.sess.get_outputs())
+        except Exception:
+            self._timed = False
         return self._kokoro
+
+    MAX_TOKENS = 510
+    """The export's context, minus the two pad tokens it brackets every sequence with."""
+
+    def _run(self, k, phonemes: str, voice: str, speed: float):
+        """One forward pass, issued HERE rather than through `kokoro_onnx.Kokoro.create`.
+
+        🔴 **This exists because of the dtype on ONE argument.** The timestamped export names its
+        first input `input_ids`, and on that branch kokoro-onnx 0.5.0 sends
+        `np.array([speed], dtype=np.int32)` into a graph that declares `speed` as float — so every
+        call raises `InvalidArgument: Actual: (tensor(int32)), expected: (tensor(float))`.
+        Measured 2026-08-26. The library is still doing the hard part above us — `phonemize` owns
+        misaki's normalisation and `get_voice_style` owns the pack — and this owns the one line
+        that would otherwise make the swap impossible.
+
+        Returns `(float32 samples, durations or None, token ids)`. Batched on spaces exactly as
+        the library batches, because the export asserts on a sequence longer than its context.
+        """
+        import numpy as np
+
+        style_pack = np.asarray(k.get_voice_style(voice))
+        chunks: list[str] = []
+        for word in phonemes.split(" "):
+            if chunks and len(chunks[-1]) + 1 + len(word) <= self.MAX_TOKENS:
+                chunks[-1] = f"{chunks[-1]} {word}"
+            else:
+                chunks.append(word[: self.MAX_TOKENS])
+        names = {i.name for i in k.sess.get_inputs()}
+        key = "input_ids" if "input_ids" in names else "tokens"
+        outs = [o.name for o in k.sess.get_outputs()]
+        audio_key = "waveform" if "waveform" in outs else outs[0]
+
+        parts, durs, all_ids = [], [], []
+        for chunk in chunks:
+            toks = list(k.tokenizer.tokenize(chunk))
+            ids = [0, *toks, 0]
+            # The style vector is indexed BY TOKEN COUNT — a (510, 1, 256) pack, not one vector.
+            # Getting this wrong yields a validly-shaped vector for a different-length utterance,
+            # which produces audio and no error.
+            style = style_pack[len(toks)]
+            if style.ndim == 1:
+                style = style[None, :]
+            got = k.sess.run(None, {
+                key: np.array([ids], dtype=np.int64),
+                "style": style.astype(np.float32),
+                "speed": np.array([speed], dtype=np.float32),   # <- float32. The whole reason.
+            })
+            named = dict(zip(outs, got))
+            parts.append(np.asarray(named[audio_key]).squeeze())
+            all_ids.append(ids)
+            if "durations" in named:
+                durs.append(np.asarray(named["durations"]).squeeze())
+        if len(parts) == 1:
+            return parts[0], (durs[0] if durs else None), all_ids[0]
+        # A batched piece cannot carry one duration series, because the concatenation drops the
+        # pad handling between chunks. Audio still joins; timings are declined rather than
+        # guessed (FR4).
+        return np.concatenate(parts), None, all_ids[0]
 
     def voices(self) -> list:
         """Voice names inside the pack, or [] if the model cannot be loaded to ask it."""
@@ -358,8 +506,12 @@ class _ResidentKokoro:
             k = self._load()
             return sorted(k.get_voices()) if k is not None else []
 
-    def synthesize(self, text: str, voice: str, speed: float, pause: float) -> tuple[bytes, int]:
+    def synthesize(self, text: str, voice: str, speed: float, pause: float,
+                   timings: bool = False) -> tuple[bytes, int, dict | None]:
         """Mono 16-bit PCM at Kokoro's own rate. Raises TTSError — there is no fallback path.
+
+        Returns `(pcm, rate, schedule)`. `schedule` is None unless `timings` was asked for and the
+        loaded export actually carries durations — never an estimate standing in for one (FR4).
 
         Sentences are synthesized separately and joined with silence, matching what the piper
         backend does, because Kokoro returns one array for the whole input and would otherwise run
@@ -386,14 +538,47 @@ class _ResidentKokoro:
             # before the gap — Kokoro's prosody depends on it, and a fragment stripped of its
             # comma is read with a falling, finished tone. The split moved into `speech.segments`
             # so both resident backends pace from one definition.
+            schedule: list[dict] = []
+            aligned = True
             parts: list[bytes] = []
             rate = config.KOKORO_SR
+            # Sample offset of the NEXT piece within the clip, so a word's time is measured
+            # against the whole reply rather than its own sentence (FR2). `_articulate` is
+            # sample-wise and `quiet` is exact, so this counter stays true to the bytes.
+            cursor = 0
             for piece, gap in speech.segments(text) or [(text, 0.0)]:
+                dur = ids = None
+                lead = 0
                 try:
-                    samples, rate = k.create(piece, voice=voice, speed=speed, lang=lang)
+                    if self._timed:
+                        # The durations path. `phonemize` and the voice pack stay the library's
+                        # job; only the model call is ours, and only because of the `speed` dtype.
+                        phonemes = k.tokenizer.phonemize(piece, lang)
+                        samples, dur, ids = self._run(k, phonemes, voice, speed)
+                        # Trim the way the library does, so the PCM is unchanged — but keep WHAT
+                        # it removed. A leading trim we do not subtract is a constant error on
+                        # every word in the piece.
+                        from kokoro_onnx.trim import trim as trim_audio
+                        samples, (lead, _end) = trim_audio(samples)
+                    else:
+                        # THE ORIGINAL PATH, byte for byte. Without a durations-bearing export
+                        # nothing about synthesis changes — which is what keeps this swap
+                        # reversible by moving one file.
+                        samples, rate = k.create(piece, voice=voice, speed=speed, lang=lang)
                 except Exception as exc:
                     raise TTSError(f"kokoro failed on {piece[:40]!r}: {exc}") from exc
-                parts.append(_float32_to_pcm16(_articulate(samples, rate)))
+                if timings and dur is not None and ids is not None:
+                    space_id = k.tokenizer.vocab.get(" ")
+                    labels, ok = label_groups(piece, phonemes.split())
+                    aligned = aligned and ok
+                    for (a, _b), label in zip(word_offsets(ids, dur, space_id), labels):
+                        schedule.append({"w": label,
+                                         "t": round(max(0, cursor + a - int(lead)) / rate, 3)})
+                elif timings:
+                    aligned = False
+                pcm = _float32_to_pcm16(_articulate(samples, rate))
+                parts.append(pcm)
+                cursor += len(pcm) // 2
                 if gap:
                     # SAMPLES first — `quiet` does the x2 for 16-bit. Computing a BYTE count
                     # directly lands odd for some pauses and shifts every later sample by one
@@ -401,10 +586,19 @@ class _ResidentKokoro:
                     # path, 2026-08-06.
                     # `gap` is 1.0 at a full stop and CLAUSE_PAUSE_RATIO at a comma, so the two
                     # can never come out equal and the reply never ends on a trailing gap.
-                    parts.append(quiet(int(rate * pause * gap)))
+                    n = int(rate * pause * gap)
+                    parts.append(quiet(n))
+                    # THE SILENCE COUNTS. Leaving it out of the cursor puts every word of every
+                    # later sentence early by the sum of the gaps before it — which grows down the
+                    # reply, so the first sentence looks perfect and the last is a beat ahead.
+                    cursor += n
         if not parts:
             raise TTSError("kokoro produced no audio")
-        return b"".join(parts), rate
+        # None, not an empty schedule, when this export has no durations — "I cannot report" and
+        # "there is nothing to report" are different answers and a caller acts differently on
+        # each (FR4). The server turns the None into `timings_unavailable` with a reason.
+        report = {"words": schedule, "aligned": aligned} if (timings and self._timed) else None
+        return b"".join(parts), rate, report
 
 
 _KOKORO = _ResidentKokoro()
@@ -712,6 +906,24 @@ def synthesize(
 ) -> tuple[bytes, int]:
     """Return `(padded mono 16-bit PCM, sample_rate)`. Raises TTSError on failure.
 
+    The two-value contract is deliberate and unchanged: five test files and `pronounce` call this,
+    and a word schedule is of no use to any of them. :func:`synthesize_timed` is the same call
+    with the schedule attached.
+    """
+    pcm, sr, _ = synthesize_timed(text, backend, voice, speed, pause)
+    return pcm, sr
+
+
+def synthesize_timed(
+    text: str, backend: str | None = None, voice: str | None = None,
+    speed: float | None = None, pause: float | None = None, timings: bool = False,
+) -> tuple[bytes, int, dict | None]:
+    """Return `(padded mono 16-bit PCM, sample_rate, schedule)`. Raises TTSError on failure.
+
+    `schedule` is `{"words": [{"w", "t"}, ...], "aligned": bool}` when `timings` is asked for and
+    the engine can answer, and **None when it cannot** — an engine without per-token durations
+    declines rather than estimating (FR4).
+
     `voice` is a NAME from :func:`list_voices`, not a path — see :func:`resolve_voice`.
 
     `speed` is a MULTIPLE OF NATIVE PACE: higher is faster. It is deliberately not piper's
@@ -733,12 +945,13 @@ def synthesize(
     backend = (backend or config.tts_backend()).lower()
     # `sr`, not `rate`: the returned SAMPLE rate would shadow a speech-rate name — a trap that
     # would silently ignore the caller's speed the moment anyone reordered these lines.
+    schedule = None
     if backend == "sapi":
         pcm, sr = _synth_sapi(text)
     elif backend == "piper":
         pcm, sr = _synth_piper(text, resolve_voice(voice), speed=speed, pause=pause)
     elif backend == "kokoro":
-        pcm, sr = _KOKORO.synthesize(
+        pcm, sr, schedule = _KOKORO.synthesize(
             text,
             _resolve_kokoro_voice(voice),
             # Kokoro's `speed` is already a multiple where higher is faster, so it takes the
@@ -747,6 +960,7 @@ def synthesize(
             # contain, and it belongs to piper alone.
             speed=config.speech_speed() if speed is None else speed,
             pause=config.sentence_pause() if pause is None else pause,
+            timings=timings,
         )
     elif backend == "none":
         pcm, sr = _synth_none(text)
@@ -755,7 +969,14 @@ def synthesize(
     # AFTER every backend and BEFORE normalize, so one setting covers piper, kokoro and sapi
     # alike and the gain it removes is not immediately handed back by the normalizer.
     pcm = _deess(pcm, sr)
-    return pad(normalize(pcm), sr), sr
+    # `pad` PREPENDS silence so a Bluetooth sink has time to wake, and that silence is part of the
+    # clip the caller will time against. Every word moves by it. Missing this would put the whole
+    # schedule 100 ms early — small enough to look like tuning and wrong on every single word.
+    if schedule is not None:
+        lead = int(sr * config.CHIME_LEADING_SILENCE_S) / sr
+        schedule = {**schedule,
+                    "words": [{**w, "t": round(w["t"] + lead, 3)} for w in schedule["words"]]}
+    return pad(normalize(pcm), sr), sr, schedule
 
 
 def write_wav(path: str, pcm: bytes, sample_rate: int) -> str:

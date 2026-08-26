@@ -250,7 +250,11 @@ def test_an_over_ceiling_speed_reaches_kokoro_clamped_instead_of_raising(monkeyp
     stub = _StubKokoro()
     monkeypatch.setattr(tts._KOKORO, "_load", lambda: stub)
 
-    pcm, rate = tts._KOKORO.synthesize("Hello there.", "bm_daniel", speed=2.5, pause=0.0)
+    # THREE VALUES SINCE SPEC 020: the third is the word schedule, None unless `timings`
+    # was asked for and the loaded export carries durations. The stub carries neither.
+    pcm, rate, sched = tts._KOKORO.synthesize("Hello there.", "bm_daniel", speed=2.5,
+                                              pause=0.0)
+    assert sched is None, "a schedule must not appear when nobody asked for one"
 
     assert stub.speeds == [config.KOKORO_SPEED_MAX]
     assert rate == config.KOKORO_SR
