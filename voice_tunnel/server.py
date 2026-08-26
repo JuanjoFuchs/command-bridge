@@ -297,6 +297,18 @@ class TunnelState:
         # wholesale. JJ lost three of Kepler's replies that way on 2026-08-26. Holding a copy here
         # until the `played` receipt arrives is what makes the client queue disposable again.
         self.lane_inflight: dict[str, list] = {}
+        # The lane that was live when he opened his mouth, or None between utterances. Routing
+        # reads THIS rather than `lanes.current`, so a switch made while he is still being
+        # transcribed does not redirect what he already said (spec 023).
+        self.utterance_lane: str | None = None
+        # 🔴 WHICH LANE EACH IN-FLIGHT CLIP BELONGS TO (spec 024). `speaking_lane` is ONE slot for
+        # N agents, so a second clip going out overwrites the first, and the first `played`
+        # receipt then releases the wrong lane and nulls the slot — leaving the real speaker on
+        # "speaking" with nothing left that can clear it. JJ, 2026-08-26: *"I see an agent lane
+        # that has its hand raised. And when I switch to it, it doesn't start playing. And another
+        # lane says speaking."* The receipt has always carried a clip id; this is what lets it
+        # name a lane.
+        self.clip_owner: dict[str, str] = {}
         """Clips an off-lane agent produced while he was talking to somebody else (FR7).
 
         ⚠ **DELIBERATELY NOT `undelivered`.** That queue is cleared wholesale by barge-in, which
@@ -1414,6 +1426,8 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         # the time it lands he may have moved on.
         await _set_agent_state(state, "speaking", owner)
         state.speaking_lane = owner
+        # KEYED BY CLIP, so a second lane going out cannot make this one unreleasable (spec 024).
+        state.clip_owner[clip_id] = owner
         await _push_cue(state, "speaking")
         await _send_clip(state, header, pcm)
     elif off_lane:
@@ -1547,6 +1561,10 @@ async def _flush_lane_held(state: TunnelState, lane: str) -> int:
         header = dict(clip["header"])
         header["delayed_s"] = round(time.time() - clip["at"], 1)
         header["held_off_lane"] = True
+        # Each flushed clip records its own owner too (spec 024) — a flush sends SEVERAL at once,
+        # which is precisely the case a single `speaking_lane` slot cannot represent.
+        if header.get("id"):
+            state.clip_owner[str(header["id"])] = lane
         await _send_clip(state, header, clip["pcm"])
     if queued:
         timing.stamp(state.session, "lane_held_flushed", lane=lane, count=len(queued))
@@ -2175,8 +2193,11 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         # clip is still the server's problem, because everything between here and his ear can
         # still drop it.
         _clip_played(state, state.last_played)
-        timing.stamp(state.session, "played", clip=state.last_played,
-                     lane=state.speaking_lane or state.lanes.current)
+        # 🔴 THE LANE THIS CLIP ACTUALLY BELONGED TO (spec 024), looked up by its own id rather
+        # than read from a slot the next clip may already have overwritten.
+        owner = state.clip_owner.pop(state.last_played, None) \
+            or state.speaking_lane or state.lanes.current
+        timing.stamp(state.session, "played", clip=state.last_played, lane=owner)
         # Playback finished, so the agent is no longer speaking. The client is the only party
         # that knows when a clip actually ended — the server only knows when it finished
         # sending — so the receipt is what closes the state machine back to idle.
@@ -2184,8 +2205,12 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         # RELEASES THE LANE THAT WAS SPEAKING, not the one that is live now (016 FR3). A clip runs
         # for seconds and he can switch during it; releasing `lanes.current` would leave the real
         # speaker on `speaking` forever and reset an agent that never spoke.
-        await _set_agent_state(state, "idle", state.speaking_lane or state.lanes.current)
-        state.speaking_lane = None
+        await _set_agent_state(state, "idle", owner)
+        # ⚠ CLEARED ONLY IF THIS CLIP IS THE ONE IT NAMES. Nulling it unconditionally is what
+        # stranded the other lane: with two clips in flight, the first receipt wiped the slot and
+        # the second speaker had nothing left that could release it.
+        if state.speaking_lane == owner:
+            state.speaking_lane = None
     elif kind == "verbose":
         # Stored and republished, never acted on here — see TunnelState.verbose.
         state.verbose = bool(msg.get("value"))
@@ -2334,6 +2359,10 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
     # which after a summons-shaped interruption is frequently somebody else.
     await _set_agent_state(state, "idle", state.speaking_lane or state.lanes.current)
     state.speaking_lane = None
+    # Nothing is in flight after the queue is dropped, so no receipt is coming for any of it and
+    # the owners would otherwise accumulate for the life of the session (spec 024). The clips
+    # themselves went back to their lanes' holds a few lines above.
+    state.clip_owner.clear()
 
 
 async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventLoop) -> None:
@@ -2350,7 +2379,15 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
 
     await _maybe_barge(state, samples)
 
+    # 🔴 WHICH LANE HE STARTED SPEAKING TO (spec 023). Latched on the silence→speech edge and
+    # held until the turn is routed, because everything between those two moments takes seconds —
+    # ASR, the voiceprint, the turn model — and he can move the conversation inside that window.
+    # Reading the live lane at the END of that pipeline delivers his words to whoever he switched
+    # TO, which is an agent he was never talking to and cannot un-hear them.
+    speaking_before = bool(state.buffer.speech_active)
     completed = state.buffer.feed(samples)
+    if not speaking_before and state.buffer.speech_active and state.utterance_lane is None:
+        state.utterance_lane = state.lanes.current
     if completed is None:
         _maybe_partial(state, loop)
         return
@@ -2474,7 +2511,21 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # verdict — before the window bookkeeping below, because a refusal has to wind the window back
     # exactly like any other unaddressed turn. A refused turn that left the window open would hold
     # the conversation on behalf of a summons nobody could route.
-    routing = state.lanes.resolve(text)
+    # 🔴 RESOLVED AGAINST THE LANE HE WAS SPEAKING TO, not the one live now (spec 023). The
+    # resolver is pure and takes `current` as an argument, so this is the whole fix: an utterance
+    # carries its own lane from the moment it began, and a tap made while ASR was still running
+    # no longer redirects words he had already finished saying.
+    #
+    # An explicit leading summons still switches — `resolve` reads the transcript for that and
+    # only uses `current` to decide stay-versus-switch — because saying a name is him addressing
+    # someone ON PURPOSE, which is exactly the case that should still move.
+    # ⚠ Named `addressed_lane`, NOT `speaking_lane`: `state.speaking_lane` already exists in this
+    # file and means the OPPOSITE party — which agent is talking to him. One word, two opposite
+    # meanings, is how the next reader gets it backwards.
+    addressed_lane = state.utterance_lane or state.lanes.current
+    routing = lanes_mod.resolve(text, state.lanes.names, addressed_lane)
+    # The utterance is routed; the next one latches its own lane.
+    state.utterance_lane = None
     if routing.action == "refuse":
         # He named somebody, and it was not exactly anybody. Deliver to NO ONE rather than to the
         # lane already live: that lane is precisely the wrong guess, since a summons is only
