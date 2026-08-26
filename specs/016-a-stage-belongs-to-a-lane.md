@@ -146,7 +146,21 @@ lane.** The read cursor was the same mistake (spec 015 FR1), and so was the tran
 - [ ] **AC-6** `manual` — **TC1.** On his phone with three agents: switch lanes while one is
       mid-reply and confirm no orb is left on a word. Manual because the race this fixes needs real
       ASR latency and a real switch to open the window — a test can only assert the ordering it
-      chooses, not that the window is closed in practice.
+      chooses, not that the window is closed in practice. 🔴 **STILL OPEN, and asking him did not close it.** JJ, 2026-08-26: *"I have never switched to another lane mid-reply."* **Absence of the symptom is not evidence here** — he has never opened the window this guards, so a morning of clean use says nothing about it. This one needs a DELIBERATE attempt: a long reply started on one lane and a switch made while it is still speaking.
+
+      🔴 **ATTEMPTED 2026-08-26, AND IT FAILED — three of Kepler's replies were destroyed.** JJ: *"I just switched to Kepler while you were still speaking this last turn."* · *"I didn't hear Kepler's turns. And they had two turns pending. And now the hand with the two counts is lost. And I don't know what Kepler wanted to say."* The timing log:
+
+      ```
+      14:15:51.116  lane_held_flushed  kepler  count 3   <- flushed into the browser
+      14:16:07.717  barge_in           score 0.542       <- he speaks
+                                                         <- no `played` for any of the three
+      ```
+
+      🎯 **THE FLUSH MOVES CLIPS OUT OF A SAFE STORE AND INTO ONE HIS NEXT WORD WIPES.** `lane_held` is deliberately separate from `undelivered` precisely because barge-in clears the playback queue wholesale — that separation is documented in `_speak` — but the flush hands them to the client, and from that moment they are in the queue barge-in empties. **And the loss is silent in both directions**: the hand is gone because the flush emptied the server's copy, so nothing on screen says three answers existed. Same class as the expiry `021` just fixed, reached by a different door.
+
+      ⚠ **This is why the AC was not marked passed on absence of the symptom.** A morning of clean use said nothing, and the first deliberate attempt lost three replies.
+
+      ✅ **FIXED by `specs/022-sending-is-not-hearing.md`** the same afternoon: the flush now keeps the server's copy until playback is confirmed, so a dropped browser queue returns the clips to their lane's hold and raises the hand again. **This AC stays open until he re-runs it live** — the fix is server-side and unit-tested, and the thing it guards is precisely a race that only a real voice and a real switch can open.
 
 ## Testing Approach
 

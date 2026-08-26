@@ -155,16 +155,24 @@ def test_a_held_reply_still_delivers_after_a_barge_in(_his_voice, state, sock):
     )
 
 
-def test_the_barge_in_path_does_not_touch_the_lane_hold(state):
-    """Asserted on the source as well as the behaviour, because the coupling would be reintroduced
-    by someone tidying two similar-looking stores into one."""
+def test_the_barge_in_path_never_DISCARDS_a_lane_hold(state):
+    """The coupling would be reintroduced by someone tidying two similar-looking stores into one.
+
+    ⚠ **This used to assert that the string `lane_held` did not appear in `_maybe_barge` at all,
+    and spec 022 broke that proxy without breaking the guarantee.** Barge-in now RETURNS un-played
+    clips to their lane's hold — it writes to the store it must never empty — so "the name is
+    absent" stopped meaning "the hold is safe". The invariant worth holding is *discard*, so that
+    is what is asserted: the destructive calls, by name.
+    """
     import inspect
     body = inspect.getsource(server._maybe_barge)
 
     assert "undelivered.clear()" in body, "the live lane's queue is still dropped"
-    assert "lane_held" not in body.replace("lane_held` IS DELIBERATELY NOT", ""), (
-        "barge-in must not reach into another lane's hold"
-    )
+    for destructive in ("lane_held.clear()", "lane_held.pop(", "lane_held = {}"):
+        assert destructive not in body, (
+            f"barge-in must never {destructive} — he interrupted the lane he is ON, "
+            f"not an agent he cannot hear"
+        )
 
 
 def test_several_held_replies_arrive_oldest_first(state, sock):
@@ -286,3 +294,62 @@ def test_the_off_lane_hint_tells_the_agent_to_SPEAK_not_to_wait():
         "reads 'you may speak' will still default to the politer-looking silence"
     )
     assert "held" in hint.lower(), "and that the clip survives, which is what makes speaking safe"
+
+
+def test_a_flushed_reply_survives_a_barge_in_and_the_hand_comes_back(_his_voice, state, sock):
+    """🔴 SPEC 022 — THE LOSS JJ HIT ON 2026-08-26, and the one this file's older guard missed.
+
+    The store was protected; the CLIPS were not. `_flush_lane_held` popped them out of
+    `lane_held` and pushed them to the browser, and the `stop_playback` that barge-in broadcasts
+    empties that queue wholesale. Between the lane switch and the first `played` receipt, an
+    agent's replies existed nowhere the server could recover them.
+
+        "I just switched to Kepler while you were still speaking this last turn."
+        "I didn't hear Kepler's turns. And they had two turns pending. And now the hand with the
+         two counts is lost. And I don't know what Kepler wanted to say."
+
+    Timing log: `lane_held_flushed kepler count 3`, `barge_in` 16 s later, and no `played` for any
+    of the three.
+    """
+    state.lanes.switch("claude")
+    say(state, "codex answer", lane="codex")
+
+    # He taps over to codex. The clip is flushed to the browser and is now in flight.
+    asyncio.run(server._set_lane(state, "codex", why="tap"))
+    assert state.lane_inflight.get("codex"), "the flush must keep a copy until playback lands"
+    assert not state.lane_held.get("codex"), "and it is no longer merely held"
+
+    # He speaks before it plays. Barge-in tells the page to drop its whole queue.
+    state.agent_state = "speaking"
+    state.user_speaking = True
+    asyncio.run(server._maybe_barge(state, _loud()))
+    assert state.barges == 1, "the barge must actually have fired, or this proves nothing"
+
+    # The reply is back on codex's hold, and the hand is up again.
+    assert not state.lane_inflight.get("codex"), "nothing may stay in flight after the queue is dropped"
+    assert len(state.lane_held.get("codex", [])) == 1, (
+        "an un-played reply must return to its lane rather than vanish with the browser queue"
+    )
+    waiting = [m for m in sock.headers
+               if m.get("type") == "lane_waiting" and m.get("lane") == "codex"]
+    assert waiting and waiting[-1]["waiting"] == 1, (
+        "the hand must come back up — a silent loss is what made this unreportable"
+    )
+
+    # And it still reaches him on the next switch.
+    asyncio.run(server._set_lane(state, "claude", why="tap"))
+    asyncio.run(server._set_lane(state, "codex", why="tap"))
+    assert "codex answer" in audio_texts(sock)
+
+
+def test_a_played_receipt_releases_the_servers_copy(state, sock):
+    """NFR1. The copy is insurance, not a leak — a clip he actually heard must not be held
+    forever, or a long session accumulates every reply ever flushed."""
+    state.lanes.switch("claude")
+    say(state, "codex answer", lane="codex")
+    asyncio.run(server._set_lane(state, "codex", why="tap"))
+
+    clip_id = next(h["id"] for h in sock.headers if h.get("type") == "audio_header")
+    server._clip_played(state, clip_id)
+
+    assert not state.lane_inflight.get("codex"), "the receipt is what lets the server forget it"

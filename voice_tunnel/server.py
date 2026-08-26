@@ -291,6 +291,12 @@ class TunnelState:
         # agent that wrote them the next time it opens a watch. Cleared on delivery, so each
         # expiry is reported exactly once and a re-armed watch does not keep re-announcing it.
         self.lane_expired: dict[str, list] = {}
+        # 🔴 SENT TO THE CLIENT, NOT YET CONFIRMED PLAYED (spec 022). The flush used to POP from
+        # `lane_held` and push straight to the browser — which walked the clips out of the one
+        # store barge-in is documented never to touch, and into the playback queue it empties
+        # wholesale. JJ lost three of Kepler's replies that way on 2026-08-26. Holding a copy here
+        # until the `played` receipt arrives is what makes the client queue disposable again.
+        self.lane_inflight: dict[str, list] = {}
         """Clips an off-lane agent produced while he was talking to somebody else (FR7).
 
         ⚠ **DELIBERATELY NOT `undelivered`.** That queue is cleared wholesale by barge-in, which
@@ -1532,6 +1538,11 @@ async def _flush_lane_held(state: TunnelState, lane: str) -> int:
         await _set_agent_state(state, "speaking", lane)
         state.speaking_lane = lane
         await _push_cue(state, "speaking")
+    # KEEP A COPY UNTIL THE CLIENT SAYS IT PLAYED (spec 022 FR1). Sending is not hearing: the
+    # browser can be told to drop its whole queue a second later, and until 2026-08-26 that took
+    # these with it because nothing here still held them.
+    if queued:
+        state.lane_inflight.setdefault(lane, []).extend(queued)
     for clip in queued:
         header = dict(clip["header"])
         header["delayed_s"] = round(time.time() - clip["at"], 1)
@@ -1539,8 +1550,57 @@ async def _flush_lane_held(state: TunnelState, lane: str) -> int:
         await _send_clip(state, header, clip["pcm"])
     if queued:
         timing.stamp(state.session, "lane_held_flushed", lane=lane, count=len(queued))
+        # The hand comes down on OPTIMISM, and that is deliberate: he has switched to this lane
+        # and the audio is on its way, so leaving it up would be the page telling him something is
+        # still waiting while it plays. If the clips come back (barge-in), so does the hand.
         await _broadcast_json(state, {"type": "lane_waiting", "lane": lane, "waiting": 0})
     return len(queued)
+
+
+def _clip_played(state: TunnelState, clip_id: str) -> None:
+    """A clip reached his ears, so the server can finally let go of its copy (spec 022 FR2).
+
+    Matched by id rather than popped positionally: clips can be acknowledged out of order when a
+    lane switch interleaves two flushes, and dropping the wrong one would keep a played clip
+    forever while discarding an unplayed one.
+    """
+    for lane, clips in list(state.lane_inflight.items()):
+        kept = [c for c in clips if (c.get("header") or {}).get("id") != clip_id]
+        if len(kept) == len(clips):
+            continue
+        if kept:
+            state.lane_inflight[lane] = kept
+        else:
+            state.lane_inflight.pop(lane, None)
+        return
+
+
+async def _return_inflight(state: TunnelState) -> int:
+    """Put un-played clips back on their lane's hold, and raise the hand again (spec 022 FR3).
+
+    🔴 **Called when the client is told to drop its queue.** Barge-in stops the clip he
+    interrupted — that is right — but the same message empties the whole playback queue, and after
+    a lane switch that queue can hold a DIFFERENT agent's replies he has not heard a word of.
+    Measured 2026-08-26: three of Kepler's clips destroyed 16 seconds after he tapped to that lane.
+
+    Returning them rather than discarding them keeps the guarantee `lane_held` was separated from
+    `undelivered` to provide: **nothing an agent said is lost without somebody being told.** He
+    interrupted the lane that was speaking; he did not interrupt one he cannot hear.
+    """
+    returned = 0
+    for lane, clips in list(state.lane_inflight.items()):
+        if not clips:
+            continue
+        # Oldest first, ahead of anything that arrived while they were in flight.
+        state.lane_held[lane] = clips + state.lane_held.get(lane, [])
+        _prune_lane_held(state, lane)
+        returned += len(clips)
+        await _broadcast_json(state, {"type": "lane_waiting", "lane": lane,
+                                      "waiting": len(state.lane_held.get(lane, []))})
+    state.lane_inflight.clear()
+    if returned:
+        timing.stamp(state.session, "inflight_returned", count=returned)
+    return returned
 
 
 def _prune_undelivered(state: TunnelState) -> None:
@@ -2111,6 +2171,10 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         await ws.send_json({"type": "hello_ack", "server_sample_rate": config.TARGET_SR})
     elif kind == "played":
         state.last_played = str(msg.get("id") or "")
+        # THE RECEIPT IS WHAT LETS THE SERVER FORGET IT (spec 022 FR2). Until this arrives the
+        # clip is still the server's problem, because everything between here and his ear can
+        # still drop it.
+        _clip_played(state, state.last_played)
         timing.stamp(state.session, "played", clip=state.last_played,
                      lane=state.speaking_lane or state.lanes.current)
         # Playback finished, so the agent is no longer speaking. The client is the only party
@@ -2257,6 +2321,13 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
     # would be the tool deciding on his behalf that an answer he never received is no longer
     # wanted. That conflation is the only mechanism found that can lose all nine of the clips
     # TC3 measured, and keeping the two stores apart is what stops it happening again.
+    #
+    # 🔴 **AND THE PROTECTION ABOVE HAD A HOLE IN IT UNTIL SPEC 022.** `lane_held` was safe here,
+    # but `_flush_lane_held` popped clips out of it and pushed them to the browser — where the
+    # `stop_playback` this very message sends empties the queue wholesale. So the store was
+    # guarded and the clips were not, from the moment he switched lanes until they played.
+    # Measured 2026-08-26: three of Kepler's replies gone, and the hand gone with them.
+    await _return_inflight(state)
     state.undelivered.clear()
     # THE INTERRUPTED LANE IS THE ONE RELEASED (016 FR3). Barge-in stops the clip that is playing,
     # so the agent returned to rest is the one whose clip it was — not whoever happens to be live,
