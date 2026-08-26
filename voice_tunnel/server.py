@@ -287,6 +287,10 @@ class TunnelState:
         honestly make."""
 
         self.lane_held: dict[str, list] = {}
+        # Replies that aged out before he came back to that lane, waiting to be handed to the
+        # agent that wrote them the next time it opens a watch. Cleared on delivery, so each
+        # expiry is reported exactly once and a re-armed watch does not keep re-announcing it.
+        self.lane_expired: dict[str, list] = {}
         """Clips an off-lane agent produced while he was talking to somebody else (FR7).
 
         ⚠ **DELIBERATELY NOT `undelivered`.** That queue is cleared wholesale by barge-in, which
@@ -1471,12 +1475,39 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
 
 
 def _prune_lane_held(state: TunnelState, lane: str) -> None:
-    """Bound a lane's hold on both axes, exactly as `undelivered` is bounded and for the same
-    reason: coming back to an agent after twenty minutes and being read a stack of stale answers
-    is a worse experience than being told to ask again."""
+    """Bound a lane's hold on both axes: coming back to an agent after half an hour and being read
+    a stack of stale answers is a worse experience than being told to ask again.
+
+    🔴 **AND THE AGENT IS TOLD WHAT IT LOST, which is the half that was missing.** An expiry used
+    to be completely silent in both directions: he never learned a reply had existed, and the agent
+    that wrote it went on believing it had been delivered. JJ, 2026-08-26, deciding where the
+    notice belongs: *"when it expires, it shouldn't tell me. It should tell the agent. The agent
+    should be aware that their replies had expired and did not reach me. Maybe it helps them
+    restate."*
+
+    **Telling him would be noise; telling the agent is actionable** — it is the only party that can
+    do anything about it, and what it can do is say the thing again.
+
+    ⚠ The age bound is `LANE_HELD_MAX_AGE_S`, not the `undelivered` one it used to share. See that
+    constant for why the two situations do not take the same number.
+    """
     now = time.time()
-    kept = [c for c in state.lane_held.get(lane, [])
-            if now - c["at"] <= config.UNDELIVERED_MAX_AGE_S][-config.UNDELIVERED_MAX:]
+    held = state.lane_held.get(lane, [])
+    kept = [c for c in held if now - c["at"] <= config.LANE_HELD_MAX_AGE_S][-config.UNDELIVERED_MAX:]
+    dropped = [c for c in held if c not in kept]
+    if dropped:
+        # Text, not audio: the agent needs to know WHAT went unheard so it can decide whether to
+        # restate it, and the synthesized bytes are worthless to it. Bounded by the same count cap
+        # so a lane nobody visits cannot grow this without limit either.
+        notice = state.lane_expired.setdefault(lane, [])
+        # The text and id live on the HEADER, not on the hold record — the hold wraps
+        # `{header, pcm, at}`. Reading them off the top level yields empty strings and a null id,
+        # which is a notice that tells the agent something expired without saying what.
+        notice.extend({"text": (c.get("header") or {}).get("text", ""),
+                       "clip": (c.get("header") or {}).get("id"),
+                       "waited_s": round(now - c["at"], 1)} for c in dropped)
+        del notice[:-config.UNDELIVERED_MAX]
+        timing.stamp(state.session, "lane_expired", lane=lane, count=len(dropped))
     if kept:
         state.lane_held[lane] = kept
     else:
@@ -1872,8 +1903,14 @@ async def handle_watching(request: web.Request) -> web.Response:
             await _set_agent_state(state, "idle", lane=lane)
     elif mine == "idle":
         await _set_agent_state(state, "thinking", lane=lane)
+    # 🔴 HANDED OVER HERE, ON THE OPENING EDGE, AND CLEARED IN THE SAME BREATH. This is the moment
+    # the agent comes back to listen, which is exactly when "the thing you said never reached him"
+    # is still worth acting on — it can restate before he asks again. Clearing on delivery is what
+    # stops a re-armed watch announcing the same dead reply every 30 seconds forever.
+    expired = state.lane_expired.pop(lane, []) if watching else []
     return web.json_response({"agent_state": state.agent_state, "verbose": state.verbose,
-                              "lane": lane, "watching_lanes": sorted(state.watching_lanes)})
+                              "lane": lane, "watching_lanes": sorted(state.watching_lanes),
+                              **({"expired": expired} if expired else {})})
 
 
 def _will_respond(agent_state: str) -> bool:

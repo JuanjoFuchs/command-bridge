@@ -752,6 +752,14 @@ DESCRIBE: dict[str, Any] = {
                 "cursor": "int — resume from this. It is measured from where this call ACTUALLY "
                           "resumed, which is not always the `--since` you passed: see "
                           "`resumed_from`.",
+                "expired": "[{text, clip, waited_s}, ...] — REPLIES OF YOURS THAT HE NEVER HEARD. "
+                           "Present only when something of yours was dropped while he was on "
+                           "another lane and did not come back within 30 minutes. **You believed "
+                           "these were delivered and they were not** — the text is here so you can "
+                           "decide whether to say it again; often the conversation has moved and "
+                           "the right move is to say the CURRENT answer rather than the old one. "
+                           "Reported exactly ONCE: it is cleared when handed over, so it will not "
+                           "be on your next watch.",
                 "unanswered_s": "float | null — HOW LONG HE HAS BEEN WAITING FOR YOUR LANE TO SAY "
                                 "SOMETHING. **This is the fold loop's exit condition.** The rule "
                                 "above says fold returned turns in and wait again, which has no "
@@ -2469,8 +2477,12 @@ def cmd_watch(args) -> dict[str, Any]:
         {"since_requested": since_requested, "resumed_from": resumed_from}
         if resumed_from != since_requested else {}
     )
-    _request(args.session, "/watching",
-             {"open": True, **({"lane": args.lane} if getattr(args, "lane", None) else {})})
+    opened = _request(args.session, "/watching",
+                      {"open": True, **({"lane": args.lane} if getattr(args, "lane", None) else {})})
+    # REPLIES THAT DIED WAITING FOR HIM, handed over the moment this agent comes back to listen.
+    # Captured here rather than read later because the server clears them on delivery — reporting
+    # an expiry once is the point, so the same dead clip is not re-announced on every re-arm.
+    expired_now = opened.get("expired") if isinstance(opened, dict) else None
     # `--since -1` means "from the beginning", which by convention is the FIRST watch of a
     # session. That is the one moment an agent is oriented rather than mid-conversation, so it is
     # where the watchdog instruction belongs. `serve` says it too, but `serve` is run detached and
@@ -2665,7 +2677,11 @@ def cmd_watch(args) -> dict[str, Any]:
             lane_reason = "lane"
     reason = "turns" if turns else (lane_reason or ("control" if changed else "quiet"))
     result = _watch_payload(args, reason, turns, cursor, rounds, started, talking, live,
-                            **clamped)
+                            **clamped,
+                            # WHAT NEVER REACHED HIM. Collected when this watch opened, reported on
+                            # the way out so the agent reads it in the same breath as the turns it
+                            # is about to answer — the only moment restating is still useful.
+                            **({"expired": expired_now} if expired_now else {}))
     if lane_event and isinstance(live, dict):
         # WHO HE IS TALKING TO NOW, always — not only when it changed. An agent that has just been
         # told the conversation moved needs to know where it moved TO in order to say anything

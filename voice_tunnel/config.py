@@ -495,6 +495,25 @@ Shortening the pause was an over-correction shipped in the same edit as the clip
 neither of us could attribute the improvement, and it made pacing worse on its own. When the only
 instrument is a person's ear, change one thing at a time."""
 
+LANE_HELD_MAX_AGE_S = 1800.0
+"""How long an OFF-LANE reply waits for him to come back to that agent. Thirty minutes.
+
+🔴 **Set by JJ, 2026-08-26, after losing replies to the old ten-minute bound he had never agreed
+to:** *"But why are replies expiring after ten minutes? I haven't made that call."* · *"I think 10
+minutes is too short. I think we should make it 30 minutes."*
+
+**And it is a SEPARATE number from `UNDELIVERED_MAX_AGE_S` on purpose**, because the two situations
+are not the same one:
+
+* `undelivered` — **nobody is listening at all.** The phone is gone, and the risk the bound exists
+  for is real: come back after an hour and be read a stack of answers to questions you stopped
+  caring about.
+* `lane_held` — **he IS listening, to somebody else.** He parked this agent deliberately and
+  intends to return. Ten minutes is shorter than a single conversation with another lane, which is
+  how a reply he was still expecting evaporated.
+
+Reusing one constant for both made the second inherit a bound argued for the first."""
+
 UNDELIVERED_MAX = 8
 UNDELIVERED_MAX_AGE_S = 600.0
 """How many replies to hold for a disconnected phone, and for how long.
