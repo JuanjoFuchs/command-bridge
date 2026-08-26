@@ -1271,6 +1271,13 @@
     // model is wired to the painter, not that the rules are right.
     lanesView: null,
     lanes: null,
+    // WHAT A STALLED CLIP SHOULD DO, as a pure function of the context's state and how long it
+    // has been that way. Exposed for the same reason as the reducers above: the guard it drives
+    // runs on a 200 ms interval inside a promise that nothing can await from a test, so the only
+    // way to sweep its rules is to lift them out of the timer. The bug it exists to prevent was
+    // exactly a missing case in that predicate — `suspended` was neither "closed" nor handled —
+    // so the predicate is the thing worth a truth table.
+    clipStallAction: null,
     // Feeds one server frame into the REAL `onMessage`, so a harness can drive the lane strip
     // without a socket, a microphone or a running tunnel. Same argument as `signal` above: the
     // alternative is a harness that pokes the model directly and therefore stops testing the
@@ -2154,6 +2161,22 @@
   // They are real <button>s now, so Space and Enter already fire click. The hand-wired keydown
   // handlers that a div with role=switch needed would double-toggle here — press, and the
   // control would flip and flip back.
+  // What to do about a clip whose `onended` has not fired, as a PURE function of the context's
+  // state and how many guard ticks it has been stalled. Kept out of the timer so it can be swept.
+  //
+  //   running/closed -> the source is either advancing or gone; nothing to decide
+  //   suspended      -> the CLOCK is stopped, so the source will never end on its own: wake it,
+  //                     and stop waiting if it will not wake
+  //
+  // 🔴 `suspended` is the case that was missing. It is not `closed` — the context is alive and
+  // accepts `createBufferSource()` and `start()` — so the old predicate saw a healthy context and
+  // waited forever on an event that could not arrive, wedging every clip behind it.
+  function clipStallAction(state, ticks, limit) {
+    if (!state || state === "closed") return "finish";
+    if (state !== "suspended") return "wait";
+    return ticks >= (limit || 15) ? "finish" : "resume";
+  }
+  diag.clipStallAction = clipStallAction;
   diag.orbView = orbView;
   diag.lanesView = lanesView;
   diag.tagView = tagView;
@@ -2871,6 +2894,12 @@
     // One drainer at a time. The guard is what serializes playback; without it every arriving
     // clip would start its own drain loop and we would be back to overlapping audio.
     if (draining) return;
+    // WAKE THE CLOCK BEFORE PLAYING INTO IT. A suspended context accepts a buffer source and
+    // never advances it, so this is the cheap half of the fix in `playClip`'s stall guard: this
+    // line stops the common case from ever reaching it. The browser suspends a context when the
+    // tab is backgrounded or the screen sleeps, which is precisely when a reply arrives unheard.
+    if (ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
+    if (!ctx) return;   // `stop()` can null it while the resume above was awaited
     draining = true;
     try {
       // `ctx` in the condition, not just at the top: `stop()` closes and nulls it mid-drain when
@@ -2921,14 +2950,35 @@
                header.text || "", "claude", undefined, header.lane || defaultLane);
       }
       await new Promise((res) => {
-        let guard = 0;
+        let guard = 0, asleep = 0;
         const finish = () => { if (guard) clearInterval(guard); guard = 0; res(); };
         src.onended = finish;
         // A context CLOSED underneath a playing source is not guaranteed to fire `onended`, and
         // this promise is the one `drainClips` holds its serializing flag on — so an unfired event
         // wedges playback permanently instead of costing one clip. The context's own state is the
         // floor under the event. It only runs while a clip is genuinely in flight.
-        guard = setInterval(() => { if (!ctx || ctx.state === "closed") finish(); }, 200);
+        //
+        // 🔴 **`suspended` wedges it exactly like `closed` did, and this guard used to miss it.**
+        // A suspended context is non-null and still accepts `createBufferSource` and `start()` —
+        // its CLOCK is what stops, so the source never advances, `onended` never fires, and
+        // `draining` stays true forever with every later clip queued behind it. Reported live
+        // 2026-08-26: an Atlas clip went synthesizing → speaking and stayed silent for 43 s until
+        // JJ switched lanes and back, which resumed the context and released the whole queue at
+        // once. *"its turn never spoke… I had to switch back to your lane and then back to the
+        // Atlas lane for it to start speaking."*
+        // ⚠ The same state was already known ONE FUNCTION AWAY — `reconnect()` resumes a
+        // suspended context and says why — and was never handled on the playback path.
+        guard = setInterval(() => {
+          const act = clipStallAction(ctx && ctx.state, asleep);
+          if (act === "wait") { asleep = 0; return; }
+          if (act === "finish") return finish();
+          // "resume" — try to wake it. The orb has already been tapped by the time a clip can
+          // arrive, so the context is unlocked and a programmatic resume is allowed. Giving up
+          // after ~3 s costs ONE clip, which the comment above already chose over wedging the
+          // session; a context that will not wake will not play the ones behind it either.
+          asleep += 1;
+          ctx.resume().catch(() => {});
+        }, 200);
         src.start();
       });
       if (playingSource === src) playingSource = null;
