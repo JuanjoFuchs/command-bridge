@@ -480,9 +480,9 @@ Every criterion names its validation method. `corpus` means replayed against the
       lane x waiting depth x per-agent state), then the real page driven through its own message handler.
       Like `devicepills.py` it starts **no voice-tunnel server and proves it**, so it ran green during his
       live session. The orb half of the old criterion moved to AC-18, where the blocked harnesses live.
-- [ ] **AC-20** `manual` — **FR6, FR7.** Two agents, one phone, one session: he switches by voice and by tap, both are
+- [x] **AC-20** `manual` — **FR6, FR7.** Two agents, one phone, one session: he switches by voice and by tap, both are
       heard, and the off-lane one is visibly waiting. **Irreducibly manual** — it needs a real microphone, a
-      real phone and two real agents, which is the one thing no harness in this repo can produce.
+      real phone and two real agents, which is the one thing no harness in this repo can produce. ✅ **Confirmed by JJ 2026-08-26**, from a morning of real use with four lanes rather than a staged run — asked directly and answered *"Yes to all."*
 
 ## What is not done, what is missing, and who owns clearing it
 

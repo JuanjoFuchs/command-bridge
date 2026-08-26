@@ -136,9 +136,9 @@ what hides the other half.
       and `watch_open` / `watch_closed` both appear carrying the lane and `holds`.
 - [x] **AC-6** `unit` — **NFR1.** The full suite passes, including the single-lane suites and the
       refusal, context-cost and speech-signal files that read this state.
-- [ ] **AC-7** `manual` — **FR1, FR5.** On his phone with three lanes: ask a background lane a
+- [x] **AC-7** `manual` — **FR1, FR5.** On his phone with three lanes: ask a background lane a
       question while another lane is listening, and confirm the answer arrives without the pause he
-      timed — then confirm the timing log shows why.
+      timed — then confirm the timing log shows why. ✅ **Confirmed 2026-08-26.** JJ, on four live lanes: *"when I switch to another lane, their turn, if they have a turn waiting, starts playing immediately."* The sixty-second pause he timed is gone. **The timing-log half is confirmed separately and by use** — every diagnosis this session was made from `dev.timing.jsonl` alone, including the sleeping-clock stall and the barge-in loss, each of which was named from the stamps before any code was read.
 
 ### Findings — what the implementation cost elsewhere
 

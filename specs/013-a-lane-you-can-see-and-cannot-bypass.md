@@ -330,9 +330,9 @@ Status payload gains, per lane:
 - [x] **AC-14** `harness:scripts/layout.py` — **NFR2.** The layout sweep passes at every viewport
       in both picker layouts, solo and three-lane, with the strip's own guard still failing a case
       that measured a hidden strip.
-- [ ] **AC-15** `manual` — **FR3–FR7 together.** Three agents, one session: he can tell from the
+- [x] **AC-15** `manual` — **FR3–FR7 together.** Three agents, one session: he can tell from the
       page who he is addressing, who spoke, which agent is waiting, and whether his last turn was
-      read. **Irreducibly manual** — it is a judgement about legibility, which no harness can make.
+      read. **Irreducibly manual** — it is a judgement about legibility, which no harness can make. ✅ **Confirmed by JJ 2026-08-26**, from a morning of real use with four lanes rather than a staged run — asked directly and answered *"Yes to all."*
 
 ## Testing Approach
 

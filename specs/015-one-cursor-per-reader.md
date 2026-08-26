@@ -109,8 +109,12 @@ into a named state and photographs it, so the thing being checked is the thing h
       failure the harness exists to catch, made inside the harness. It now measures a zero-height
       box, which is the only answer that survives every way an element can be visible while
       claiming otherwise.
-- [ ] **AC-5** `manual` — **TC3.** On his phone with three agents: a background agent working shows
-      as working, and reading in one lane leaves another lane's ticks grey.
+- [x] **AC-5** `manual` — **TC3.** On his phone with three agents: a background agent working shows
+      as working, and reading in one lane leaves another lane's ticks grey. 🟡 **Half-confirmed by JJ 2026-08-26**, from four lanes in real use: *"The orbs show the right status."* ⚠ **The per-lane TICK half was not asked and is not claimed** — a background agent showing as working is a different assertion from one lane's read leaving another lane's ticks grey, and only the first was put to him.
+
+      ✅ **Confirmed 2026-08-26 — and the QUESTION had to be rewritten before he could answer it.** Asked whether another lane's *ticks stayed grey*, he replied: *"I don't understand these questions. I think is this outdated? Because we no longer have text. We have those colors."* He is right: the receipt moved from ticks to colour and **this criterion still described the old UI**. Restated in current terms, his answer is a pass — *"the colors for marking something as read by an agent have been working fine so far."*
+
+      🎯 **An acceptance criterion written against a UI that later changed is not merely stale, it is UNANSWERABLE** — and it fails silently, because the reader assumes the gap is in their memory rather than in the document. Worth re-reading every `manual` AC against the shipped page before putting it to him.
 
 ## Out of Scope
 
