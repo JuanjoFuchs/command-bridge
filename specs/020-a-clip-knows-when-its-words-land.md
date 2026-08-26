@@ -119,7 +119,10 @@ audio was bit-identical, which is exactly what made the swap look free — and t
 - [x] `say` grows `--timings`; the schedule rides in the response and is absent without the flag.
       Refused alongside `--now`, which returns before a clip exists to describe.
 - [x] `describe` documents the flag, `words`, `words_aligned` and `timings_unavailable`.
-- [ ] `download` can fetch the timestamped export, and `kokoro_model()` prefers it.
+- [x] `download kokoro` fetches the timestamped export **instead of** the plain one — same size,
+      same audio, plus the durations, so fetching the other costs 325 MB to get strictly less — and
+      `kokoro_model()` prefers it. An install predating this keeps working and still counts as
+      installed; upgrading is offered rather than forced, behind `--force`.
 
 ## Acceptance Criteria
 

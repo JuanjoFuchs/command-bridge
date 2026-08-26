@@ -72,8 +72,27 @@ TURN_MODEL = {
             "mid-thought and a short question does not wait 1.5 s for nothing.",
 }
 
+KOKORO_TIMESTAMPED_URL = (
+    "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped"
+    "/resolve/main/onnx/model.onnx"
+)
+"""The same weights, re-exported with a second output: one duration per token.
+
+🎯 **Fetched INSTEAD OF the plain export, not alongside it, and that is the whole argument for
+the swap.** Measured 2026-08-26 on identical inputs: `max abs diff 0.0` against
+`kokoro-v1.0.onnx`, and the same 325,532,171 bytes on the wire. Same size, same audio, plus the
+schedule `say --timings` reports (spec 020) — so downloading the other one costs a caller 325 MB
+to get strictly less.
+
+An install that already has `kokoro-v1.0.onnx` keeps working untouched: `kokoro_installed` accepts
+either model, and the backend simply reports timings as unavailable on the older one."""
+
+KOKORO_MODELS: tuple[str, ...] = (config.KOKORO_TIMESTAMPED_MODEL, "kokoro-v1.0.onnx")
+"""Model filenames that count as "kokoro is installed", best first. Order matches
+`config.kokoro_model`'s preference so the check and the loader cannot disagree."""
+
 KOKORO_FILES: tuple[dict[str, str], ...] = (
-    {"file": "kokoro-v1.0.onnx", "url": f"{KOKORO_BASE}/kokoro-v1.0.onnx"},
+    {"file": config.KOKORO_TIMESTAMPED_MODEL, "url": KOKORO_TIMESTAMPED_URL},
     {"file": "voices-v1.0.bin", "url": f"{KOKORO_BASE}/voices-v1.0.bin"},
 )
 """BOTH files, because either one alone is useless.
@@ -93,8 +112,12 @@ package's README sends you — Hugging Face hosts the PyTorch weights, not these
 KOKORO_NOTE = ("Kokoro v1.0 (Apache-2.0): one 325 MB model plus a 28 MB pack of all 54 voices, "
                "at 24 kHz. Measurably less harsh than the piper voices — `bm_daniel` and "
                "`bm_lewis` each score ~0.65 acum lower on DIN 45692 sharpness than "
-               "en_GB-alan-medium, a larger move than any de-esser setting achieves. Note its "
-               "speed ceiling is 2.0, below this tool's 2.5.")
+               "en_GB-alan-medium, a larger move than any de-esser setting achieves. The model "
+               "fetched is the TIMESTAMPED export: identical audio (measured bit-for-bit) and "
+               "identical size, plus a duration per token, which is what lets `say --timings` "
+               "report when each word is spoken. Note its speed ceiling is 2.0, below this "
+               "tool's 2.5 — and measured, it saturates near 2.3x whatever you ask for, because "
+               "a token cannot be shorter than one 25 ms unit.")
 
 VOICEPRINT_MODEL = {
     "file": "nemo_en_titanet_large.onnx",
@@ -256,9 +279,17 @@ def download_asr(which: str = "parakeet", force: bool = False, on_progress=None)
 
 
 def kokoro_installed() -> bool:
-    """True only when BOTH halves are on disk — `download kokoro` skips nothing on a half install."""
+    """True only when BOTH halves are on disk — `download kokoro` skips nothing on a half install.
+
+    ⚠ **EITHER model counts.** An install predating spec 020 has `kokoro-v1.0.onnx` and is not
+    broken by the switch to the timestamped export — it speaks exactly as before and only reports
+    timings as unavailable. Checking for the new filename alone would tell those installs that
+    kokoro is missing when it is loaded and working, which is the kind of false alarm that sends
+    someone to re-download 325 MB they already have.
+    """
     d = config.models_dir()
-    return all(_looks_like_a_model(os.path.join(d, f["file"])) for f in KOKORO_FILES)
+    has_model = any(_looks_like_a_model(os.path.join(d, m)) for m in KOKORO_MODELS)
+    return has_model and _looks_like_a_model(os.path.join(d, "voices-v1.0.bin"))
 
 
 def download_kokoro(force: bool = False, on_progress=None) -> dict:
@@ -274,6 +305,15 @@ def download_kokoro(force: bool = False, on_progress=None) -> dict:
         dest = os.path.join(models, spec["file"])
         if _looks_like_a_model(dest) and not force:
             present.append(spec["file"])
+            continue
+        # An older install already has a working model under the previous name. Re-fetching 325 MB
+        # to gain durations is a real cost and a real choice, so it is offered rather than taken:
+        # `--force` is how someone says yes. Without this an upgrade would silently re-download on
+        # the next `download kokoro` anybody ran for an unrelated reason.
+        if spec["file"] == config.KOKORO_TIMESTAMPED_MODEL and not force and any(
+            _looks_like_a_model(os.path.join(models, m)) for m in KOKORO_MODELS[1:]
+        ):
+            present.append(f"{KOKORO_MODELS[1]} (older export; `--force` to get word timings)")
             continue
         fetched += _fetch(spec["url"], dest, on_progress)
         if not _looks_like_a_model(dest):

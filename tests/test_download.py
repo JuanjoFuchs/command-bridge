@@ -8,6 +8,7 @@ import tarfile
 
 import pytest
 
+from voice_tunnel import config
 from voice_tunnel import download as dl
 
 
@@ -160,13 +161,36 @@ def test_only_the_missing_kokoro_half_is_fetched(tmp_path, monkeypatch):
     assert result["already_present"] is False
 
 
-def test_both_kokoro_urls_come_from_one_release(tmp_path):
-    """Model and pack are versioned together upstream; splitting the base would let a v1.0 model
-    pair with some other pack, which loads and then mispronounces."""
+def test_the_kokoro_model_and_pack_are_the_same_version(tmp_path):
+    """Model and pack must be versioned together: a v1.0 model paired with some other pack loads
+    and then mispronounces, which is a failure with no error attached to it.
+
+    ⚠ **This used to assert a shared base URL, and spec 020 broke that proxy without breaking the
+    guarantee.** The model is now the TIMESTAMPED export, which lives on Hugging Face while the
+    voice pack still comes from the kokoro-onnx release — two hosts, one version. So the check is
+    the version itself rather than the prefix that used to imply it, which is the thing actually
+    worth holding: audio from the new export measured bit-identical to the old one against this
+    same pack, so `v1.0` on both sides is what makes the pairing safe.
+    """
     names = [f["file"] for f in dl.KOKORO_FILES]
-    assert names == ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
-    assert all(f["url"].startswith(dl.KOKORO_BASE) for f in dl.KOKORO_FILES)
-    assert all(f["url"].endswith(f["file"]) for f in dl.KOKORO_FILES)
+    assert names == [config.KOKORO_TIMESTAMPED_MODEL, "voices-v1.0.bin"]
+    assert all("v1.0" in f["url"].lower() or "v1_0" in f["url"].lower()
+               for f in dl.KOKORO_FILES), (
+        "both halves must name the same upstream version, whatever host they come from"
+    )
+    assert dl.KOKORO_FILES[1]["url"].startswith(dl.KOKORO_BASE), "the pack is still the release asset"
+
+
+def test_an_older_install_still_counts_as_installed(tmp_path, monkeypatch):
+    """Someone who downloaded kokoro before spec 020 has `kokoro-v1.0.onnx`, and it works — it
+    speaks identically and only lacks the durations. Reporting them as not-installed would send
+    them to re-download 325 MB they already have."""
+    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    big = b"\x00" * (2 * 1024 * 1024)
+    (tmp_path / "kokoro-v1.0.onnx").write_bytes(big)
+    (tmp_path / "voices-v1.0.bin").write_bytes(big)
+
+    assert dl.kokoro_installed() is True, "the previous export is still a working install"
 
 
 def test_the_catalog_answers_without_a_network(tmp_path, monkeypatch):
