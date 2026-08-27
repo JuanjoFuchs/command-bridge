@@ -110,7 +110,6 @@ class TunnelState:
         """Seeded from disk, not from -1: the turn log survives a restart, so the read position
         must too, or a bounced server reports the whole log as pending (the 307-of-306 bug,
         2026-08-14). -1 still means "never consumed" — a fresh session has no file."""
-        self.agent_state: str = "idle"
         self.cues_enabled: bool = config.cues_enabled()
         self.speech_speed: float = config.speech_speed()
         """Live speech speed, in the SPEED unit (higher is faster). Held in server state rather
@@ -287,6 +286,19 @@ class TunnelState:
         honestly make."""
 
         self.lane_held: dict[str, list] = {}
+        """Clips an off-lane agent produced while he was talking to somebody else (FR7).
+
+        ⚠ **DELIBERATELY NOT `undelivered`.** That queue is cleared wholesale by barge-in, which
+        is correct for the lane he is ON — playing the next clip at a man who just interrupted is
+        the same interruption wearing a different hat — and wrong for a lane he is NOT on, which
+        he has not interrupted and cannot even hear. TC3 records nine clips lost from that queue
+        on 2026-08-20; sharing it would have inherited the bug on purpose.
+
+        ⚠ **THIS DOCSTRING SPENT FIVE SPECS ATTACHED TO THE WRONG FIELD.** Specs 021 through 025
+        each inserted a new attribute between `lane_held` and the string documenting it, so by
+        2026-08-26 it was thirty lines below and reading as `playing_clip`'s. Keep new fields
+        BELOW this closing quote."""
+
         # Replies that aged out before he came back to that lane, waiting to be handed to the
         # agent that wrote them the next time it opens a watch. Cleared on delivery, so each
         # expiry is reported exactly once and a re-armed watch does not keep re-announcing it.
@@ -309,13 +321,12 @@ class TunnelState:
         # lane says speaking."* The receipt has always carried a clip id; this is what lets it
         # name a lane.
         self.clip_owner: dict[str, str] = {}
-        """Clips an off-lane agent produced while he was talking to somebody else (FR7).
-
-        ⚠ **DELIBERATELY NOT `undelivered`.** That queue is cleared wholesale by barge-in, which
-        is correct for the lane he is ON — playing the next clip at a man who just interrupted is
-        the same interruption wearing a different hat — and wrong for a lane he is NOT on, which
-        he has not interrupted and cannot even hear. TC3 records nine clips lost from that queue
-        on 2026-08-20; sharing it would have inherited the bug on purpose."""
+        # A monotonic ticket per clip handed to the browser, in send order. The browser plays them
+        # in the order it received them, so the OLDEST ticket still in flight is the one on the
+        # speaker — which is what `playing_clip` derives from. A counter rather than a timestamp
+        # because a flush sends clips that were composed minutes ago, and when they were WRITTEN
+        # says nothing about when they were SENT.
+        self._sent_seq: int = 0
 
         self.ambiguous: int = 0
         """How many summons this session could not route (TC2). Monotonic, never reset.
@@ -449,6 +460,66 @@ class TunnelState:
         # a sibling project, where it repeatedly turned "the ASR is bad" into a question you can
         # answer by listening — is the audio quiet, clipped, or fine and the model just wrong?
         self._wav: wave.Wave_write | None = None
+
+    def hand_to_client(self, clip: dict) -> dict:
+        """Stamp a clip with its place in the send order and return it (spec 026 F6).
+
+        Every clip that goes on the wire gets one, from both senders — `_speak` for a live lane and
+        `_flush_lane_held` for a lane he has come back to."""
+        self._sent_seq += 1
+        clip["seq"] = self._sent_seq
+        return clip
+
+    @property
+    def playing_clip(self) -> str | None:
+        """THE CLIP ON THE SPEAKER RIGHT NOW, or None — derived from the send order (spec 025).
+
+        Barge-in must not return this one: he heard it, at least in part, and stopping it is
+        exactly what makes the browser fire `onended` and send its receipt, so the receipt always
+        lands a few milliseconds BEHIND the barge. Measured 2026-08-26: returned at 16:09:56.121,
+        receipt at 16:09:56.129, and the clip played again five minutes later. JJ: *"you read back
+        a turn that you have said a while ago... So something's up with the fix you did."*
+
+        🔴 **THIS WAS A STORED FIELD FOR ONE DAY AND IT NAMED THE WRONG CLIP.** `_speak` assigned it
+        on every send, so with two replies out it pointed at the SECOND — the one still queued —
+        while the browser was playing the first. A barge would then have handed back the reply he
+        had just heard and dropped the one he had not: the exact inversion of the fix. Derived from
+        the send order it cannot be wrong, and it needs no clearing: a `played` receipt removes the
+        clip from `lane_inflight`, which advances this to the next one on its own.
+        """
+        oldest = None
+        for clips in self.lane_inflight.values():
+            for c in clips:
+                if oldest is None or c.get("seq", 0) < oldest.get("seq", 0):
+                    oldest = c
+        return (oldest.get("header") or {}).get("id") if oldest else None
+
+    @property
+    def agent_state(self) -> str:
+        """What the agent he is TALKING TO is doing — derived, never stored (spec 026 FR1).
+
+        🔴 **THIS WAS A CACHE WITH ONE WRITER AND NO INVALIDATION, AND IT COST HIM A REPLY.**
+        `_set_agent_state` wrote it only when the lane it was told about was the live one, and
+        `_set_lane` never recomputed it. So from the instant he switched lanes it described **the
+        lane he had left**, and went on describing it until that new lane happened to change state
+        on its own.
+
+        The barge gate read it. He switched to Atlas while Magnus was mid-reply, said something to
+        Atlas, and the gate — still holding Magnus's `speaking` — fired and killed Magnus's clip.
+        *"But I didn't barge in. I just switched the lane and was listening. I didn't interrupt
+        you."* (2026-08-26)
+
+        🎯 The meaning never changed; only the mechanism was wrong. `lane_states` is the truth and
+        has been since spec 016, and this is the live lane's entry in it. A derived value cannot go
+        stale, which is the only durable answer to a class of bug that has now been fixed nine
+        times one instance at a time.
+        """
+        return self.lane_states.get(self.lanes.current, "idle")
+
+    @agent_state.setter
+    def agent_state(self, value: str) -> None:
+        """Assigning it means "the live lane is doing this" — the meaning it always had (TC1)."""
+        self.lane_states[self.lanes.current] = value
 
     def pending_turns(self, last_turn_id: int | None = None) -> int:
         """How many turns he has said that nobody has read — from the LOG, never from a counter.
@@ -816,9 +887,10 @@ async def _set_agent_state(state: TunnelState, value: str, lane: str) -> None:
     only place that knows how long the flow is.
     """
     who = lane
+    # ONE WRITE, and `agent_state` reads through to it (spec 026 FR1). This used to be followed by
+    # a second, conditional assignment into a session-wide cache — which is the assignment that
+    # never happened again when he switched lanes, leaving the cache describing the lane he left.
     state.lane_states[who] = value
-    if who == state.lanes.current:
-        state.agent_state = value
     await _broadcast_json(state, {"type": "agent_state", "state": value, "lane": who,
                                   "live": who == state.lanes.current,
                                   # WHO IS ACTUALLY SITTING IN A WAIT, sent with every state change
@@ -1254,7 +1326,13 @@ async def handle_say(request: web.Request) -> web.Response:
     # from the READ cursor and not from the head of the log — a turn that arrived while the reply
     # was being synthesized has not been answered by it, and claiming otherwise would mark
     # something read that nobody has seen.
-    state.lane_read_through[_who] = state.consumed_cursor
+    #
+    # ⚠ **THE LANE'S OWN CURSOR, NOT THE SESSION'S (spec 026 FR6).** `consumed_cursor` is whatever
+    # cursor ANY lane last reported — assigned unconditionally, not even monotonically — so with
+    # two agents reading, this tick was claiming that THIS lane had answered up to a point a
+    # DIFFERENT lane reached. `lane_consumed` has been per-lane and monotonic since spec 015 and
+    # `lane_cursor` was already the reader for it; only this write was still session-wide.
+    state.lane_read_through[_who] = state.lane_cursor(_who)
 
     if fire_and_forget:
         # Return before synthesis so the agent can acknowledge and keep working in parallel,
@@ -1428,6 +1506,14 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         state.speaking_lane = owner
         # KEYED BY CLIP, so a second lane going out cannot make this one unreleasable (spec 024).
         state.clip_owner[clip_id] = owner
+        # 🔴 **SENT IS NOT HEARD ON THIS PATH EITHER (spec 026 F6).** `lane_inflight` was added by
+        # spec 022 to the FLUSH path only, because that was the path that lost Kepler's three
+        # replies. A clip sent straight out — his lane was live when the agent answered — was
+        # tracked nowhere, so there was nothing to hand back if the browser's queue got dropped
+        # before it played. The same guarantee, applied to one of two senders, is not a guarantee.
+        # The seq is also what makes `playing_clip` derivable rather than guessed.
+        state.lane_inflight.setdefault(owner, []).append(state.hand_to_client(
+            {"header": dict(header), "pcm": pcm, "at": time.time()}))
         await _push_cue(state, "speaking")
         await _send_clip(state, header, pcm)
     elif off_lane:
@@ -1449,7 +1535,11 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         # watch at that instant — renders it as thinking rather than as an agent doing nothing.
         await _set_agent_state(state, "idle", owner)
     else:
-        state.undelivered.append({"header": header, "pcm": pcm, "at": time.time()})
+        # THE LANE TRAVELS WITH THE CLIP (spec 026 TC3). `off_lane` above was evaluated against the
+        # lane that is live NOW; by the time his phone reconnects it may be a different one, and
+        # the flush has to be able to ask the question again rather than assume the answer held.
+        state.undelivered.append({"header": header, "pcm": pcm, "at": time.time(),
+                                  "lane": lane or state.lanes.default})
         _prune_undelivered(state)
         timing.stamp(state.session, "undelivered_queued", clip=clip_id,
                      depth=len(state.undelivered),
@@ -1556,7 +1646,11 @@ async def _flush_lane_held(state: TunnelState, lane: str) -> int:
     # browser can be told to drop its whole queue a second later, and until 2026-08-26 that took
     # these with it because nothing here still held them.
     if queued:
-        state.lane_inflight.setdefault(lane, []).extend(queued)
+        # Stamped in send order, which is what makes `playing_clip` a derivation rather than a
+        # guess: a flush sends SEVERAL and they play in order, so the first of them is on the
+        # speaker and the rest are queued behind it.
+        state.lane_inflight.setdefault(lane, []).extend(
+            state.hand_to_client(c) for c in queued)
     for clip in queued:
         header = dict(clip["header"])
         header["delayed_s"] = round(time.time() - clip["at"], 1)
@@ -1593,8 +1687,13 @@ def _clip_played(state: TunnelState, clip_id: str) -> None:
         return
 
 
-async def _return_inflight(state: TunnelState) -> int:
+async def _return_inflight(state: TunnelState, keep_playing: bool = True) -> int:
     """Put un-played clips back on their lane's hold, and raise the hand again (spec 022 FR3).
+
+    `keep_playing` is whether the clip ON THE SPEAKER counts as heard (spec 026 FR3/FR4). True for
+    a real interruption — he was listening to that agent and cut it off. False when he spoke to a
+    DIFFERENT lane over the top of it, because then the audio had to stop but that agent was never
+    answered, and its reply belongs back in its hold.
 
     🔴 **Called when the client is told to drop its queue.** Barge-in stops the clip he
     interrupted — that is right — but the same message empties the whole playback queue, and after
@@ -1606,7 +1705,21 @@ async def _return_inflight(state: TunnelState) -> int:
     interrupted the lane that was speaking; he did not interrupt one he cannot hear.
     """
     returned = 0
+    # Read ONCE, before anything is handed back: `playing_clip` is derived from `lane_inflight`,
+    # so consulting it while emptying that store would answer a different question each pass.
+    playing = state.playing_clip
     for lane, clips in list(state.lane_inflight.items()):
+        # 🔴 NEVER RETURN THE CLIP THAT WAS PLAYING (spec 025). He HEARD it — that is what he
+        # interrupted — and stopping it is exactly what makes the browser fire `onended` and send
+        # its receipt, so that receipt is milliseconds behind this code and finds nothing left to
+        # release. Returning it replays a turn he has already heard AND strands the state machine
+        # on "speaking". Everything QUEUED BEHIND it never reached his ears, and that is what has
+        # to come back.
+        #
+        # ⚠ Unless he was talking to somebody ELSE over it (spec 026 FR4), in which case this clip
+        # was interrupted by a conversation it is not part of and has to come back like the rest.
+        if keep_playing:
+            clips = [c for c in clips if (c.get("header") or {}).get("id") != playing]
         if not clips:
             continue
         # Oldest first, ahead of anything that arrived while they were in flight.
@@ -1630,19 +1743,53 @@ def _prune_undelivered(state: TunnelState) -> None:
 
 
 async def _flush_undelivered(state: TunnelState) -> int:
-    """Deliver everything that was said while nobody was listening, oldest first."""
+    """Deliver everything that was said while nobody was listening, oldest first.
+
+    🔴 **THE LANE IS RE-TESTED HERE, AND THAT IS SPEC 026 FR5.** `_speak` checks `off_lane` BEFORE
+    queueing, so this store only ever holds clips for the lane that was live at the time. The flush
+    then played all of them into whatever lane is live NOW — so a reply his phone missed while he
+    was talking to Magnus arrived in the middle of a conversation with Atlas.
+
+    ⚠ This is spec `012` TC3 in the sibling queue. The enqueue site says the two stores are
+    *"DELIBERATELY NOT"* shared so this bug is not inherited — and the flush side never got the
+    check the hold side has. **A guarantee enforced on one side of a queue is not a guarantee**,
+    which is the same lesson spec `022` learned about `lane_held`.
+    """
     _prune_undelivered(state)
     queued, state.undelivered = state.undelivered, []
+    lanes_parked: set[str] = set()
     for clip in queued:
         header = dict(clip["header"])
         # Say how long it waited. A reply arriving 90 seconds after the question, with no
         # acknowledgement that time passed, reads as the agent being slow rather than the phone
         # having been asleep.
         header["delayed_s"] = round(time.time() - clip["at"], 1)
+        lane = str(clip.get("lane") or state.lanes.default)
+        if lane != state.lanes.current and lane != lanes_mod.BROADCAST:
+            # He has moved on. Park it where the hand can be raised, exactly as `_speak` would have
+            # done had he been on this lane when it was composed — not played at him mid-sentence
+            # with another agent.
+            state.lane_held.setdefault(lane, []).append(
+                {"header": header, "pcm": clip["pcm"], "at": clip["at"]})
+            _prune_lane_held(state, lane)
+            lanes_parked.add(lane)
+            continue
         await _send_clip(state, header, clip["pcm"])
+    for lane in lanes_parked:
+        timing.stamp(state.session, "undelivered_parked", lane=lane,
+                     depth=len(state.lane_held.get(lane, [])))
+        await _broadcast_json(state, {"type": "lane_waiting", "lane": lane,
+                                      "waiting": len(state.lane_held.get(lane, []))})
+    # ⚠ **DELIVERED, NOT DEQUEUED.** The caller broadcasts this as `resumed.delivered` and the page
+    # tells him that many replies just arrived; counting the parked ones would announce audio he is
+    # not about to hear. The hand going up on their lanes is how those are reported.
+    parked = sum(1 for c in queued
+                 if str(c.get("lane") or state.lanes.default) not in
+                 (state.lanes.current, lanes_mod.BROADCAST))
     if queued:
-        timing.stamp(state.session, "undelivered_flushed", count=len(queued))
-    return len(queued)
+        timing.stamp(state.session, "undelivered_flushed",
+                     count=len(queued) - parked, parked=parked)
+    return len(queued) - parked
 
 
 async def _send_clip(state: TunnelState, header: dict[str, Any], pcm: bytes) -> None:
@@ -2157,16 +2304,7 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
                 state.fail("transport", str(ws.exception()))
                 break
     finally:
-        state.clients.discard(ws)
-        if not state.clients:
-            # The last page went away, so nothing is capturing regardless of what it last said.
-            state.capturing = False
-            # NOR IS ANYONE SPEAKING. `user_speaking` is set only by a client message, and a
-            # socket that dies mid-word never sends the matching `speaking: false` — so the flag
-            # stayed true for the life of the server. Harmless while it only drove a hold loop
-            # that a reconnect would clear; fatal once a wait gates on it, because the wait would
-            # hold forever on a page that no longer exists.
-            state.user_speaking = False
+        await _drop_client(state, ws)
         # Flush whatever was mid-sentence when the socket dropped, so a disconnect never
         # silently eats the last thing that was said.
         try:
@@ -2175,6 +2313,42 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
             state.fail("transport", f"flush failed: {exc}")
         state.close_capture()
     return ws
+
+
+async def _drop_client(state: TunnelState, ws) -> None:
+    """Forget a page, and everything that was only true because it existed.
+
+    A named function rather than a block inside a `finally`, because what happens when the last
+    page dies is now load-bearing enough to need a test — and a test that re-implemented this
+    block would prove nothing about the server.
+    """
+    state.clients.discard(ws)
+    if state.clients:
+        return
+    # The last page went away, so nothing is capturing regardless of what it last said.
+    state.capturing = False
+    # NOR IS ANYONE SPEAKING. `user_speaking` is set only by a client message, and a socket that
+    # dies mid-word never sends the matching `speaking: false` — so the flag stayed true for the
+    # life of the server. Harmless while it only drove a hold loop that a reconnect would clear;
+    # fatal once a wait gates on it, because the wait would hold forever on a page that no longer
+    # exists.
+    state.user_speaking = False
+    # 🔴 NOR IS ANYTHING PLAYING, and both halves of that matter (spec 026 F5).
+    #
+    # * **The clips die with the page.** They were sent, never confirmed, and no receipt is coming
+    #   from a socket that no longer exists — so without this they are simply gone, which is the
+    #   one thing `lane_held` exists to prevent. `keep_playing` stays true: whatever was actually
+    #   on the speaker he heard some of, and spec 025 is why that one does not come back.
+    # * **`speaking_lane` would otherwise be a permanent open barge gate.** It now decides whether
+    #   audio can be talked over, so a stale value means the first thing he says after reconnecting
+    #   registers as an interruption of nobody — and a barge clears `undelivered`, which is where
+    #   his replies were waiting while the phone was away.
+    try:
+        await _return_inflight(state)
+    except Exception as exc:
+        state.fail("transport", f"return in-flight on disconnect failed: {exc}")
+    state.speaking_lane = None
+    state.clip_owner.clear()
 
 
 async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -> None:
@@ -2211,6 +2385,8 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
         # the second speaker had nothing left that could release it.
         if state.speaking_lane == owner:
             state.speaking_lane = None
+        # `playing_clip` needs no clearing: `_clip_played` above removed this clip from
+        # `lane_inflight`, which advances the derivation to whatever is next in the send order.
     elif kind == "verbose":
         # Stored and republished, never acted on here — see TunnelState.verbose.
         state.verbose = bool(msg.get("value"))
@@ -2304,8 +2480,15 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
 
     Both signals must agree: the client says someone is speaking (it has its own 120 ms minimum
     run against coughs) AND the voiceprint says that someone is not the agent.
+
+    🔴 **THE GATE ASKS A PHYSICAL QUESTION, NOT A CONVERSATIONAL ONE (spec 026 FR2).** It used to
+    read `agent_state`, which is the LIVE lane's state — so it answered "is the agent I am talking
+    to speaking", and got that answer from a cache that a lane switch left stale. `speaking_lane`
+    is the honest source: it names whoever's clip is actually on the speaker, which is the only
+    thing that can be talked over. WHOSE reply it is changes what happens next, not whether the
+    gate opens — see the disposition after the threshold.
     """
-    if not config.barge_in_enabled() or state.agent_state != "speaking":
+    if not config.barge_in_enabled() or state.speaking_lane is None:
         state.barge_buf = None
         return
     if not state.user_speaking or not state.embedder.available:
@@ -2335,7 +2518,24 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
         return
 
     state.barges += 1
-    timing.stamp(state.session, "barge_in", score=state.last_barge_score)
+    # 🔴 WHOSE REPLY THIS ACTUALLY IS (spec 026 FR3/FR4). Two different events wear the same
+    # signal, and only the lane tells them apart:
+    #
+    # * **He interrupted the agent he is talking to.** A real barge. He heard the clip, and spec
+    #   025 is right to keep it from coming back.
+    # * **He said something to somebody ELSE while a clip was in the air.** *"I didn't barge in. I
+    #   just switched the lane and was listening. I didn't interrupt you."* (2026-08-26) The audio
+    #   still has to stop — he cannot listen to one agent and talk to another at the same time —
+    #   but that agent has NOT been answered, so its reply goes back to its hold with the hand up
+    #   and he hears it when his attention returns.
+    #
+    # The lane he is addressing is `utterance_lane` when an utterance is already open, because a
+    # switch made mid-sentence must not redirect what he has already started saying (spec 023).
+    interrupted = state.speaking_lane
+    addressed = state.utterance_lane or state.lanes.current
+    cross_lane = bool(interrupted) and interrupted != addressed
+    timing.stamp(state.session, "barge_in", score=state.last_barge_score,
+                 lane=interrupted, addressed=addressed, cross_lane=cross_lane)
     await _broadcast_json(state, {"type": "stop_playback", "reason": "barge_in",
                                   "score": state.last_barge_score})
     # Drop anything still queued as well. Stopping the clip he interrupted and then playing the
@@ -2352,17 +2552,34 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
     # `stop_playback` this very message sends empties the queue wholesale. So the store was
     # guarded and the clips were not, from the moment he switched lanes until they played.
     # Measured 2026-08-26: three of Kepler's replies gone, and the hand gone with them.
-    await _return_inflight(state)
+    #
+    # `keep_playing` is what splits the two events above. On a cross-lane barge the clip that was
+    # on the speaker comes back TOO, because he was not answering it — he was talking to somebody
+    # else over the top of it.
+    #
+    # ⚠ Read BEFORE the return, which empties the store `playing_clip` is derived from.
+    interrupted_clip = state.playing_clip
+    await _return_inflight(state, keep_playing=not cross_lane)
     state.undelivered.clear()
     # THE INTERRUPTED LANE IS THE ONE RELEASED (016 FR3). Barge-in stops the clip that is playing,
     # so the agent returned to rest is the one whose clip it was — not whoever happens to be live,
     # which after a summons-shaped interruption is frequently somebody else.
     await _set_agent_state(state, "idle", state.speaking_lane or state.lanes.current)
     state.speaking_lane = None
-    # Nothing is in flight after the queue is dropped, so no receipt is coming for any of it and
-    # the owners would otherwise accumulate for the life of the session (spec 024). The clips
-    # themselves went back to their lanes' holds a few lines above.
+    # The queue is dropped, so the owners would otherwise accumulate for the life of the session
+    # (spec 024). The clips themselves went back to their lanes' holds a few lines above.
+    #
+    # ⚠ **EXCEPT THE ONE THAT WAS PLAYING, WHOSE RECEIPT IS ON ITS WAY.** This used to clear
+    # wholesale, on the reasoning that nothing is in flight after a stop — and spec 025 measured
+    # the opposite: `stop_playback` is precisely what makes the browser fire `onended`, so a
+    # `played` for the interrupted clip lands about 8 ms later. With the map emptied it resolved
+    # through the `or state.lanes.current` fallback and marked THE LANE HE IS NOW TALKING TO idle,
+    # which is the wrong agent and often one that is mid-thought. Keeping this single entry is
+    # what lets that receipt still name its own lane.
+    _owner = state.clip_owner.get(interrupted_clip or "")
     state.clip_owner.clear()
+    if interrupted_clip and _owner:
+        state.clip_owner[interrupted_clip] = _owner
 
 
 async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventLoop) -> None:

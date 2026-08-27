@@ -119,8 +119,16 @@ def test_the_second_receipt_then_releases_the_second_lane(state, sock):
 
 
 def test_a_barge_in_forgets_everything_in_flight(state, sock, monkeypatch):
-    """No receipt is coming for a queue the client was told to drop, so the owners would otherwise
-    accumulate for the life of the session. Driven through the real barge path."""
+    """The owners would otherwise accumulate for the life of the session. Driven through the real
+    barge path.
+
+    ⚠ **EXCEPT THE CLIP THAT WAS PLAYING**, and that exception is spec 026 correcting spec 024.
+    This test used to assert the map was emptied, on 024's reasoning that *"no receipt is coming
+    for a queue the client was told to drop"* — which spec 025 then measured to be false. Stopping
+    playback is exactly what makes the browser fire `onended`, so a `played` for the interrupted
+    clip lands about 8 ms later. Emptying the map wholesale made that receipt fall through to the
+    `or state.lanes.current` fallback and mark **the lane he is now talking to** idle.
+    """
     import numpy as np
     monkeypatch.setattr(type(state.embedder), "available", property(lambda _s: True))
     monkeypatch.setattr(state.embedder, "embed", lambda _s: [0.1] * 192)
@@ -131,9 +139,13 @@ def test_a_barge_in_forgets_everything_in_flight(state, sock, monkeypatch):
     say_on(state, "magnus", "from magnus")
     assert state.clip_owner
 
-    state.agent_state = "speaking"
+    # The gate reads `speaking_lane` (spec 026 FR2); `say_on` above already set it to magnus, so
+    # this is the same-lane case — he is on magnus and magnus is speaking.
+    played_clip = state.playing_clip
     state.user_speaking = True
     asyncio.run(server._maybe_barge(state, np.ones(int(16000 * 1.5), dtype=np.float32) * 0.2))
 
     assert state.barges == 1, "the barge must actually have fired, or this proves nothing"
-    assert state.clip_owner == {}
+    assert state.clip_owner == {played_clip: "magnus"}, (
+        "only the interrupted clip is remembered, because only its receipt is still coming"
+    )

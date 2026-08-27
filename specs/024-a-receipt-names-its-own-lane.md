@@ -77,6 +77,11 @@ there, instead of guessing from a slot.
 - **TC2** — **A dropped playback queue forgets everything in flight**, because no receipt is coming
   for any of it.
 
+  🔴 **THE STATED REASON IS FALSE, AND SPEC 025 MEASURED IT.** A receipt IS coming for one of them:
+  the clip that was playing, because stopping playback is what makes the browser fire `onended`.
+  Spec `026` narrows this constraint to everything *except* that clip. The claim was plausible,
+  written confidently, and wrong — worth leaving visible rather than quietly editing away.
+
 ## Implementation Tasks
 
 - [x] A clip→lane map, populated wherever a clip goes out.
@@ -93,7 +98,14 @@ there, instead of guessing from a slot.
 - [x] **AC-3** `unit:tests/test_two_lanes_speaking.py` — **FR2.** The second receipt then releases
       the second lane, so the fix cannot pass by never releasing anything.
 - [x] **AC-4** `unit:tests/test_two_lanes_speaking.py` — **NFR1/TC2.** A real barge-in forgets
-      everything in flight.
+      everything in flight **except the clip that was playing**.
+
+      ⚠ **AMENDED BY SPEC 026.** This originally read "forgets everything", on TC2's reasoning that
+      a dropped queue means no receipt is coming. Spec `025` then measured the opposite:
+      `stop_playback` is precisely what MAKES the browser fire `onended`, so a `played` for the
+      interrupted clip lands about 8 ms later. Emptying the map wholesale sent that receipt through
+      the `or state.lanes.current` fallback and marked **the lane he had just turned to** idle.
+      One entry survives the clear, and its own receipt removes it.
 - [ ] **AC-5** `manual` — **FR3.** With two agents replying at once: confirm no lane is left saying
       "speaking" after both clips have played. Manual because it needs two real agents and real
       playback timing to interleave the receipts.

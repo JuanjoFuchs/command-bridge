@@ -140,7 +140,12 @@ def test_a_held_reply_still_delivers_after_a_barge_in(_his_voice, state, sock):
     # simulated it by calling `state.undelivered.clear()` directly, and a mutation check showed
     # that guard was worthless: reintroducing the exact TC3 bug left it green, because it was
     # testing the simulation rather than the code. Drive the real path or do not claim to.
-    state.agent_state = "speaking"
+    # `speaking_lane` and not `agent_state`, because that is what the gate reads now (spec 026 FR2).
+    # It names WHOSE clip is on the speaker, which is the only thing that can be talked over;
+    # `agent_state` answered "is the agent I am talking TO speaking" out of a cache a lane switch
+    # left stale. Setting the honest signal here is also what makes the interruption below
+    # same-lane — he is on claude and claude is the one speaking.
+    state.speaking_lane = "claude"
     state.user_speaking = True
     state.undelivered.append({"header": {"type": "audio_header"}, "pcm": b"x", "at": 0.0})
     asyncio.run(server._maybe_barge(state, _loud()))
@@ -312,23 +317,35 @@ def test_a_flushed_reply_survives_a_barge_in_and_the_hand_comes_back(_his_voice,
     of the three.
     """
     state.lanes.switch("claude")
-    say(state, "codex answer", lane="codex")
+    say(state, "codex first", lane="codex")
+    say(state, "codex second", lane="codex")
 
-    # He taps over to codex. The clip is flushed to the browser and is now in flight.
+    # He taps over to codex. BOTH clips are flushed to the browser and are now in flight; the
+    # first is on the speaker, the second is queued behind it.
     asyncio.run(server._set_lane(state, "codex", why="tap"))
-    assert state.lane_inflight.get("codex"), "the flush must keep a copy until playback lands"
+    assert len(state.lane_inflight.get("codex", [])) == 2, (
+        "the flush must keep a copy of each until playback lands"
+    )
     assert not state.lane_held.get("codex"), "and it is no longer merely held"
 
     # He speaks before it plays. Barge-in tells the page to drop its whole queue.
-    state.agent_state = "speaking"
+    # `speaking_lane` is the gate's source since spec 026 FR2 — and the flush above set it to
+    # "codex" for real, so this only restates what the server already did. He is ON codex, so this
+    # is a same-lane interruption and the played clip stays gone (spec 025).
+    state.speaking_lane = "codex"
     state.user_speaking = True
     asyncio.run(server._maybe_barge(state, _loud()))
     assert state.barges == 1, "the barge must actually have fired, or this proves nothing"
 
-    # The reply is back on codex's hold, and the hand is up again.
+    # ⚠ THE SECOND comes back; the FIRST does not, and that distinction is spec 025. He heard the
+    # one that was playing — interrupting it is what he DID — and stopping it is what makes the
+    # browser send its receipt, so returning it would replay a turn he has already heard. Measured
+    # live 2026-08-26: returned at 16:09:56.121, its receipt at 16:09:56.129, replayed five
+    # minutes later. Everything queued BEHIND it never reached his ears and must survive.
     assert not state.lane_inflight.get("codex"), "nothing may stay in flight after the queue is dropped"
-    assert len(state.lane_held.get("codex", [])) == 1, (
-        "an un-played reply must return to its lane rather than vanish with the browser queue"
+    held = [c["header"]["text"] for c in state.lane_held.get("codex", [])]
+    assert held == ["codex second"], (
+        f"only the un-played clip returns, not the one he interrupted — got {held}"
     )
     waiting = [m for m in sock.headers
                if m.get("type") == "lane_waiting" and m.get("lane") == "codex"]
@@ -339,7 +356,7 @@ def test_a_flushed_reply_survives_a_barge_in_and_the_hand_comes_back(_his_voice,
     # And it still reaches him on the next switch.
     asyncio.run(server._set_lane(state, "claude", why="tap"))
     asyncio.run(server._set_lane(state, "codex", why="tap"))
-    assert "codex answer" in audio_texts(sock)
+    assert "codex second" in audio_texts(sock)
 
 
 def test_a_played_receipt_releases_the_servers_copy(state, sock):
