@@ -913,6 +913,33 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
     spoke and a switch he tapped look identical in the state and mean different things when a
     transcript is read back later, or when he asks why the conversation moved.
     """
+    # 🔴 A DELIBERATE SWITCH OUTRANKS A LATCH MADE BEFORE IT (spec 027).
+    #
+    # `utterance_lane` is latched on the silence→speech edge and cleared in exactly one place —
+    # when a turn is routed. So a speech edge that never produces a turn (a cough, a false start,
+    # a blip under the turn model's threshold) leaves it set, and the `is None` guard that holds it
+    # across an utterance then stops it ever being re-latched. It survives every switch after that
+    # and delivers his next real sentence to the lane he was standing on when the noise happened.
+    #
+    # Measured 2026-08-27: he tapped to atlas at 12:24:46 and began speaking SIXTEEN SECONDS later,
+    # and the turn was still delivered to magnus. He had to re-say it with the name on the front.
+    # JJ: *"I had switched lanes before I started speaking, yet my previous turn was attributed to
+    # you."* · *"That is critical, is currently blocking me interacting with the other agents."*
+    #
+    # ⚠ **ONLY WHEN NO UTTERANCE IS IN FLIGHT, AND `talking()` IS THE ONLY HONEST TEST OF THAT.**
+    #
+    # 🔴 The first draft of this asked `buffer.speech_active`, and that would have REINTRODUCED
+    # spec 023. The window that spec exists for is not while he is talking — measured above, ASR
+    # takes 3.3 s AFTER the buffer closes, and `speech_active` reads false for every millisecond
+    # of it. Switching lanes inside that window is not a corner case, it is the exact gesture he
+    # asked for: *"I would like to finish speaking and be able to switch to a different lane while
+    # that thing that I just said just finishes transcribing."*
+    #
+    # `talking()` already composes the three signals — speech active, his client's own report, and
+    # `speech_pending` for an utterance closed and still in transcription — and exists precisely
+    # because "both speech signals read false while he has in fact just spoken."
+    if not state.talking():
+        state.utterance_lane = None
     state.lanes.current = lane
     timing.stamp(state.session, "lane", lane=lane, why=why)
     await _broadcast_json(

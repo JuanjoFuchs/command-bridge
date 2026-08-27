@@ -132,3 +132,80 @@ def test_a_summons_to_the_lane_he_is_already_on_does_not_move_anything(state):
 
     assert turn["lane"] == "atlas"
     assert state.lanes.current == "atlas"
+
+
+# ==================================================== spec 027 — the latch that outlived its turn
+#
+# 🔴 These drive `server._set_lane`, NOT `state.lanes.switch`. The tests above use the registry
+# directly because they are about routing; the fix under test lives in the switch HANDLER, and a
+# test that moved the registry by hand would step straight over it. Same rule as the file header:
+# drive the real path or do not claim to.
+
+
+def _switch(state, lane, why="tap"):
+    asyncio.run(server._set_lane(state, lane, why=why))
+
+
+def test_a_latch_from_a_blip_does_not_survive_a_deliberate_switch(state):
+    """🔴 THE DEFECT, measured 2026-08-27. A speech edge that never produced a turn — a cough, a
+    false start — leaves `utterance_lane` set, and the `is None` guard then stops it ever being
+    re-latched. He tapped to atlas and spoke SIXTEEN SECONDS later, and the turn still went to
+    magnus. He had to re-say it with the name on the front.
+
+    **Verify by mutation:** delete the clear in `_set_lane` and this goes red.
+    """
+    begin_utterance(state)                   # a blip latches magnus...
+    assert state.utterance_lane == "magnus"
+
+    _switch(state, "atlas")                  # ...and he taps away, in silence
+
+    assert state.utterance_lane is None, "a deliberate switch outranks a latch made before it"
+
+    begin_utterance(state)                   # the next real utterance latches atlas
+    turn = speak(state, "is the notebook guide loaded")
+
+    assert turn["lane"] == "atlas", (
+        "he switched a quarter of a minute before speaking; the words are atlas's"
+    )
+
+
+def test_a_switch_while_the_words_are_still_being_transcribed_keeps_the_latch(state):
+    """⚠ FR2, AND THE HALF THAT NEARLY GOT LOST. Told the guard covered switching mid-sentence he
+    said *"that is not a requirement. I would never switch while talking."* — right about that
+    case and it is the wrong case. ASR runs 3.3 s AFTER the buffer closes, `speech_active` reads
+    false throughout, and switching inside THAT window is the gesture spec 023 exists for.
+
+    `speech_pending` is what stands for it: an utterance closed and still in transcription.
+
+    **Verify by mutation:** narrow the guard to `buffer.speech_active` and this goes red.
+    """
+    begin_utterance(state)                   # he speaks to magnus
+    state.speech_pending = 1                 # ...the buffer closed; ASR is still running
+
+    _switch(state, "atlas")                  # he taps away, as he asked to be able to
+
+    assert state.utterance_lane == "magnus", (
+        "the words were spoken to magnus and must not follow him to the lane he tapped"
+    )
+
+    state.speech_pending = 0
+    turn = speak(state, "so what do you think about that")
+    assert turn["lane"] == "magnus"
+
+
+def test_a_spoken_switch_clears_it_too_and_so_does_a_switch_to_the_live_lane(state):
+    """FR3 and TC2. Both ways of switching are him addressing somebody on purpose — and tapping
+    the lane he is already on is exactly the gesture for 'no, I meant THIS one', so the idempotent
+    case must reset a wrong latch rather than no-op past it."""
+    begin_utterance(state)
+    _switch(state, "atlas", why="wake")
+    assert state.utterance_lane is None, "a spoken summons clears it as much as a tap"
+
+    state.utterance_lane = "atlas"           # a stale latch pointing at the live lane
+    _switch(state, "magnus")
+    assert state.utterance_lane is None
+
+    state.lanes.switch("magnus")
+    state.utterance_lane = "atlas"
+    _switch(state, "magnus")                 # switching to the lane already live
+    assert state.utterance_lane is None, "idempotent on the registry, not a no-op on the latch"
