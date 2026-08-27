@@ -1028,6 +1028,34 @@ async def handle_shutdown(request: web.Request) -> web.Response:
     return web.json_response({"stopping": True, "session": state.session})
 
 
+def _say_key(text: str) -> str:
+    """What counts as THE SAME SENTENCE for the duplicate-hold refusal (spec 028 FR3).
+
+    Case, surrounding whitespace and trailing punctuation are stripped, because an agent told not
+    to *"say it another way"* varies exactly those first and most cheaply. Anything beyond that —
+    a real paraphrase — is deliberately NOT matched: swallowing an agent's second, DIFFERENT
+    sentence would be a worse failure than the repetition being fixed.
+    """
+    return " ".join(str(text or "").split()).strip(" .!?,;:—-").casefold()
+
+
+def _held_duplicate(state: TunnelState, lane: str | None, text: str) -> dict | None:
+    """The clip already waiting in THIS lane's hold with this same sentence, if there is one.
+
+    Scoped to one lane on purpose (spec 028 TC2): two agents reaching the same words is honest,
+    and they are different voices to him.
+    """
+    if not lane:
+        return None
+    key = _say_key(text)
+    if not key:
+        return None
+    for clip in state.lane_held.get(str(lane), []):
+        if _say_key((clip.get("header") or {}).get("text", "")) == key:
+            return clip
+    return None
+
+
 def _unread_turns(state: TunnelState, lane: str | None = None) -> dict[str, Any]:
     """Everything he said that the agent has not read, for `say` to hand back as it speaks.
 
@@ -1290,6 +1318,36 @@ async def handle_say(request: web.Request) -> web.Response:
     # Sampled BEFORE synthesis so both paths carry it: `--now` is exactly the path an agent takes
     # when it is in a hurry, which is when it skips the check.
     unread = _unread_turns(state, lane)
+
+    # 🔴 THE SAME SENTENCE IS NOT QUEUED TWICE INTO ONE LANE'S HOLD (spec 028).
+    #
+    # The off-lane hold response already says, in as many words, *"Do not repeat it and do not say
+    # it another way: keep waiting on the watch above."* **That is advice to a model, not a
+    # constraint on a system**, and on 2026-08-27 an agent ignored it: two clip ids, identical
+    # text, eighty-five seconds apart, both held for kepler and both played when he came back.
+    # JJ: *"The Kepler agent just spoke twice to me."* — and, tellingly, *"I don't know if it's an
+    # issue of the agent or the voice tunnel."*
+    #
+    # ⚠ Against the HOLD only, never against what has already played (TC1): saying something again
+    # an hour later is ordinary speech and not the tool's business. And a different lane holding
+    # the same words is not a duplicate (TC2) — two agents may honestly reach the same sentence,
+    # and they are different voices to him.
+    _dup = _held_duplicate(state, lane, text)
+    if _dup is not None:
+        return web.json_response(
+            {"error": "refusing to speak: this lane is already holding that exact sentence, "
+                      "waiting for him to come back to it. Nothing was synthesized and nothing "
+                      "was queued.",
+             "code": "duplicate_held",
+             "clip": (_dup.get("header") or {}).get("id"),
+             "waiting_s": round(time.time() - _dup.get("at", time.time()), 1),
+             "lane": lane,
+             "remedy": f"voice-tunnel watch --session {state.session} --lane {lane}",
+             "next": "IT IS ALREADY WAITING AND HE CAN SEE THE RAISED HAND. Say something NEW or "
+                     "say nothing — keep waiting on the watch, which returns the moment his "
+                     "attention is back on this lane."},
+            status=428,
+        )
 
     # AND NOW IT REFUSES, WHERE IT USED TO SPEAK AND THEN WARN (spec 007, FR1).
     #
