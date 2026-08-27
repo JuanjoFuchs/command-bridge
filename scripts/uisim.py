@@ -96,6 +96,41 @@ def held(lane, n):
     return {"type": "lane_waiting", "lane": lane, "waiting": n}
 
 
+# The binary frame that must follow a header. `run_scenario` turns this sentinel into a
+# `deliverBytes` call, because a header on its own never enqueues anything.
+BYTES = {"__bytes__": 2}
+
+# 🔴 WATCH THE WHOLE INTERVAL, NOT THE END OF IT. Some defects are transient by nature — the one
+# this was written for is a hand that *"quickly appear[s] and disappear[s]"* — and an assertion
+# that runs after the messages have settled cannot see them. Two mutation checks passed against
+# the live bug before this existed, for exactly that reason.
+#
+# Placed FIRST in a scenario, it records every `.hand` that is ever attached while the rest of the
+# messages play, so the assertion can ask "did one appear at any point" instead of "is one here
+# now".
+OBSERVE = {"__observe__": True}
+OBSERVE_JS = """
+() => {
+  window.__handSeen = 0;
+  const seen = () => {
+    const n = document.querySelectorAll('#orbs .hand').length;
+    if (n > window.__handSeen) window.__handSeen = n;
+  };
+  seen();
+  new MutationObserver(seen).observe(document.body,
+    { childList: true, subtree: true, characterData: true, attributes: true });
+}
+"""
+
+
+def cue(name="heard"):
+    """An acknowledgement sound. **It carries no `lane`, and that is the point** (spec 029): every
+    other clip has since spec 013 FR4, so the page's `header.lane || defaultLane` fallback banked
+    cues against the default lane and raised a hand there for as long as the sound played."""
+    return {"type": "audio_header", "id": f"cue-{name}", "sample_rate": 22050,
+            "bytes": 0, "text": "", "cue": name}
+
+
 # --------------------------------------------------------------------- the scenarios
 #
 # Each is (name, messages, assertions). The assertions are what makes this a harness rather than a
@@ -180,7 +215,77 @@ def working_not_idle(page):
     ]
 
 
+def cue_raises_no_hand(page):
+    """🔴 Spec 029 FR1. He was on kepler; the hand flashed on MAGNUS, the default lane, every time
+    an agent read a turn or changed stage — because those fire cues, and a cue has no lane.
+
+    *"I saw a hand quickly appear and disappear on the Magnus lane. I would assume because the
+    Magnus lane is the default one."* (2026-08-27) — and he was right.
+    """
+    # ⚠ ASSERTED AGAINST THE REDUCER, not the rendered row, and that is not a shortcut.
+    # `drainClips` returns early with no AudioContext, so a headless page never repaints after a
+    # clip is queued — the hand is never drawn either way, and two earlier versions of this check
+    # passed against the live bug because they were measuring that silence. `waitingCounts` is the
+    # function that decides the number, and it is reachable.
+    q = ("() => window.__voiceTunnel.waitingCounts({"
+         " lanes: ['claude','codex','atlas'], laneWaiting: {},"
+         " clipQueue: [{ header: { id: 'cue-heard', cue: 'heard' } }],"
+         " playingLane: null, defaultLane: 'claude' })")
+    q_playing = ("() => window.__voiceTunnel.waitingCounts({"
+                 " lanes: ['claude','codex','atlas'], laneWaiting: {}, clipQueue: [],"
+                 " playingLane: null, defaultLane: 'claude' })")
+    return [
+        (lambda: _probe(page, q),
+         {}, "a queued cue belongs to nobody, so no lane shows a hand"),
+        (lambda: _probe(page, q_playing),
+         {}, "and an empty queue shows nothing, so the check above is not vacuous"),
+        # The OWNER decision itself — the line `drainClips` runs, which no headless page reaches.
+        (lambda: _probe(page, "() => window.__voiceTunnel.clipOwner("
+                              "{ id: 'cue-heard', cue: 'heard' }, 'claude')"),
+         None, "a cue has no owner, so it never becomes the playing lane"),
+        (lambda: _probe(page, "() => window.__voiceTunnel.clipOwner("
+                              "{ id: 'clip-1', lane: 'atlas' }, 'claude')"),
+         "atlas", "a real reply still names its own lane"),
+        (lambda: _probe(page, "() => window.__voiceTunnel.clipOwner({ id: 'clip-2' }, 'claude')"),
+         "claude", "and a lane-less REPLY still falls back to the default (TC1)"),
+        # THE MAXIMUM OVER THE WHOLE RUN — the defect is a flash, so the end state cannot see it.
+        (lambda: _probe(page, "() => window.__handSeen"),
+         0, "and no hand is drawn at any point while the cues arrive"),
+        (lambda: _probe(page, "() => document.querySelectorAll('#orbs .laneorb').length"),
+         3, "and the row is otherwise intact"),
+    ]
+
+
+def focused_lane_counts_down(page):
+    """Spec 029 FR2/FR4. *"The hand number should decrease gradually as the [queued] turns get
+    played."* The server broadcasts the backlog for the lane he is NOT on; this asserts the number
+    survives on the lane he IS on rather than being forced to zero."""
+    return [
+        # The badge renders the hand glyph beside the number, so read the DIGITS — asserting the
+        # whole string would tie this to the glyph, which spec 014 owns and this spec must not.
+        (lambda: _probe(page, "() => { const b = document.querySelector"
+                              "('#orbs .laneorb[data-lane=\"claude\"] .hand');"
+                              "        return b ? b.textContent.replace(/\\D/g, '') : null; }"),
+         "2", "the live lane shows what is still to be played, not a forced zero"),
+        (lambda: _probe(page, "() => document.querySelectorAll('#orbs .hand').length"),
+         1, "and only on that lane — codex has nothing waiting"),
+    ]
+
+
 SCENARIOS = {
+    # ⚠ `BYTES` after each cue header is NOT decoration. `onMessage` parks a header in
+    # `pendingClip` and only enqueues the clip when the bytes arrive, so a header alone asserts
+    # nothing — which is exactly how the first version of this scenario passed against the bug.
+    "cue-no-hand": (
+        [ready(lanes=("claude", "codex", "atlas"), live="codex", watching=["codex"]),
+         OBSERVE, cue("heard"), BYTES, cue("thinking"), BYTES],
+        cue_raises_no_hand,
+    ),
+    "live-lane-countdown": (
+        [ready(lanes=("claude", "codex"), live="claude", watching=["claude"]),
+         held("claude", 2)],
+        focused_lane_counts_down,
+    ),
     "solo": (
         [ready(lanes=("claude",), watching=["claude"]),
          turn(1, "Hey Claude, can you hear me?", lane="claude"),
@@ -270,7 +375,12 @@ def run_scenario(browser, port, name, messages, assertions, out, shoot):
         page.wait_for_function("() => window.__voiceTunnel && window.__voiceTunnel.deliver",
                                timeout=15000)
         for m in messages:
-            page.evaluate("(m) => window.__voiceTunnel.deliver(m)", m)
+            if isinstance(m, dict) and "__observe__" in m:
+                page.evaluate(OBSERVE_JS)
+            elif isinstance(m, dict) and "__bytes__" in m:
+                page.evaluate("(n) => window.__voiceTunnel.deliverBytes(n)", m["__bytes__"])
+            else:
+                page.evaluate("(m) => window.__voiceTunnel.deliver(m)", m)
         page.wait_for_timeout(350)
 
         # ASSERT ON THE PHONE PASS ONLY — the claims are about state, not about width, and

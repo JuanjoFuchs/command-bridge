@@ -1936,11 +1936,18 @@
           state = watching ? (name === m.live ? "listening" : "idle") : "thinking";
         }
         const live = name === m.live;
-        // 🔴 THE HAND ONLY MEANS SOMETHING ON A LANE HE IS NOT ON. *"the hand with the turns
-        // should only show whenever the lane is not focused."* (2026-08-25) On the live lane the
-        // held clips are already playing, so a raised hand there is asking for attention he is
-        // currently giving — and it lingers over the very orb whose words are coming out.
-        const waiting = live ? 0 : ((m.waiting && m.waiting[name]) || 0);
+        // 🔴 THE HAND MEANS "STILL UNHEARD", ON EVERY LANE (spec 029 FR2).
+        //
+        // ⚠ **This USED to force zero on the live lane, and that was his rule too:** *"the hand
+        // with the turns should only show whenever the lane is not focused."* (2026-08-25) He
+        // asked for the opposite on 2026-08-27 — *"The hand number should decrease gradually as
+        // the [queued] turns get played"* — and the two are reconcilable rather than contradictory.
+        //
+        // The old rule objects to a hand that ASKS FOR ATTENTION HE IS ALREADY GIVING. The new one
+        // wants a COUNTDOWN OF WHAT IS STILL TO PLAY. Counting only the unheard satisfies both: on
+        // a lane he is not on it is the held backlog, and on the lane he is on it is the queue
+        // draining to zero by itself. The number never asks for anything — it reports.
+        const waiting = (m.waiting && m.waiting[name]) || 0;
         return {
           name, live, waiting, state,
           hue: laneHue(names, name),
@@ -1961,22 +1968,56 @@
     };
   }
 
+  // HOW MANY REPLIES EACH LANE STILL HAS UNHEARD — a pure function, and that is the point.
+  //
+  // THE SERVER'S BACKLOG PLUS THIS PAGE'S. The two never overlap: the server broadcasts
+  // `waiting: 0` for a lane at the instant it hands the whole queue over, and from then on the
+  // remainder is local. Summing them is what makes the hand count DOWN as each clip plays instead
+  // of vanishing on the first one.
+  //
+  // 🔴 **EXTRACTED FROM THE PAINTER BECAUSE IT COULD NOT BE TESTED THERE (spec 029).** The tally
+  // lived inside `applyLaneOrbs`, so the only way to exercise it was to make the page actually
+  // play audio — which a headless run cannot do, because `drainClips` returns early with no
+  // AudioContext and never repaints. **Two mutation checks passed against the live bug for that
+  // reason**: nothing rendered a hand either way, so the assertion was measuring silence.
+  //
+  // ⚠ Cues are excluded on both halves (FR1). A cue header carries no `lane` — it is the one kind
+  // of audio outside the lane system — so the `|| defaultLane` fallback banked every
+  // acknowledgement sound against the default lane and flashed a hand there. JJ, 2026-08-27:
+  // *"I saw a hand quickly appear and disappear on the Magnus lane."*
+  // WHICH LANE A CLIP BELONGS TO, or null when the answer is nobody (spec 029 FR1/TC1).
+  //
+  // A cue is the one kind of audio outside the lane system, so it has no owner to be waiting for.
+  // Tested by its own `cue` field rather than by the ABSENCE of a lane, because a genuinely
+  // lane-less REPLY should still fall back to the default — that fallback is what spec 013 left
+  // in place for clips that predate lanes, and it is correct for replies and wrong for cues.
+  //
+  // Pure and exposed for the same reason as `waitingCounts`: the caller lives in `drainClips`,
+  // which a headless harness cannot reach without an AudioContext.
+  function clipOwner(header, defaultLane) {
+    if (!header || header.cue) return null;
+    return header.lane || defaultLane;
+  }
+
+  function waitingCounts({ lanes, laneWaiting, clipQueue, playingLane, defaultLane }) {
+    const out = {};
+    (lanes || []).forEach((n) => {
+      const local = (clipQueue || []).filter(
+        (c) => c && c.header && !c.header.cue
+               && (c.header.lane || defaultLane) === n).length
+        + (playingLane === n ? 1 : 0);
+      const total = ((laneWaiting || {})[n] || 0) + local;
+      if (total) out[n] = total;
+    });
+    return out;
+  }
+
   // ONE painter, and the ONLY thing allowed to touch the orb row.
   function applyLaneOrbs() {
     // Stamp the busy clocks BEFORE building the view, so a state that just changed is timed from
     // the moment it changed rather than from the next repaint.
     lanes.forEach((n) => noteLaneBusy(n, laneStates[n] || "idle"));
-    // THE SERVER'S BACKLOG PLUS THIS PAGE'S. The two never overlap: the server broadcasts
-    // `waiting: 0` for a lane at the instant it hands the whole queue over, and from then on the
-    // remainder is local. Summing them is what makes the hand count DOWN as each clip plays
-    // instead of vanishing on the first one.
-    const waiting = {};
-    lanes.forEach((n) => {
-      const local = clipQueue.filter((c) => (c.header.lane || defaultLane) === n).length
-                    + (playingLane === n ? 1 : 0);
-      const total = (laneWaiting[n] || 0) + local;
-      if (total) waiting[n] = total;
-    });
+    const waiting = waitingCounts({ lanes, laneWaiting, clipQueue, playingLane, defaultLane });
     const view = laneOrbsView({
       lanes, live: liveLane, waiting, states: laneStates,
       // The two facts that separate "listening" from "working" from "never started".
@@ -2182,8 +2223,22 @@
   diag.tagView = tagView;
   diag.receiptView = receiptView;
   diag.laneOrbsView = laneOrbsView;
+  // The unheard tally, exposed for the same reason as every other reducer here: it decides what
+  // the hand says, and it must be checkable without an AudioContext (spec 029).
+  diag.waitingCounts = waitingCounts;
+  diag.clipOwner = clipOwner;
   diag.laneHue = laneHue;
   diag.deliver = (msg) => onMessage({ data: JSON.stringify(msg) });
+  // THE BYTES THAT MUST FOLLOW A HEADER, through the SAME handler (spec 029).
+  //
+  // 🔴 Without this a harness can only deliver the header, and `onMessage` merely parks it in
+  // `pendingClip` — no clip is ever enqueued, so any assertion about the queue is vacuous. The
+  // first version of the cue test passed for exactly that reason and **the mutation check caught
+  // it**: reinstating the bug it was written for left it green.
+  //
+  // Same reasoning as `pushAudio` above — a harness that sends one half of a two-part exchange is
+  // asserting a state that cannot occur in production.
+  diag.deliverBytes = (n) => onMessage({ data: new ArrayBuffer(Number(n) || 2) });
   // An agent's transcript row WITHOUT synthesizing audio, for the screenshot harness.
   //
   // A reply only reaches the log when a clip actually plays, so a harness with no audio can never
@@ -2910,7 +2965,16 @@
         const { header, buf } = clipQueue.shift();
         // The hand counts what is LEFT, so it has to be repainted as each clip leaves the queue
         // and again when the last one stops — not once when the queue arrives.
-        playingLane = header.lane || defaultLane;
+        //
+        // 🔴 A CUE HAS NO OWNER, SO IT MUST NOT CLAIM ONE (spec 029 FR1). Cue headers carry no
+        // `lane` — they are the one kind of audio that predates and sits outside lanes — and this
+        // fallback therefore attributed every acknowledgement sound to the DEFAULT lane, raising a
+        // hand there for exactly as long as the cue played. JJ, 2026-08-27, while talking to
+        // kepler: *"I saw a hand quickly appear and disappear on the Magnus lane. I would assume
+        // because the Magnus lane is the default one."* He was right.
+        //
+        // ⚠ The decision lives in `clipOwner` so it can be tested without an AudioContext.
+        playingLane = clipOwner(header, defaultLane);
         applyLaneOrbs();
         await playClip(header, buf);
         playingLane = null;
