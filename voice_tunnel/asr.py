@@ -341,6 +341,7 @@ class Recognizer:
         self.device = device
         self.compute_type = compute_type
         self._model = None
+        self._hotwords = ""  # set by _ensure_parakeet; "" means no biasing / preview streams
         # One recognizer, potentially two callers: the live partial preview and the real
         # end-of-utterance transcription, both dispatched to a thread pool. Neither
         # sherpa-onnx nor faster-whisper promises thread safety on a shared model, and
@@ -368,14 +369,37 @@ class Recognizer:
             d = config.parakeet_dir()
             if not d:
                 raise RuntimeError("parakeet engine selected but no model directory found")
-            self._model = sherpa_onnx.OfflineRecognizer.from_transducer(
-                encoder=os.path.join(d, "encoder.int8.onnx"),
-                decoder=os.path.join(d, "decoder.int8.onnx"),
-                joiner=os.path.join(d, "joiner.int8.onnx"),
-                tokens=os.path.join(d, "tokens.txt"),
-                num_threads=config.asr_threads(),
-                model_type="nemo_transducer",
-            )
+            encoder = os.path.join(d, "encoder.int8.onnx")
+            decoder = os.path.join(d, "decoder.int8.onnx")
+            joiner = os.path.join(d, "joiner.int8.onnx")
+            tokens = os.path.join(d, "tokens.txt")
+            threads = config.asr_threads()
+            # CONTEXTUAL BIASING, opt-in and gated on config.parakeet_hotwords() — see there for
+            # why (bpe.vocab, phrases, modified_beam_search) must line up. When it returns None the
+            # plain branch runs greedy, byte-identical to before. Measured 2026-08-31.
+            #
+            # 🔴 THE HOTWORDS ARE NOT BAKED INTO THE MODEL. They are held on `self._hotwords` and
+            # applied PER STREAM, on final decodes only — because the live preview transcribes a
+            # partial utterance repeatedly, and on a short partial the hotword over-boosts into
+            # "Claude Claude Claude" (he saw exactly this in the live window). So the model is built
+            # with modified_beam_search + bpe.vocab but NO hotwords_file; the phrases ride on the
+            # final's stream and never the preview's. See _transcribe_parakeet.
+            hw = config.parakeet_hotwords()
+            if hw:
+                self._hotwords = hw["phrases"]
+                self._model = sherpa_onnx.OfflineRecognizer.from_transducer(
+                    encoder=encoder, decoder=decoder, joiner=joiner, tokens=tokens,
+                    num_threads=threads, model_type="nemo_transducer",
+                    decoding_method="modified_beam_search",
+                    hotwords_score=hw["score"],
+                    modeling_unit="bpe", bpe_vocab=hw["bpe_vocab"],
+                )
+            else:
+                self._hotwords = ""
+                self._model = sherpa_onnx.OfflineRecognizer.from_transducer(
+                    encoder=encoder, decoder=decoder, joiner=joiner, tokens=tokens,
+                    num_threads=threads, model_type="nemo_transducer",
+                )
         return self._model
 
     def _transcribe_whisper(self, samples: np.ndarray) -> str:
@@ -390,17 +414,23 @@ class Recognizer:
         )
         return " ".join(s.text.strip() for s in segments if s.text and s.text.strip())
 
-    def _transcribe_parakeet(self, samples: np.ndarray) -> str:
+    def _transcribe_parakeet(self, samples: np.ndarray, final: bool) -> str:
         model = self._ensure_parakeet()
-        stream = model.create_stream()
+        # Hotwords only on the FINAL decode. The preview passes none, so a short partial cannot
+        # over-boost a hotword — see _ensure_parakeet. `self._hotwords` is "" unless biasing is
+        # configured, in which case the plain create_stream() path is still greedy-equivalent.
+        if final and self._hotwords:
+            stream = model.create_stream(self._hotwords)
+        else:
+            stream = model.create_stream()
         stream.accept_waveform(config.TARGET_SR, samples)
         model.decode_stream(stream)
         return stream.result.text or ""
 
     # -- the interface ------------------------------------------------------
-    def _run(self, samples: np.ndarray) -> str:
+    def _run(self, samples: np.ndarray, final: bool) -> str:
         if self.engine == "parakeet":
-            text = self._transcribe_parakeet(samples)
+            text = self._transcribe_parakeet(samples, final)
         else:
             text = self._transcribe_whisper(samples)
         text = " ".join(text.split())
@@ -418,7 +448,7 @@ class Recognizer:
             return ""
         samples = np.asarray(samples, dtype=np.float32)
         with self._lock:
-            return self._run(samples)
+            return self._run(samples, final=True)
 
     def try_transcribe(self, samples: np.ndarray) -> str | None:
         """Transcribe only if the model is free; return None if it is busy.
@@ -432,6 +462,6 @@ class Recognizer:
         if not self._lock.acquire(blocking=False):
             return None
         try:
-            return self._run(np.asarray(samples, dtype=np.float32))
+            return self._run(np.asarray(samples, dtype=np.float32), final=False)
         finally:
             self._lock.release()

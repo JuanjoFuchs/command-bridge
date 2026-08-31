@@ -1,0 +1,39 @@
+# Hotword biasing list for the Parakeet recognizer — MEASURED, not guessed.
+#
+# Every entry below was tested against his own voice on 2026-08-31, greedy vs
+# modified_beam_search with the real bpe.vocab extracted from NVIDIA's .nemo.
+# Score 2.0 globally; overlapping sub-phrases cause a repetition artefact, so
+# each name/term is ONE phrase.
+#
+#   term              greedy heard        hotwords heard      verdict
+#   ----              ------------        --------------      -------
+#   Claude            Claude              Claude              ✓ (already fine)
+#   Codex             "Codix"             Codex               ✓ FIXED
+#   Grok              Grok                Grok                ✓
+#   Grok          "Grok"        Grok            ✓ FIXED
+#   Juanjo Fuchs   "Huang Ho Fuchs"    Juanjo Fuchs     ✓ FIXED @2.0
+#   Claudefana        "Claude Fanner"     "Claude Fanner"     ✗ still splits
+#
+# ⚠ Claudefana is genuinely pronounced as TWO acoustic words ("Claude Fanner"),
+# so a single contiguous hotword cannot match it at any score (tried 1.5–4.0).
+# The fix if he wants it is a post-ASR map "Claude Fanner" -> "Claudefana",
+# not a hotword.
+#
+# ⚠ REMOVED 2026-08-31 at his instruction: "Cloudflare" — my mining added it,
+# but he does not say it. Biasing a word he never speaks only risks false hits.
+#
+# ⚠ REMOVED 2026-08-31 (regression fix): "Claude" and "Claudefana".
+#   He reported short turns to OTHER lanes coming back as "Claude Claude Claude"
+#   (turns 4198/4205/4206: "go" -> "Claude Claude. Go.", "calls" -> "Claude
+#   Claude Claude Calls", a one-word turn -> ten Claudes). Root cause: "Claude"
+#   was ALREADY recognized fine (table above), so boosting a short, constantly-
+#   spoken token just makes the beam prepend it on low-content audio. And
+#   "Claudefana" never matched anyway (splits to "Claude Fanner") while its
+#   "Claude" prefix fed the same insertion. Both were pure downside. The four
+#   that biasing actually fixed — Codex, Grok, Grok, Juanjo Fuchs — stay.
+#   Claudefana's real fix, if wanted, is a post-ASR text map, not a hotword.
+
+Codex
+Grok
+Grok
+Juanjo Fuchs

@@ -813,6 +813,51 @@ def asr_threads() -> int:
         return 4
 
 
+def parakeet_hotwords():
+    """Contextual-biasing config for Parakeet, or None to stay on plain greedy decoding.
+
+    Three files have to line up before biasing is even expressible, and any gap means None so the
+    engine is byte-identical to what it was before this existed:
+
+      - a **hotwords file** the owner curated (one phrase per line), pointed at by
+        VOICE_TUNNEL_HOTWORDS_FILE or defaulting to `hotwords.txt` at the repo root;
+      - a **bpe.vocab** inside the model dir, which sherpa needs to tokenise a hotword phrase the
+        way the model itself would — the checkpoint ships only `tokens.txt`, so this is the file
+        extracted from NVIDIA's `.nemo` on 2026-08-31 (the July "dead end" was exactly its absence);
+      - **modified_beam_search**, which the caller selects because greedy cannot use hotwords.
+
+    Score defaults to 2.0 — measured on his own voice as the point that fixes Codex/Grok/his
+    name without the repetition artefact a higher score produces on overlapping phrases.
+    """
+    import os
+
+    d = parakeet_dir()
+    if not d:
+        return None
+    bpe = os.path.join(d, "bpe.vocab")
+    hw = _env("VOICE_TUNNEL_HOTWORDS_FILE") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hotwords.txt")
+    if not (os.path.isfile(hw) and os.path.isfile(bpe)):
+        return None
+    try:
+        with open(hw, encoding="utf-8") as fh:
+            phrases = [ln.strip() for ln in fh]
+    except OSError:
+        return None
+    # `#` comments and blanks are the file's own documentation, not hotwords.
+    phrases = [p for p in phrases if p and not p.startswith("#")]
+    if not phrases:
+        return None
+    try:
+        score = float(_env("VOICE_TUNNEL_HOTWORDS_SCORE", "2.0"))
+    except ValueError:
+        score = 2.0
+    # `phrases` is carried as a newline-joined STRING because it is passed per-stream to
+    # `create_stream(hotwords=...)` on FINAL decodes only — never on the live preview, where a
+    # short partial over-boosts a hotword into "Claude Claude Claude". Measured 2026-08-31.
+    return {"phrases": "\n".join(phrases), "bpe_vocab": bpe, "score": score}
+
+
 def whisper_model() -> str:
     """base.en, not small.en. Benchmarked on this machine over a 3 s utterance:
 
