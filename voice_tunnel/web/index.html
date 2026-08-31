@@ -2218,6 +2218,23 @@
     return ticks >= (limit || 15) ? "finish" : "resume";
   }
   diag.clipStallAction = clipStallAction;
+  // 🔴 THE CLOCK IS THE FLOOR UNDER `onended`, added 2026-08-31. The "speaking" label — and the
+  // hand chained to it, because the hand counts unheard clips and decrements on the same `played`
+  // receipt — hung ~20 s after a clip had finished. The label clears on that receipt, the receipt
+  // waits on `src.onended`, and `onended` fires late whenever the context suspends around the
+  // clip's end (his laptop, same suspend that stalled Atlas for 43 s on 2026-08-26; NOT a phone).
+  // `AudioContext.currentTime` advances ONLY while the context runs, so once it has passed the
+  // clip's scheduled end the audio has genuinely played through: this cannot fire early during a
+  // real suspend (the clock is frozen then, still short of the end) and it fires at once when a
+  // late `onended` is the only thing still missing — including the exact reported case, a clip that
+  // finished and THEN the context suspended. `onended` stays the fast path; this is the floor under
+  // it. Pure and finite-guarded so `scripts/clipstall.py` sweeps it with no AudioContext, and so a
+  // null clock (`ctx` nulled mid-drain) or an unknown duration defers to the stall guard rather
+  // than finishing a clip early.
+  function clipElapsed(now, end) {
+    return Number.isFinite(now) && Number.isFinite(end) && now >= end;
+  }
+  diag.clipElapsed = clipElapsed;
   diag.orbView = orbView;
   diag.lanesView = lanesView;
   diag.tagView = tagView;
@@ -3032,7 +3049,15 @@
         // Atlas lane for it to start speaking."*
         // ⚠ The same state was already known ONE FUNCTION AWAY — `reconnect()` resumes a
         // suspended context and says why — and was never handled on the playback path.
+        // The clip's end IN THE CONTEXT'S OWN CLOCK — the value `clipElapsed` compares against.
+        // `src.start()` below begins at this same `currentTime`; a suspend only freezes the clock,
+        // it never moves the end, so this stays valid across any number of suspend/resume cycles.
+        const scheduledEnd = (ctx ? ctx.currentTime : 0) + audio.duration;
         guard = setInterval(() => {
+          // THE CLOCK FLOOR, checked before the stall predicate: the audio actually reached its end
+          // (currentTime cannot pass the end unless the context ran there), so finish even if
+          // `onended` has not fired and even if the context suspended the instant after it did.
+          if (clipElapsed(ctx && ctx.currentTime, scheduledEnd)) return finish();
           const act = clipStallAction(ctx && ctx.state, asleep);
           if (act === "wait") { asleep = 0; return; }
           if (act === "finish") return finish();

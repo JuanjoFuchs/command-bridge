@@ -196,12 +196,37 @@ with sync_playwright() as pw:
               "an unrecognised state is treated as healthy rather than discarded",
               f"got {by[('interrupted', 0)]!r}")
 
-        note("the rule the timer runs is the rule that was swept")
+        note("the clock floor under onended: a finished clip does not wait on the event")
+        # `clipElapsed(now, end)` — the predicate that clears "speaking" the moment the audio clock
+        # has passed the clip's end, so a late `onended` (context suspended around clip-end) no
+        # longer strands the label ~20 s. Reported 2026-08-31, on the laptop.
+        elapsed = page.evaluate(
+            "() => { const f = window.__voiceTunnel.clipElapsed; return {"
+            " past_end: f(10.0, 9.5),"       # clock ran past the end -> finished
+            " at_end: f(9.5, 9.5),"          # exactly at the end -> finished
+            " before_end: f(5.0, 9.5),"      # still playing -> not yet
+            " frozen_mid: f(4.0, 9.5),"      # suspended below the end -> not yet (clock frozen)
+            " null_now: f(null, 9.5),"       # ctx nulled mid-drain -> defer, don't finish early
+            " nan_end: f(10.0, NaN) };  }")  # duration unknown -> never finishes on the clock
+        check(elapsed["past_end"] and elapsed["at_end"],
+              "a clip whose audio clock reached its end is finished, onended or not")
+        check(not elapsed["before_end"] and not elapsed["frozen_mid"],
+              "a clip short of its end is left alone — a frozen clock cannot pass the end")
+        check(not elapsed["null_now"] and not elapsed["nan_end"],
+              "a missing clock or unknown duration defers to the stall guard, never finishes early")
+
+        note("the rules the timer runs are the rules that were swept")
         wired = page.evaluate(
             "() => document.documentElement.innerHTML.includes('clipStallAction(ctx && ctx.state')")
         check(wired,
               "playClip's guard calls clipStallAction rather than re-implementing the predicate",
               "if this fails, the sweep above is testing a function nothing runs")
+        wired_clock = page.evaluate(
+            "() => document.documentElement.innerHTML"
+            ".includes('clipElapsed(ctx && ctx.currentTime')")
+        check(wired_clock,
+              "playClip's guard checks clipElapsed before the stall predicate",
+              "if this fails, the clock floor is dead code and the ~20 s hang is back")
 
         bctx.close()
     finally:
