@@ -813,6 +813,28 @@ def asr_threads() -> int:
         return 4
 
 
+def hotwords_file() -> str:
+    """The curated hotword list — one phrase per line, `#` comments ignored.
+
+    VOICE_TUNNEL_HOTWORDS_FILE, or `hotwords.txt` at the repo root. Its own resolver AND the value
+    `parakeet_hotwords` reads, so `config get` cannot describe a file the decoder does not open.
+    """
+    import os
+
+    return _env("VOICE_TUNNEL_HOTWORDS_FILE") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hotwords.txt")
+
+
+def hotwords_score() -> float:
+    """How hard to bias toward a hotword on final decodes. 2.0, measured on his voice as the point
+    that fixes his terms without the repetition artefact a higher score produces on overlapping
+    phrases. Falls back to 2.0 on a non-numeric override rather than raising."""
+    try:
+        return float(_env("VOICE_TUNNEL_HOTWORDS_SCORE", "2.0"))
+    except ValueError:
+        return 2.0
+
+
 def parakeet_hotwords():
     """Contextual-biasing config for Parakeet, or None to stay on plain greedy decoding.
 
@@ -835,8 +857,7 @@ def parakeet_hotwords():
     if not d:
         return None
     bpe = os.path.join(d, "bpe.vocab")
-    hw = _env("VOICE_TUNNEL_HOTWORDS_FILE") or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hotwords.txt")
+    hw = hotwords_file()
     if not (os.path.isfile(hw) and os.path.isfile(bpe)):
         return None
     try:
@@ -848,10 +869,7 @@ def parakeet_hotwords():
     phrases = [p for p in phrases if p and not p.startswith("#")]
     if not phrases:
         return None
-    try:
-        score = float(_env("VOICE_TUNNEL_HOTWORDS_SCORE", "2.0"))
-    except ValueError:
-        score = 2.0
+    score = hotwords_score()
     # `phrases` is carried as a newline-joined STRING because it is passed per-stream to
     # `create_stream(hotwords=...)` on FINAL decodes only — never on the live preview, where a
     # short partial over-boosts a hotword into "Claude Claude Claude". Measured 2026-08-31.
@@ -1533,6 +1551,21 @@ SETTINGS: tuple = (
     _setting("VOICE_TUNNEL_ASR", "parakeet | whisper (auto-selects parakeet when its model is present)",
              asr_engine),
     _setting("VOICE_TUNNEL_PARAKEET_DIR", "sherpa-onnx Parakeet model dir", parakeet_dir),
+    # THE TWO HOTWORD VARIABLES WERE READ AND NEVER REGISTERED — the same defect the kokoro and
+    # turn-detection keys above carried, recurring the moment the hotword feature landed
+    # (2026-08-31) and caught by AC9 the same day. `config get VOICE_TUNNEL_HOTWORDS_SCORE`
+    # answered "unknown setting" for a knob that was live and biasing his transcripts.
+    _setting("VOICE_TUNNEL_HOTWORDS_FILE",
+             "contextual-biasing hotword list, one phrase per line (`#` comments ignored); default "
+             "<repo>/hotwords.txt. Only takes effect when the parakeet model dir also holds a "
+             "bpe.vocab — without it, decoding stays plain greedy and byte-identical",
+             hotwords_file),
+    _setting("VOICE_TUNNEL_HOTWORDS_SCORE",
+             "how hard to bias toward a hotword on FINAL decodes (default 2.0, measured on his "
+             "voice). A too-short common token like his wake word should be left OUT of the file "
+             "rather than fought with a lower score — boosting a word already recognised makes the "
+             "beam prepend it on near-empty turns",
+             lambda: str(hotwords_score())),
     _setting("VOICE_TUNNEL_WHISPER_MODEL", "whisper fallback model (parakeet is preferred)", whisper_model),
     _setting("VOICE_TUNNEL_ASR_THREADS", "ASR worker threads", lambda: str(asr_threads())),
     _setting("VOICE_TUNNEL_ASR_BEAM", "whisper beam width; size dominates speed, not this",
