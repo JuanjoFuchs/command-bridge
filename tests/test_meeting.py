@@ -45,12 +45,13 @@ def test_hue_is_deterministic_by_lane_order():
 
 
 def test_solo_state_when_nothing_is_shared(monkeypatch, tmp_path):
-    """FR3. One agent, no canvas shared → the agent holds the centre; the canvas is NOT full-bleed."""
+    """FR3. One agent, no canvas shared → the stage selects the solo state (the CSS then hides the
+    canvas and shows the centre orb). Both states live in the DOM so the client can flip between them
+    with no reload (FR7), so the assertion is on the STATE, not on the canvas being absent."""
     _clear_canvas()
     html = meeting.render(_state(monkeypatch, tmp_path, ("magnus",)))
     assert 'data-state="solo"' in html
-    assert 'src="/canvas"' not in html, "no shared-screen iframe until someone shares"
-    assert "MAGNUS" in html
+    assert 'class="centre"' in html and "MAGNUS" in html
 
 
 def test_shared_state_when_a_frame_is_present(monkeypatch, tmp_path):
@@ -77,8 +78,12 @@ def test_every_lane_is_an_orb_and_the_live_one_is_marked(monkeypatch, tmp_path):
     html = meeting.render(st)
     for lane in ("MAGNUS", "ATLAS", "KEPLER", "DEXTER"):
         assert lane in html
-    assert ">live</div>" in html, "the live orb carries a 'live' status"
-    assert html.count(">idle</div>") == 3, "the other three orbs are idle"
+    # the LIVE lane's orb carries the `.live` class (client re-marks it on a switch); the idle
+    # lanes do not. Checked by class, not by counting, because each lane has two orbs now (the top
+    # row and the centre, both in the DOM so the state can flip with no reload).
+    assert 'class="orb live" data-lane="kepler"' in html
+    assert 'class="orb live" data-lane="atlas"' not in html
+    assert ">live</div>" in html and ">idle</div>" in html
     # and the redundant header text is gone
     assert "in the bridge" not in html and "live:" not in html
 

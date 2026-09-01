@@ -1,15 +1,18 @@
 """The meeting page (spec 006): one page where JJ's agents are participant orbs, the live one draws
-on the shared canvas, and a transcript runs down the side. It arranges itself like a video call.
+on the shared canvas, and a transcript runs down the side. It arranges itself like a video call, and
+it does so **live** — when a canvas is shared (or stops being shared) and when the live lane moves, the
+page rearranges itself with no reload, off the same SSE stream the canvas already publishes (spec 006
+FR7).
 
 A DUMB view over state the tool already keeps — the lane registry (the participants), the turn log
 (the transcript), the live lane (who has the floor, spec 004), and the canvas frame store (whether a
 screen is being shared). It embeds the working canvas from `/canvas?embed=1` (the embed flag hides the
-canvas's own header, since the meeting page already carries one). It holds no model and decides
-nothing (spec 006 TC1).
+canvas's own header). It holds no model and decides nothing (spec 006 TC1).
 
 The layout is a pure function of three inputs (spec 006 FR2): how many agents are in the bridge,
-whether a canvas is being shared, and whether he wants to see it. This module renders the state that
-matches, and the page is **responsive** — the side-by-side canvas/transcript stacks on a phone.
+whether a canvas is being shared, and whether he wants to see it. Both states are always in the DOM;
+`data-state` on the stage selects which is shown, set on the server for the first paint and moved by
+the client on each SSE event. The page is also responsive — the side-by-side body stacks on a phone.
 """
 from __future__ import annotations
 
@@ -44,27 +47,17 @@ def _canvas_is_shared() -> bool:
 
 
 def _orb(name: str, colour: str, live: bool, size: int = 34) -> str:
-    """One participant orb: a lane-hued disc, its name, and a status line. `size` is the base disc
-    diameter (bigger in the centre when nobody is sharing); the live lane is enlarged and lit. The
-    orb IS the count-and-who-is-live indicator, so the header does not repeat it (JJ, 2026-09-01:
+    """One participant orb: a lane-hued disc, its name, and a status line, driven by CSS off the
+    `--c`/`--sz` custom properties and the `.live` class so the client can re-mark the live lane on a
+    switch without re-rendering. The orb IS the count-and-who-is-live indicator (JJ, 2026-09-01:
     'no need to say [N] in the bridge and which one's live … that's understood by the orbs')."""
-    d = size + 10 if live else size
-    disc = (
-        f"width:{d}px;height:{d}px;border-radius:50%;margin:0 auto;"
-        f"background:radial-gradient(circle at 35% 30%,{colour},#14141b);border:1px solid {colour};"
-        + (f"box-shadow:0 0 0 3px {colour}44,0 0 16px {colour}88;" if live else "")
-    )
-    label_c = colour if live else "#8a8a97"
-    weight = "600" if live else "400"
+    cls = "orb live" if live else "orb"
     status = "live" if live else "idle"
-    label_sz = 13 if size > 60 else 11
     return (
-        f'<div style="text-align:center;flex:0 1 auto">'
-        f'<div style="{disc}"></div>'
-        f'<div style="font-size:{label_sz}px;margin-top:6px;letter-spacing:1px;color:{label_c};'
-        f'font-weight:{weight}">{_html.escape(name.upper())}</div>'
-        f'<div style="font-size:9px;color:{"#c9c9d4" if live else "#7a7a86"};margin-top:2px">'
-        f'{status}</div>'
+        f'<div class="{cls}" data-lane="{_html.escape(name)}" style="--c:{colour};--sz:{size}px">'
+        f'<div class="disc"></div>'
+        f'<div class="nm">{_html.escape(name.upper())}</div>'
+        f'<div class="st">{status}</div>'
         f'</div>'
     )
 
@@ -125,13 +118,28 @@ html,body{margin:0;height:100%;background:#0e0e14;font-family:'Segoe UI',system-
   grid-template-rows:auto auto 1fr;overflow:hidden}
 .header{display:flex;align-items:center;padding:11px 18px}
 .orbrow{display:flex;justify-content:space-around;align-items:center;padding:6px 24px 12px;gap:8px}
-.orbrow.spacer{padding:0;height:0}
-.body{min-height:0;border-top:1px solid #2a2a36;display:grid}
-.body.shared{grid-template-columns:1fr 6px minmax(200px,var(--tw,258px))}
-.body.solo{grid-template-columns:1fr 6px minmax(180px,var(--tw,240px))}
+/* SOLO: the top row is redundant (the agent IS the centre); collapse it to nothing but keep the
+   grid's three tracks so the body stays in the 1fr row. */
+.stage[data-state="solo"] .orbrow{height:0;padding:0;overflow:hidden}
+.orb{text-align:center;flex:0 1 auto}
+.orb .disc{width:var(--sz);height:var(--sz);border-radius:50%;margin:0 auto;
+  background:radial-gradient(circle at 35% 30%,var(--c),#14141b);border:1px solid var(--c);
+  transition:width .18s ease,height .18s ease,box-shadow .18s ease}
+.orb.live .disc{width:calc(var(--sz) + 10px);height:calc(var(--sz) + 10px);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 27%,transparent),
+             0 0 16px color-mix(in srgb,var(--c) 53%,transparent)}
+.orb .nm{font-size:11px;margin-top:6px;letter-spacing:1px;color:#8a8a97}
+.orb.live .nm{color:var(--c);font-weight:600}
+.orb .st{font-size:9px;margin-top:2px;color:#7a7a86}
+.orb.live .st{color:#c9c9d4}
+.body{min-height:0;border-top:1px solid #2a2a36;display:grid;
+  grid-template-columns:1fr 6px minmax(200px,var(--tw,258px))}
+.cell{min-height:0;background:#191921;display:grid}
+.cell > *{grid-area:1/1;min-height:0}
 .canvas{border:0;width:100%;height:100%;background:#191921}
-.centre{background:#191921;display:flex;align-items:center;justify-content:center;gap:28px;
-  flex-wrap:wrap;min-height:0}
+.stage[data-state="solo"] .canvas{display:none}
+.centre{display:flex;align-items:center;justify-content:center;gap:28px;flex-wrap:wrap}
+.stage[data-state="shared"] .centre{display:none}
 .grip{background:#20202a;display:flex;align-items:center;justify-content:center;cursor:col-resize;
   color:#55555f;font-size:14px}
 .transcript{background:#17171e;padding:14px;display:flex;flex-direction:column;min-height:0;
@@ -141,62 +149,93 @@ iframe{display:block}
    canvas over the transcript, so neither is squeezed to a sliver on a narrow screen. */
 @media (max-width:640px){
   .header{padding:9px 12px;flex-wrap:wrap}
-  .header > div[style*="letter-spacing:3px"]{margin-left:8px}
   .orbrow{padding:4px 8px 8px;gap:4px}
-  .body.shared,.body.solo{grid-template-columns:1fr;grid-template-rows:1fr minmax(120px,34vh)}
+  .body{grid-template-columns:1fr;grid-template-rows:1fr minmax(120px,34vh)}
   .grip{display:none}
   .transcript{border-top:1px solid #2a2a36}
 }
 """
 
+# The live state machine, on the page. It subscribes to the canvas's own SSE (`/events`) — the same
+# stream the canvas surface uses — and recomputes the two inputs it can see: whether ANY lane has a
+# frame (a screen shared) and which lane is live. On every event it sets `data-state` and re-marks the
+# live orb, so a share toggling on/off or a lane switch rearranges the page with no reload (FR7). It
+# reads only; it never posts, and a missing SSE just leaves the server-rendered first paint standing.
+_SCRIPT = """
+(function(){
+  var stage=document.querySelector('.stage');
+  if(!stage) return;
+  var frames={};
+  function apply(){
+    var shared=false; for(var k in frames){ if(frames[k]>0){ shared=true; break; } }
+    stage.dataset.state = shared ? 'shared' : 'solo';
+  }
+  function markLive(lane){
+    var orbs=stage.querySelectorAll('.orb');
+    for(var i=0;i<orbs.length;i++){
+      var isLive = orbs[i].getAttribute('data-lane')===lane;
+      orbs[i].classList.toggle('live', isLive);
+      var st=orbs[i].querySelector('.st'); if(st) st.textContent = isLive ? 'live':'idle';
+    }
+  }
+  function on(name, fn){ es.addEventListener(name, function(e){ try{ fn(JSON.parse(e.data)); }catch(x){} }); }
+  var es;
+  try { es = new EventSource('/events'); } catch(x){ return; }
+  on('sync', function(d){
+    frames={}; if(d.lanes){ for(var k in d.lanes){ frames[k]=(d.lanes[k]||[]).length; } }
+    if(d.live) markLive(d.live);
+    apply();
+  });
+  on('switch', function(d){ if(d.lane) markLive(d.lane); });
+  on('frame',  function(d){ frames[d.lane]=(frames[d.lane]||0)+1; apply(); });
+  on('remove', function(d){ frames[d.lane]=Math.max(0,(frames[d.lane]||1)-1); apply(); });
+  on('clear',  function(d){ frames[d.lane]=0; apply(); });
+})();
+"""
+
+_GRIP = """
+(function(){var g=document.querySelector('.grip'),b=document.querySelector('.body');
+if(!g||!b||matchMedia('(max-width:640px)').matches)return;var d=0;
+g.addEventListener('mousedown',function(e){d=1;e.preventDefault();});
+window.addEventListener('mousemove',function(e){if(!d)return;var col=b.getBoundingClientRect().right
+-e.clientX;col=Math.max(160,Math.min(560,col));b.style.setProperty('--tw',col+'px');});
+window.addEventListener('mouseup',function(){d=0;});})();
+"""
+
 
 def render(state: Any) -> str:
-    """The meeting page for `state`. Wireframe arrangement when a canvas is shared; the agent(s)
-    hold the centre when it is not. Responsive: the body stacks on a phone."""
+    """The meeting page for `state`. Both states live in the DOM; `data-state` selects one for the
+    first paint and the client moves it on each SSE event. Responsive: the body stacks on a phone."""
     lanes = list(state.lanes.names)
     live = state.lanes.current
     shared = _canvas_is_shared()
 
-    orbs = "".join(_orb(n, hue(lanes, n), n == live) for n in lanes)
+    top_orbs = "".join(_orb(n, hue(lanes, n), n == live) for n in lanes)
+    centre_orbs = "".join(_orb(n, hue(lanes, n), n == live, size=110) for n in lanes)
     transcript = _transcript(state.session, lanes)
 
-    if shared:
-        # SHARED: the validated wireframe — orbs top, canvas full-bleed centre, transcript right.
-        # The canvas is embedded with ?embed=1 so its own header (lane chips, frame count) is hidden;
-        # the meeting page already names the room, and the canvas always shows the live agent now
-        # (JJ, 2026-09-01: 'on the canvas there's no need to show the lane names … it's live with the
-        # agent that's selected').
-        top = f'<div class="orbrow">{orbs}</div>'
-        body = (
-            '<div class="body shared" id="body" data-state="shared">'
-            '<iframe class="canvas" src="/canvas?embed=1" title="shared canvas"></iframe>'
-            '<div class="grip" id="grip">&#8942;</div>' + transcript + '</div>'
-        )
-    else:
-        # NOT SHARING: the agent(s) hold the centre (a 1:1 call / a gallery); no canvas full-bleed,
-        # and the top orb row is dropped (the agent IS the centre, so a top row would just repeat it).
-        top = '<div class="orbrow spacer"></div>'
-        centre = "".join(_orb(n, hue(lanes, n), n == live, size=110) for n in lanes)
-        body = (
-            '<div class="body solo" id="body" data-state="solo">'
-            f'<div class="centre">{centre}</div>'
-            '<div class="grip" id="grip">&#8942;</div>' + transcript + '</div>'
-        )
-
-    grip_js = (
-        "<script>(function(){var g=document.getElementById('grip'),b=document.getElementById('body');"
-        "if(!g||!b||matchMedia('(max-width:640px)').matches)return;var d=0;"
-        "g.addEventListener('mousedown',function(e){d=1;e.preventDefault();});"
-        "window.addEventListener('mousemove',function(e){if(!d)return;var col=b.getBoundingClientRect()"
-        ".right-e.clientX;col=Math.max(160,Math.min(560,col));b.style.setProperty('--tw',col+'px');});"
-        "window.addEventListener('mouseup',function(){d=0;});})();</script>"
+    stage = (
+        f'<div class="stage" data-state="{"shared" if shared else "solo"}" '
+        f'data-live="{_html.escape(live)}">'
+        + _header()
+        + f'<div class="orbrow">{top_orbs}</div>'
+        + '<div class="body">'
+        + '<div class="cell">'
+        # The shared screen: the working canvas, its own header hidden. Present even in the solo
+        # state (hidden by CSS) so a share can reveal it instantly, with no reload.
+        '<iframe class="canvas" src="/canvas?embed=1" title="shared canvas"></iframe>'
+        f'<div class="centre">{centre_orbs}</div>'
+        + '</div>'
+        + '<div class="grip">&#8942;</div>'
+        + transcript
+        + '</div></div>'
     )
-
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>Command Bridge — meeting</title>'
         '<style>' + _STYLE + '</style></head><body>'
-        '<div class="stage">' + _header() + top + body + '</div>' + grip_js +
-        '</body></html>'
+        + stage
+        + '<script>' + _SCRIPT + _GRIP + '</script>'
+        + '</body></html>'
     )

@@ -1,7 +1,7 @@
 ---
 id: "006"
 title: The meeting page — one page that arranges itself like a video call
-status: in_progress
+status: complete
 blocked_by: ["003", "004", "005"]
 blocks: ["007", "008"]
 ---
@@ -130,9 +130,10 @@ Grounded in the code:
 - [x] Render the orb row from the lane registry with deterministic per-lane colour (the phone UI's
       `LANE_HUES`) and the live orb distinguished; render the transcript from the turn log; embed the
       canvas (`/canvas`) as the shared screen.
-- [~] Make the transcript column resizable (done — the grip) **and drive state transitions off the
-      live/SSE path (NOT done — the page renders the state per load; the live rearrange is AC5's
-      remaining slice).**
+- [x] Make the transcript column resizable (the grip) and drive state transitions off the live/SSE
+      path — the page subscribes to `/events` and moves `data-state` on share on/off + re-marks the
+      live orb on a switch, with no reload (AC5). A fold-away transcript *collapse* toggle is the one
+      small follow-up left (resize works today).
 - [x] Screenshot each state with `command-bridge shot` and confirm the arrangement (solo + shared, dark).
       Also added a `--color-scheme dark` option to `shot` so the dark meeting page (and its embedded
       canvas) is captured in the theme it is seen in, and reconciled the canvas default lane to the
@@ -155,14 +156,20 @@ Grounded in the code:
 - [x] **AC4** `shot` — **FR5.** With several lanes registered, the shot shows every lane as an orb in
       the top row with the live lane distinguished and each orb in its lane's colour. — verified: four
       orbs (assistant/atlas/kepler/dexter) in the LANE_HUES palette, KEPLER enlarged + lit as live.
-- [ ] **AC5** `integration`+`shot` — **FR7.** Toggling the shared input (a lane draws / stops) moves the
+- [x] **AC5** `integration`+`shot` — **FR7.** Toggling the shared input (a lane draws / stops) moves the
       page between the AC2 and AC3 arrangements **without a reload** — asserted on the state selection,
-      and a shot of each side. — **NOT yet met.** The page renders the correct state per *load* (the
-      state selection is unit-tested, `test_meeting.py`), but the LIVE, SSE-driven rearrange (no reload)
-      is not built. This is the remaining slice of spec 006.
-- [ ] **AC6** `command:python -m pytest tests/` — **NFR2.** The full suite passes with no regression;
-      the voice and canvas contracts are unchanged. — (running; the 4 pre-existing `test_word_timings`
-      failures are the only expected ones.)
+      and a shot of each side. — **met.** The page subscribes to the canvas's `/events` SSE and moves
+      `data-state` on `frame`/`remove`/`clear` (share on/off) and re-marks the live orb on `switch`.
+      Verified live 2026-09-01 with a scripted Playwright flow (`scratchpad/ac5_verify.py`): a page
+      loaded in `solo`, a frame drawn from OUTSIDE moved it to `shared`, removing the frame moved it
+      back to `solo` — and a `window` marker set on the document survived both, proving **no reload**
+      (`{ok:true, went_shared, marker_survived_share, went_solo_again, marker_survived_unshare}`).
+      Shot of the live-shared moment: the orb row appeared and the frame filled the canvas without a
+      navigation.
+- [x] **AC6** `command:python -m pytest tests/` — **NFR2.** The full suite passes with no regression;
+      the voice and canvas contracts are unchanged. — verified: only the 4 pre-existing
+      `test_word_timings` failures (missing `kokoro_onnx`) remain across the meeting-page build and the
+      AC5 live-transition rewrite.
 
 ## Testing Approach
 
