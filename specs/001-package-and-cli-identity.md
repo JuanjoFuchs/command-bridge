@@ -21,6 +21,10 @@ server merge, the UI) is built and tested against the renamed surface.
 > by the method named on it. Build-only verification is insufficient. Iterate until verification
 > passes. **The suite is the gate: ~847 tests must stay green through the rename.**
 
+⚠ **Sizing:** one atomic slice — it cannot be split without leaving the suite red mid-way — but a
+large one (venv setup, a rename across ~63 test files and 40 settings, a branding sweep, ~847 tests
+back to green). Budget accordingly; it is the biggest of the foundation specs.
+
 ## What he said, verbatim
 
 > *"In this new repo everything should be called Command Bridge and not Voice Tunnel."*
@@ -74,7 +78,7 @@ predates it.**
 
 - **NFR1** — **Behaviour is byte-unchanged.** This is a rename, not a refactor; the only observable
   difference is the name. The suite passing is the evidence.
-- **NFR2** — The version resets to a Command Bridge `0.x` line (its own release history), not
+- **NFR2** — The version resets to **`0.1.0`** (a fresh Command Bridge release line), not
   voice-tunnel's `0.2.7`.
 
 ### Technical constraints
@@ -111,10 +115,19 @@ predates it.**
       (the ~847 tests are the behaviour-unchanged proof).
 - [ ] **AC-2** `unit:tests/test_config_*.py` — **FR3/FR4.** `COMMAND_BRIDGE_TOKEN` resolves; with it
       unset and `VOICE_TUNNEL_TOKEN` set, the old value is still honored with a deprecation note.
-- [ ] **AC-3** `command:command-bridge describe` — **FR2/FR5.** The renamed CLI runs and its contract
-      names Command Bridge; `grep -ri voice_tunnel command_bridge/` returns nothing (FR1).
-- [ ] **AC-4** `manual` — **FR4.** A `.env` carrying only `VOICE_TUNNEL_*` values (a real
-      pre-rename file) still starts a working server with the pinned token/voice/speed.
+- [ ] **AC-3** `command:command-bridge describe` — **FR2.** The renamed CLI runs and its contract
+      names Command Bridge.
+- [ ] **AC-4** `command` — **FR1.** No module imports the old package: an `ast-grep` search for an
+      `import voice_tunnel` / `from voice_tunnel …` statement across `command_bridge/` and `tests/`
+      returns zero. ⚠ Do **not** case-insensitively grep the bare string `voice_tunnel` — that matches
+      the `VOICE_TUNNEL_*` back-compat literals FR4/TC2 require to stay, so it would fail a correct
+      build.
+- [ ] **AC-5** `command:command-bridge --version` — **NFR2.** Reports `0.1.0`, not `0.2.7`.
+- [ ] **AC-6** `integration` — **FR5.** The user-visible branding says Command Bridge: `--help` and
+      the served page `<title>` carry the new name and not "voice-tunnel" / "Voice Tunnel".
+- [ ] **AC-7** `integration` — **FR4.** A `.env` carrying only `VOICE_TUNNEL_*` values (a real
+      pre-rename file) still starts a working server that authenticates with the pinned token and uses
+      the pinned voice/speed. (Loopback, so it is an integration test, not manual.)
 
 ## Testing Approach
 
@@ -142,5 +155,5 @@ predates it.**
 ## References
 
 - `distill/voice-tunnel.md` — the code-grounded inventory this spec's touch-list comes from.
-- `specs/010-every-setting-the-code-reads-is-a-setting.md` — the registry rule the new prefix must
-  keep satisfying.
+- `specs/voice-tunnel/010-every-setting-the-code-reads-is-a-setting.md` — the inherited registry rule
+  the new prefix must keep satisfying.

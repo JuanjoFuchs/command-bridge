@@ -22,6 +22,10 @@ the page at all.
 > the tests named on them and the spec 002 screenshot harness. Build-only verification is
 > insufficient. Iterate until verification passes.
 
+⚠ **Sizing:** the largest foundation slice (two servers → one origin, one page, persistence, six
+render tiers, suite green). It is atomic — the layout, consent, lane-unification and CLI-collision
+work are deferred to specs 004–007 — but budget more than one short session.
+
 ## What he said, verbatim
 
 > *"Whenever I drive the voice tunnel, it drives the tunnel vision. … we leave the main center window
@@ -105,15 +109,20 @@ Grounded in `distill/voice-tunnel.md` and `distill/tunnel-vision.md`:
 - [ ] **AC1** `integration` — **FR1/FR2.** Starting the server exposes the voice channel and the
       canvas stream on one origin/port; a client can open both against it.
 - [ ] **AC2** `kittest-snapshot` — **FR3.** A full-page screenshot (spec 002 harness) of the running
-      page shows both the voice UI and a drawn canvas frame, neither clipping the other.
+      page shows both the voice UI and a drawn canvas frame, neither clipping the other. On first run
+      this establishes the human-approved baseline; later runs diff against it.
 - [ ] **AC3** `integration` — **FR5.** A frame drawn, then the server restarted, is present again on
       reconnect.
-- [ ] **AC4** `integration` — **FR6/NFR2.** A frame of each render tier appears live (no refresh) and
-      renders as its tier.
+- [ ] **AC4** `integration` — **FR6/NFR2.** A frame of **each of the six tiers** (mermaid, Vega-Lite,
+      markdown, html, svg, text) appears live (no refresh) and renders as its tier.
 - [ ] **AC5** `command:python -m pytest tests/` — **NFR1.** The full suite passes; the voice contract
       tests are unchanged.
 - [ ] **AC6** `unit` — **FR4.** No model/LLM dependency is importable by the server (the dumb-surface
       guard), mirroring the existing anti-LLM check.
+- [ ] **AC7** `integration` — **NFR3.** With several lanes drawing, the page subscribes to **one**
+      canvas event stream, not one per lane — the multiplexing survives the merge.
+- [ ] **AC8** `integration` — **TC2.** The merged canvas endpoints bind loopback only; a request from
+      a non-loopback address does not reach them.
 
 ## Testing Approach
 

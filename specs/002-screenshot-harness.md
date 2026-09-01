@@ -43,15 +43,17 @@ From `distill/tunnel-vision.md`, grounded in the code:
   claiming it works.* Command Bridge inherits that effort gate.
 
 🎯 **The gap to close is "fully".** A 900×560 shot crops the meeting layout (orb row + full-bleed
-canvas + transcript column). The harness must capture the **whole page** at a real viewport, and —
-because the layout is state-driven (CB-006) — be able to shoot a named state, not just whatever is
-live.
+canvas + transcript column). The harness must capture the **whole page** at a real viewport, and be
+able to shoot a specific **lane** so an off-lane agent can verify its own view. (Named *layout*
+states arrive with spec 006; this harness only needs to reach the live page and any lane, not to
+drive layout state.)
 
 ## Goals
 
 - **A full-page screenshot of the Command Bridge page, on demand, in one command.**
 - **It never touches a human's browser** — throwaway profile, headless.
-- **It can shoot a specific state/lane**, so a UI iteration is checked against the case it changed.
+- **It can shoot a specific lane**, so a UI iteration is checked against the case it changed. (Named
+  layout *states* are spec 006's concern, not this spec's.)
 
 ## Requirements
 
@@ -89,13 +91,23 @@ live.
 
 ## Acceptance Criteria
 
-- [ ] **AC-1** `command:command-bridge shot --out /tmp/cb.png` — **FR1/FR2.** Produces a PNG whose
-      height is the full document, not a fixed crop; JSON reports the real dimensions.
-- [ ] **AC-2** `manual` — **FR2.** The shot of the meeting page shows the whole layout (orb row,
-      canvas, transcript) with nothing clipped, at a phone-realistic viewport.
+- [ ] **AC-1** `command:command-bridge shot --out shot.png` — **FR1/FR2.** Produces a PNG whose
+      height is the full document, not a fixed crop; JSON reports the real pixel dimensions and the
+      output path.
+- [ ] **AC-2** `command` — **FR2.** `command-bridge shot --viewport 390x844` captures at that
+      viewport, and the JSON dimensions reflect it.
 - [ ] **AC-3** `command` — **FR3.** `command-bridge --lane <name> shot` captures that lane's view
       while another lane is live.
-- [ ] **AC-4** `command` — **FR4.** With the server down, `shot` exits non-zero with a JSON remedy.
+- [ ] **AC-4** `command` — **FR4.** With the server down, `shot` exits non-zero with a JSON
+      `{error, code, remedy}`.
+- [ ] **AC-5** `integration` — **NFR1.** A shot of the live page completes within a set upper bound
+      (≤ 10 s on this machine), so it is cheap enough to run every iteration.
+- [ ] **AC-6** `integration` — **NFR2.** Two consecutive shots of the same fixed state are identical
+      (within a negligible tolerance), proving the shutter waits for fonts/animations to settle.
+- [ ] **AC-7** `manual` — **FR2.** A human confirms the meeting-page shot shows the whole layout
+      (orb row, canvas, transcript) with nothing clipped. ⚠ `manual` because "nothing looks clipped
+      or visually wrong" is an aesthetic judgment no assertion makes; the *height-is-full-document*
+      half is already automated in AC-1.
 
 ## Testing Approach
 
@@ -122,4 +134,6 @@ live.
 ## References
 
 - `distill/tunnel-vision.md` — the `shot` donor and the 900×560 / `--lane` notes.
-- Tunnel Vision Guide rule 8 — the effort gate this makes executable in Command Bridge.
+- the project's Tunnel Vision Guide, rule 8 ("screenshot the page before claiming it works") — the
+  effort gate this makes executable in Command Bridge. (A vault note, not a repo file; named here for
+  provenance, not as a path to open.)
