@@ -152,6 +152,40 @@ Grounded in `distill/voice-tunnel.md` and `distill/tunnel-vision.md`:
   does today; collapsing the two lane mechanisms into one is the next spec.
 - **Unifying the CLI command surface / name collisions** — spec 005.
 
+## Progress & integration plan (2026-09-01)
+
+**Step 1 done — the canvas is copied in** (commit `8b7464d`): `command_bridge/canvas/` holds store,
+server (the stdlib SSE reference), page (`render()`), cue, follow, extract. All import as
+`command_bridge.canvas.*`; suite green. `runner.py` (`run <file>`) was left out — its matplotlib/
+pandas imports are optional runtimes with no extra yet, and `run` is a later spec.
+
+**What the port needs, now that the reference is read:**
+
+- `canvas/server.py`'s `apply(path, payload)`, `_camera(...)`, `_cue(...)`, `_batch(...)` are the
+  frame-op core. They touch only the module globals (`_lanes`, `_subscribers`, `_hands`, `_live`,
+  `_geometry`, `_viewport`, `_armed`, `_store`) + `publish()`, and RETURN `(code, body)` — they write
+  no HTTP. So they lift out of the stdlib `Handler` to module-level functions that command-bridge's
+  aiohttp handlers can call directly (the one `self` dependency is the `apply → _camera → _cue`
+  chain).
+- **`GET /events` (SSE)** is the intricate half: replicate `_stream()` as an aiohttp `StreamResponse`
+  (`text/event-stream`) — append a `queue.Queue` to `_subscribers`, write `version` → `sync` →
+  armed cues → backlog `frame`/`rows`, then loop pulling from the THREAD queue and writing SSE.
+  Bridge the blocking `queue.get(timeout=…)` to async with `run_in_executor`, and drop the queue on
+  disconnect. This is a single multiplexed stream (NFR3), not one per lane.
+- **The op routes** (`/frame`, `/remove`, `/clear`, `/rows`, `/point`, `/look`, `/zoom`, `/cue`,
+  `/raise`, `/switch`, `/batch`, `/placed`, `/inspect(ed)`) become aiohttp POSTs that call the lifted
+  `apply()`; serve `render()` for the canvas page. Init `_store`(enabled) + `_follower` when
+  `command-bridge serve` starts, mirroring tv's `serve()`. TC2 loopback is inherited from the voice
+  server's bind.
+- **Only ADD routes** — the voice contract (WS, turn log, `/status`) is untouched, so NFR1 holds by
+  construction.
+- **The page merge (FR3)** — both surfaces on one page — is the largest piece and layers on the
+  server merge; the final arrangement is spec 006's adaptive layout, so 003 needs only that the
+  canvas is present, visible and live alongside the voice UI.
+
+**Next step:** lift `apply`/`_camera`/`_cue`/`_batch` to module level (verified by an op unit test),
+then the aiohttp `/events` + op routes, then the page.
+
 ## References
 
 - `distill/voice-tunnel.md`, `distill/tunnel-vision.md` — the two servers this spec merges.
