@@ -56,6 +56,12 @@ PAGE = """<!doctype html>
     padding: .5rem .9rem; border-bottom: 1px solid var(--edge);
     font-size: 12px; color: var(--dim); flex: none;
   }
+  /* EMBED MODE (?embed=1): the meeting page (spec 006) embeds this canvas and already carries a
+     header + the participant orbs, so the canvas's own header — the lane chips, the title, the
+     frame count — is redundant inside it (JJ, 2026-09-01: 'on the canvas there's no need to show
+     the lane names … it's live with the agent that's selected'). Hidden, not removed, so /canvas
+     standalone is unchanged. */
+  html.embed header { display: none; }
   #dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
   #dot.live { background: #4a9d5f; }
   #count { margin-left: .8rem; }
@@ -209,6 +215,7 @@ PAGE = """<!doctype html>
   }
 </style>
 
+<script>if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");</script>
 <header>
   <span id="dot"></span><span id="title">waiting for the agent…</span>
   <span id="lanes"></span>

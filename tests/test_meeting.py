@@ -61,20 +61,26 @@ def test_shared_state_when_a_frame_is_present(monkeypatch, tmp_path):
     try:
         html = meeting.render(_state(monkeypatch, tmp_path, ("magnus",)))
         assert 'data-state="shared"' in html
-        assert 'src="/canvas"' in html
+        assert 'src="/canvas?embed=1"' in html, "the shared canvas is embedded with its header hidden"
     finally:
         _clear_canvas()
 
 
-def test_every_lane_is_an_orb_and_the_live_one_is_named(monkeypatch, tmp_path):
-    """FR5. Several agents → every lane is an orb; the header names the live one."""
+def test_every_lane_is_an_orb_and_the_live_one_is_marked(monkeypatch, tmp_path):
+    """FR5. Several agents → every lane is an orb; the LIVE one is distinguished on its orb (a 'live'
+    status + its hue lit), NOT by header text — JJ, 2026-09-01: 'no need to say which one's live …
+    that's understood by the orbs.'"""
     _clear_canvas()
-    st = _state(monkeypatch, tmp_path, ("magnus", "atlas", "kepler", "dexter"))
+    lanes = ("magnus", "atlas", "kepler", "dexter")
+    st = _state(monkeypatch, tmp_path, lanes)
     st.lanes.switch("kepler")
     html = meeting.render(st)
     for lane in ("MAGNUS", "ATLAS", "KEPLER", "DEXTER"):
         assert lane in html
-    assert "live:" in html and "KEPLER" in html
+    assert ">live</div>" in html, "the live orb carries a 'live' status"
+    assert html.count(">idle</div>") == 3, "the other three orbs are idle"
+    # and the redundant header text is gone
+    assert "in the bridge" not in html and "live:" not in html
 
 
 def test_the_meeting_surface_holds_no_model():
