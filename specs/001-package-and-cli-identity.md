@@ -83,11 +83,22 @@ predates it.**
   the frozen remote keeps `voice_tunnel/`.
 - **TC2** — Settings resolution stays a single source of truth: one resolver reads
   `COMMAND_BRIDGE_*` then falls back to `VOICE_TUNNEL_*`, so no call site learns both prefixes.
+- **TC3** — **The verification environment is command-bridge's own venv.** The repo was cloned
+  code-only (no venv, no models), so creating that virtual environment and installing dependencies —
+  enough that `python -m pytest tests/` runs in-repo — is the first step of this spec; every AC below
+  is verified in it.
+- **TC4** — **Use the available tooling for the mechanical work:** `ast-grep` (0.45) for the
+  structural moves and the import/prefix codemods, `pyright` (1.1.410) as the type-check safety net
+  after each edit. A rename touching this many call sites is where a structural tool earns its place
+  over hand-editing.
 
 ## Implementation Tasks
 
-- [ ] Rename `voice_tunnel/` → `command_bridge/`; update every import (staged, mechanical — a moved
-      package plus an import rewrite, run through the test suite).
+- [ ] **First:** create command-bridge's own virtual environment and install dependencies so
+      `python -m pytest tests/` runs in-repo (the clone was code-only) — the verification environment
+      for every AC (TC3).
+- [ ] Rename `voice_tunnel/` → `command_bridge/`; update every import — drive it with `ast-grep`, not
+      by hand (TC4), then run the suite.
 - [ ] `pyproject.toml`: name, version reset, `[project.scripts]` entry; update the `bin/` shim.
 - [ ] Introduce the `COMMAND_BRIDGE_*` prefix in the settings resolver with `VOICE_TUNNEL_*`
       fallback (FR4); re-key `config.SETTINGS`; regenerate `.env.example`.
