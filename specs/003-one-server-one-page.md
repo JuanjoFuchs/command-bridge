@@ -183,8 +183,28 @@ pandas imports are optional runtimes with no extra yet, and `run` is a later spe
   server merge; the final arrangement is spec 006's adaptive layout, so 003 needs only that the
   canvas is present, visible and live alongside the voice UI.
 
-**Next step:** lift `apply`/`_camera`/`_cue`/`_batch` to module level (verified by an op unit test),
-then the aiohttp `/events` + op routes, then the page.
+**Step 2 done — the server merge, verified live** (commit `fbc92b9`): the canvas rides
+command-bridge's ONE aiohttp server. `canvas/server.py` exposes `apply`/`run_batch` via a
+socket-less Handler instance (`__new__`) — the ops touch only module state + `publish`, so aiohttp
+reuses them with no copy; `canvas/aio.py` is the aiohttp shell (SSE `/events` with the thread queue
+bridged by `run_in_executor`; the op routes; the page); `build_app` registers them additively (voice
+untouched → NFR1 holds) and `run()` calls `init_canvas` on serve; the store is now
+`~/.command-bridge-canvas.json` (never the shared tunnel-vision file). **Screenshotted proof:** on
+`command-bridge serve`, a `POST /canvas/frame` then `command-bridge shot --url …/canvas` rendered an
+**html** frame and a full **mermaid** diagram — the round trip frame-op → store → SSE → page, for
+two tiers, on the one server. FR1/FR2/FR6/NFR2/NFR3 met; NFR1 by construction (suite green, 0
+regressions). Tiers mermaid/markdown/vega load from jsdelivr (inherited tunnel-vision behaviour), so
+their render needs network; html/svg/text are native.
+
+**Remaining to close 003:**
+- **FR3 — one page.** Voice is at `/`, canvas at `/canvas` (both on the one server). Combining them
+  onto a single page IS the meeting-UI arrangement, which this spec's Out of Scope already hands to
+  **spec 006** — so FR3's single-page layout is done there; 003 delivers the server merge + the
+  canvas present and live on the same origin.
+- **AC checkboxes:** the all-six-tiers sweep (html+mermaid shown), restart-persistence (AC3), the
+  single-stream / loopback / dumb-surface guards (AC7/AC8/AC6) as automated tests.
+- **Branding sweep** of `command_bridge/canvas/*` — the copied code still says "tunnel-vision" in
+  remedies and the page title.
 
 ## References
 
