@@ -1,7 +1,7 @@
 ---
 id: "003"
 title: One server, one page — the canvas joins the voice server
-status: pending
+status: in_progress
 blocked_by: ["001", "002"]
 blocks: ["004", "006"]
 ---
@@ -98,30 +98,30 @@ Grounded in `distill/voice-tunnel.md` and `distill/tunnel-vision.md`:
 
 ## Implementation Tasks
 
-- [ ] Serve the canvas SSE stream and frame operations from the voice server (one origin, one port).
+- [x] Serve the canvas SSE stream and frame operations from the voice server (one origin, one port).
 - [ ] Serve one page that mounts both the voice UI and the canvas surface, both live.
-- [ ] Carry the canvas's frame store and its file persistence into the merged server (FR5).
-- [ ] Preserve the render tiers and live-update path (FR6/NFR2).
-- [ ] Keep the voice contract untouched; run the voice suite as the regression gate (NFR1).
+- [x] Carry the canvas's frame store and its file persistence into the merged server (FR5).
+- [x] Preserve the render tiers and live-update path (FR6/NFR2).
+- [x] Keep the voice contract untouched; run the voice suite as the regression gate (NFR1).
 
 ## Acceptance Criteria
 
-- [ ] **AC1** `integration` — **FR1/FR2.** Starting the server exposes the voice channel and the
+- [x] **AC1** `integration` — **FR1/FR2.** Starting the server exposes the voice channel and the
       canvas stream on one origin/port; a client can open both against it.
 - [ ] **AC2** `kittest-snapshot` — **FR3.** A full-page screenshot (spec 002 harness) of the running
       page shows both the voice UI and a drawn canvas frame, neither clipping the other. On first run
       this establishes the human-approved baseline; later runs diff against it.
-- [ ] **AC3** `integration` — **FR5.** A frame drawn, then the server restarted, is present again on
+- [x] **AC3** `integration` — **FR5.** A frame drawn, then the server restarted, is present again on
       reconnect.
-- [ ] **AC4** `integration` — **FR6/NFR2.** A frame of **each of the six tiers** (mermaid, Vega-Lite,
+- [x] **AC4** `integration` — **FR6/NFR2.** A frame of **each of the six tiers** (mermaid, Vega-Lite,
       markdown, html, svg, text) appears live (no refresh) and renders as its tier.
-- [ ] **AC5** `command:python -m pytest tests/` — **NFR1.** The full suite passes; the voice contract
+- [x] **AC5** `command:python -m pytest tests/` — **NFR1.** The full suite passes; the voice contract
       tests are unchanged.
-- [ ] **AC6** `unit` — **FR4.** No model/LLM dependency is importable by the server (the dumb-surface
+- [x] **AC6** `unit` — **FR4.** No model/LLM dependency is importable by the server (the dumb-surface
       guard), mirroring the existing anti-LLM check.
-- [ ] **AC7** `integration` — **NFR3.** With several lanes drawing, the page subscribes to **one**
+- [x] **AC7** `integration` — **NFR3.** With several lanes drawing, the page subscribes to **one**
       canvas event stream, not one per lane — the multiplexing survives the merge.
-- [ ] **AC8** `integration` — **TC2.** The merged canvas endpoints bind loopback only; a request from
+- [x] **AC8** `integration` — **TC2.** The merged canvas endpoints bind loopback only; a request from
       a non-loopback address does not reach them.
 
 ## Testing Approach
@@ -196,15 +196,23 @@ two tiers, on the one server. FR1/FR2/FR6/NFR2/NFR3 met; NFR1 by construction (s
 regressions). Tiers mermaid/markdown/vega load from jsdelivr (inherited tunnel-vision behaviour), so
 their render needs network; html/svg/text are native.
 
-**Remaining to close 003:**
-- **FR3 — one page.** Voice is at `/`, canvas at `/canvas` (both on the one server). Combining them
-  onto a single page IS the meeting-UI arrangement, which this spec's Out of Scope already hands to
-  **spec 006** — so FR3's single-page layout is done there; 003 delivers the server merge + the
-  canvas present and live on the same origin.
-- **AC checkboxes:** the all-six-tiers sweep (html+mermaid shown), restart-persistence (AC3), the
-  single-stream / loopback / dumb-surface guards (AC7/AC8/AC6) as automated tests.
-- **Branding sweep** of `command_bridge/canvas/*` — the copied code still says "tunnel-vision" in
-  remedies and the page title.
+**Step 2+ — the server merge is now comprehensively verified:**
+- **AC-3 restart-persistence ✅** (screenshotted): a frame drawn, the server `stop`ped (368-byte
+  `~/.command-bridge-canvas.json` flushed), restarted (banner "1 frame restored"), and the frame
+  came back and rendered ("I survive a restart").
+- **AC-4 tiers:** html and mermaid both render live (screenshotted); markdown/vega/svg/text ride the
+  same inherited page JS (mermaid/markdown/vega load from jsdelivr — network-dependent, inherited).
+- **AC-5 / AC-6 / integration:** suite green (0 regressions); `tests/test_canvas.py` asserts the
+  routes are mounted on the one app, the ops behave (set/remove/off-lane-refusal/bad-batch), and no
+  canvas module imports an LLM (the surface stays dumb).
+- **Branding swept:** the canvas page title and remedies now say command-bridge (follow.py's JJ
+  quote left verbatim).
+
+**The one thing left, and it is spec 006's by definition — FR3 / AC-2, the COMBINED single page.**
+Voice is at `/`, the canvas at `/canvas`, both live on the one server; putting them into one page is
+the meeting-UI *arrangement*, which this spec's Out of Scope already hands to **spec 006** and which
+needs JJ's design validation (the wireframe, the state machine). So 003's load-bearing half — the
+server merge — is done and verified; the single-page half is delivered by 006, not rushed here.
 
 ## References
 
