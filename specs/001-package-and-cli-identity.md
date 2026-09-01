@@ -1,7 +1,7 @@
 ---
 id: "001"
 title: Package and CLI identity — the rename to Command Bridge
-status: pending
+status: complete
 blocked_by: []
 blocks: ["002", "003"]
 ---
@@ -98,34 +98,34 @@ predates it.**
 
 ## Implementation Tasks
 
-- [ ] **First:** create command-bridge's own virtual environment and install dependencies so
+- [x] **First:** create command-bridge's own virtual environment and install dependencies so
       `python -m pytest tests/` runs in-repo (the clone was code-only) — the verification environment
       for every AC (TC3).
-- [ ] Rename `voice_tunnel/` → `command_bridge/`; update every import — drive it with `ast-grep`, not
+- [x] Rename `voice_tunnel/` → `command_bridge/`; update every import — drive it with `ast-grep`, not
       by hand (TC4), then run the suite.
-- [ ] `pyproject.toml`: name, version reset, `[project.scripts]` entry; update the `bin/` shim.
-- [ ] Introduce the `COMMAND_BRIDGE_*` prefix in the settings resolver with `VOICE_TUNNEL_*`
+- [x] `pyproject.toml`: name, version reset, `[project.scripts]` entry; update the `bin/` shim.
+- [x] Introduce the `COMMAND_BRIDGE_*` prefix in the settings resolver with `VOICE_TUNNEL_*`
       fallback (FR4); re-key `config.SETTINGS`; regenerate `.env.example`.
-- [ ] Sweep user-visible strings (describe/doctor/help/page title/README/AGENTS.md).
-- [ ] Update tests that import `voice_tunnel` or assert the old prefix/branding; keep the suite green.
+- [x] Sweep user-visible strings (describe/doctor/help/page title/README/AGENTS.md).
+- [x] Update tests that import `voice_tunnel` or assert the old prefix/branding; keep the suite green.
 
 ## Acceptance Criteria
 
-- [ ] **AC-1** `command:python -m pytest tests/` — **NFR1.** The full suite passes after the rename
+- [x] **AC-1** `command:python -m pytest tests/` — **NFR1.** The full suite passes after the rename
       (the ~847 tests are the behaviour-unchanged proof).
-- [ ] **AC-2** `unit:tests/test_config_*.py` — **FR3/FR4.** `COMMAND_BRIDGE_TOKEN` resolves; with it
+- [x] **AC-2** `unit:tests/test_config_*.py` — **FR3/FR4.** `COMMAND_BRIDGE_TOKEN` resolves; with it
       unset and `VOICE_TUNNEL_TOKEN` set, the old value is still honored with a deprecation note.
-- [ ] **AC-3** `command:command-bridge describe` — **FR2.** The renamed CLI runs and its contract
+- [x] **AC-3** `command:command-bridge describe` — **FR2.** The renamed CLI runs and its contract
       names Command Bridge.
-- [ ] **AC-4** `command` — **FR1.** No module imports the old package: an `ast-grep` search for an
+- [x] **AC-4** `command` — **FR1.** No module imports the old package: an `ast-grep` search for an
       `import voice_tunnel` / `from voice_tunnel …` statement across `command_bridge/` and `tests/`
       returns zero. ⚠ Do **not** case-insensitively grep the bare string `voice_tunnel` — that matches
       the `VOICE_TUNNEL_*` back-compat literals FR4/TC2 require to stay, so it would fail a correct
       build.
-- [ ] **AC-5** `command:command-bridge --version` — **NFR2.** Reports `0.1.0`, not `0.2.7`.
-- [ ] **AC-6** `integration` — **FR5.** The user-visible branding says Command Bridge: `--help` and
+- [x] **AC-5** `command:command-bridge --version` — **NFR2.** Reports `0.1.0`, not `0.2.7`.
+- [x] **AC-6** `integration` — **FR5.** The user-visible branding says Command Bridge: `--help` and
       the served page `<title>` carry the new name and not "voice-tunnel" / "Voice Tunnel".
-- [ ] **AC-7** `integration` — **FR4.** A `.env` carrying only `VOICE_TUNNEL_*` values (a real
+- [x] **AC-7** `integration` — **FR4.** A `.env` carrying only `VOICE_TUNNEL_*` values (a real
       pre-rename file) still starts a working server that authenticates with the pinned token and uses
       the pinned voice/speed. (Loopback, so it is an integration test, not manual.)
 
