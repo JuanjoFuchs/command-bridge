@@ -2114,7 +2114,7 @@ async def handle_wake(request: web.Request) -> web.Response:
     # Set it in this process's environment so config.wake_name() — the single reader every other
     # layer goes through — returns the new value. Writing state.wake.phrases alone would leave the
     # ready frame and `describe` reporting the old name.
-    os.environ["VOICE_TUNNEL_WAKE_NAME"] = name.strip().lower()
+    os.environ["COMMAND_BRIDGE_WAKE_NAME"] = name.strip().lower()
     state.wake.set_phrases(config.wake_phrases())
     await _broadcast_json(
         state, {"type": "wake", "name": config.wake_name(),
@@ -2957,12 +2957,12 @@ def run(
 ) -> None:
     store.validate_session(session)
     if token is None:
-        token = os.environ.get("VOICE_TUNNEL_TOKEN") or security.generate_token()
+        token = os.environ.get("COMMAND_BRIDGE_TOKEN") or security.generate_token()
 
     is_loopback = security.ip_in_cidrs(host, config.LOOPBACK_CIDRS) or host in ("localhost",)
     if not is_loopback and not token:
         raise SystemExit(
-            "refusing to bind a non-loopback interface without a token; set VOICE_TUNNEL_TOKEN"
+            "refusing to bind a non-loopback interface without a token; set COMMAND_BRIDGE_TOKEN"
         )
 
     app = build_app(session, token, gate_enabled)

@@ -131,7 +131,7 @@ def lane_name_for_wake(wake_name: str) -> str:
     """The default lane name for a server started with `serve --wake <name>`.
 
     **This is the one place a name is coerced instead of rejected**, and the exception is
-    deliberate. `VOICE_TUNNEL_WAKE_NAME` is not constrained to a single token and never has been:
+    deliberate. `COMMAND_BRIDGE_WAKE_NAME` is not constrained to a single token and never has been:
     `hey my agent` works today, because the matcher accepts a multi-word phrase as a whole. Making
     that fatal at startup would stop a server that has been running fine from booting at all — a
     regression far worse than the thing it would be protecting against.

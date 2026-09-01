@@ -3,7 +3,7 @@
 From the third cold-start audit on 2026-08-10: an agent given a fresh virtualenv and nothing but
 `voice-tunnel describe` ran `setup`, watched every step report success, and ended on the robotic
 Windows system voice. Nothing had failed. `tts_backend()` returned a hardcoded `"sapi"` unless a
-human had exported `VOICE_TUNNEL_TTS`, while `asr_engine()` had always upgraded itself the moment
+human had exported `COMMAND_BRIDGE_TTS`, while `asr_engine()` had always upgraded itself the moment
 its model appeared — so the two halves of the same install behaved by opposite rules, and only one
 of them was documented anywhere.
 
@@ -20,10 +20,10 @@ from command_bridge import config
 @pytest.fixture()
 def clean(monkeypatch, tmp_path):
     """No inherited settings, no real models, no discoverable piper.exe."""
-    for var in ("VOICE_TUNNEL_TTS", "VOICE_TUNNEL_PIPER_BIN", "VOICE_TUNNEL_PIPER_VOICE",
-                "VOICE_TUNNEL_PIPER_INPROCESS", "VOICE_TUNNEL_HOME", "VOICE_TUNNEL_ENV_FILE"):
+    for var in ("COMMAND_BRIDGE_TTS", "COMMAND_BRIDGE_PIPER_BIN", "COMMAND_BRIDGE_PIPER_VOICE",
+                "COMMAND_BRIDGE_PIPER_INPROCESS", "COMMAND_BRIDGE_HOME", "COMMAND_BRIDGE_ENV_FILE"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / "settings.env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / "settings.env"))
     monkeypatch.setattr(config.sys, "executable", str(tmp_path / "nowhere" / "python.exe"))
     monkeypatch.setattr(config, "ROOT", str(tmp_path / "nowhere"))
     monkeypatch.setattr(config.shutil, "which", lambda _n: None)
@@ -54,7 +54,7 @@ def test_a_complete_piper_install_selects_itself(clean, tmp_path):
 def test_an_explicit_setting_still_wins(clean, tmp_path):
     """Naming a backend earns you its behaviour — and its errors — rather than a substitution."""
     _installed(clean, tmp_path)
-    clean.setenv("VOICE_TUNNEL_TTS", "sapi")
+    clean.setenv("COMMAND_BRIDGE_TTS", "sapi")
     assert config.tts_backend() == "sapi"
 
 
@@ -78,7 +78,7 @@ def test_a_spawning_install_still_counts_as_usable(clean, tmp_path):
     exe = tmp_path / "env" / "Scripts" / "piper.exe"
     exe.parent.mkdir(parents=True, exist_ok=True)
     exe.write_text("", encoding="utf-8")
-    clean.setenv("VOICE_TUNNEL_PIPER_BIN", str(exe))
+    clean.setenv("COMMAND_BRIDGE_PIPER_BIN", str(exe))
     assert config.tts_backend() == "piper"
 
 
@@ -103,7 +103,7 @@ def test_the_sapi_remedy_names_the_setting_when_setup_is_already_done(
     re-run the command that just worked, and the real gap goes unnamed.
     """
     _installed(clean, tmp_path)
-    clean.setenv("VOICE_TUNNEL_TTS", "sapi")  # the only reason it is still on the fallback
+    clean.setenv("COMMAND_BRIDGE_TTS", "sapi")  # the only reason it is still on the fallback
     _, payload, _ = run(["doctor"], capsys)
     tts = next(c for c in payload["checks"] if c["name"] == "tts")
 
@@ -111,7 +111,7 @@ def test_the_sapi_remedy_names_the_setting_when_setup_is_already_done(
     # Either way it is not ok, and either way the remedy must name the setting.
     assert tts["status"] == ("degraded" if os.name == "nt" else "failed")
     assert tts["status"] != "ok"
-    assert "VOICE_TUNNEL_TTS piper" in tts["remedy"], (
+    assert "COMMAND_BRIDGE_TTS piper" in tts["remedy"], (
         "with piper and a voice installed, the fix is the setting — not another setup run"
     )
     assert "voice-tunnel setup" not in tts["remedy"], "do not advise re-running what has run"

@@ -168,7 +168,7 @@ class ServerWatch:
               "anything binding 8765 shows up as a listener.")
         print("      WHAT IT DOES NOT COVER: a server started by some OTHER process while this "
               "ran, a detached server that reparented away before the check, or a server on a "
-              "non-default port with an isolated VOICE_TUNNEL_DIR started outside this tree. "
+              "non-default port with an isolated COMMAND_BRIDGE_DIR started outside this tree. "
               "The structural guarantee behind those is that this file imports no part of the "
               "`command_bridge` package and spawns no subprocess except Playwright's browser.")
 

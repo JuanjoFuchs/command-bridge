@@ -156,9 +156,9 @@ def main() -> int:
 
     # This process synthesizes the "user's voice" itself, so it needs Piper too — not just the
     # server subprocess it spawns.
-    os.environ.setdefault("VOICE_TUNNEL_PIPER_BIN", os.path.join(ROOT, "venv", "Scripts", "piper.exe"))
+    os.environ.setdefault("COMMAND_BRIDGE_PIPER_BIN", os.path.join(ROOT, "venv", "Scripts", "piper.exe"))
     os.environ.setdefault(
-        "VOICE_TUNNEL_PIPER_VOICE", os.path.join(ROOT, "models", "en_GB-alan-medium.onnx")
+        "COMMAND_BRIDGE_PIPER_VOICE", os.path.join(ROOT, "models", "en_GB-alan-medium.onnx")
     )
 
     os.makedirs(args.shots, exist_ok=True)
@@ -181,11 +181,11 @@ def main() -> int:
 
     env = dict(
         os.environ,
-        VOICE_TUNNEL_DIR=workdir,
-        VOICE_TUNNEL_TOKEN=token,
-        VOICE_TUNNEL_TTS="piper",
-        VOICE_TUNNEL_PIPER_BIN=os.path.join(ROOT, "venv", "Scripts", "piper.exe"),
-        VOICE_TUNNEL_PIPER_VOICE=os.path.join(ROOT, "models", "en_GB-alan-medium.onnx"),
+        COMMAND_BRIDGE_DIR=workdir,
+        COMMAND_BRIDGE_TOKEN=token,
+        COMMAND_BRIDGE_TTS="piper",
+        COMMAND_BRIDGE_PIPER_BIN=os.path.join(ROOT, "venv", "Scripts", "piper.exe"),
+        COMMAND_BRIDGE_PIPER_VOICE=os.path.join(ROOT, "models", "en_GB-alan-medium.onnx"),
     )
     proc = subprocess.Popen(
         [PY, "-c",

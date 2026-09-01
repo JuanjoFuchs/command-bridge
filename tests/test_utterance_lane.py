@@ -35,8 +35,8 @@ from command_bridge import server
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "magnus")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "magnus")
     st = server.TunnelState("t", token=None)
     st.consumed_cursor = -1
     st.lanes = server.lanes_mod.LaneRegistry("magnus")

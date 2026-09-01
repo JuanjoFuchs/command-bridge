@@ -38,7 +38,7 @@ CURSOR = 1354
 @pytest.fixture(autouse=True)
 def _isolated_state(tmp_path, monkeypatch):
     """No test here reads or writes the real sessions/ directory. See the module docstring."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     monkeypatch.setattr(cli.config, "session_dir", lambda: str(tmp_path))
 
 

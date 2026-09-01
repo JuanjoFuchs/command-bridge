@@ -1,6 +1,6 @@
 """Wake gating — spec 001 AC-4, AC-5, AC-6.
 
-The name is configurable (`VOICE_TUNNEL_WAKE_NAME`) and defaults to a role, not a product. The
+The name is configurable (`COMMAND_BRIDGE_WAKE_NAME`) and defaults to a role, not a product. The
 tests below still exercise "claude" on purpose: they encode behaviour discovered against real
 speech — the greeting-prefix rule and the fuzzy threshold — and rewriting them for a new name
 would throw that history away to prove nothing. The autouse fixture pins the name so they keep
@@ -11,7 +11,7 @@ that directly, because the previous rule stripped a leading summons and the clas
 produced — the log disagreeing with what he remembers saying — was silent every time.
 
 The tests at the bottom cover the rule that a GREETING IS ALWAYS REQUIRED, which replaced the
-per-name `VOICE_TUNNEL_WAKE_BARE` opt-in.
+per-name `COMMAND_BRIDGE_WAKE_BARE` opt-in.
 """
 import pytest
 
@@ -23,7 +23,7 @@ from command_bridge.wake import WakeGate
 def _classic_name(monkeypatch):
     """Pin the historical name, which is what these tests were written against. Without this
     every assertion below would be testing today's default instead."""
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "claude")
 
 
 def test_turn_without_wake_phrase_is_not_addressed():
@@ -110,7 +110,7 @@ def test_a_bare_name_never_wakes_however_uncommon_it_is(monkeypatch):
     they can only get wrong, and whose failure is an agent interrupting a conversation it was
     never part of. `grok` is a verb, `cursor` and `gemini` are words — none of it matters now.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "claude")
     addressed, text = WakeGate().evaluate("claude status please", now=1.0)
     assert addressed is False
     assert text == "claude status please", "an unaddressed turn must not be edited"
@@ -237,7 +237,7 @@ def test_the_name_is_configurable(monkeypatch):
 
     Live, 2026-08-03: "my goal is to be able to use this with any AI agent, not just cloud."
     """
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "thursday")
 
     addressed, text = WakeGate().evaluate("Hey Thursday, what is the status?", now=100.0)
     assert addressed is True
@@ -247,7 +247,7 @@ def test_the_name_is_configurable(monkeypatch):
     # A mid-sentence phrase can: it matches the configured phrase verbatim or not at all.
     mid = "so I said hey thursday and he laughed"
     assert WakeGate().evaluate(mid, now=200.0)[0] is True
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "claude")
     assert WakeGate().evaluate(mid, now=300.0)[0] is False
 
 
@@ -258,7 +258,7 @@ def test_a_common_word_name_does_not_fire_bare(monkeypatch):
     himself when the objection was that days are words you say constantly: the wake phrase is a
     GREETING PLUS A NAME, and nobody says "hey Thursday" by accident.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "thursday")
 
     for said in ["let's ship it thursday",
                  "see you thursday",
@@ -270,7 +270,7 @@ def test_a_common_word_name_does_not_fire_bare(monkeypatch):
 
 
 def test_the_greeting_form_still_wakes_a_common_word_name(monkeypatch):
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "thursday")
 
     for said in ["hey thursday what's the status",
                  "Hi Thursday, are you there?",
@@ -283,11 +283,11 @@ def test_the_greeting_form_still_wakes_a_common_word_name(monkeypatch):
 def test_a_greeting_is_mandatory_and_cannot_be_switched_off(monkeypatch):
     """The old escape hatch is gone, and setting it must not resurrect the bare-name path.
 
-    `VOICE_TUNNEL_WAKE_BARE=1` was the opt-in. A user carrying it in an old `.env`, or copying it
+    `COMMAND_BRIDGE_WAKE_BARE=1` was the opt-in. A user carrying it in an old `.env`, or copying it
     from a stale README, must not silently get a gate that fires on an ordinary word.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "thursday")
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_BARE", "1")   # the setting no longer exists
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "thursday")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_BARE", "1")   # the setting no longer exists
 
     assert WakeGate().evaluate("thursday what's the status", now=1.0)[0] is False
     assert WakeGate().evaluate("hey thursday what's the status", now=1.0)[0] is True
@@ -300,7 +300,7 @@ def test_every_greeting_builds_a_phrase(monkeypatch):
     `wake_phrases()` failed to stop a bare "thursday" from waking the agent — the matcher had its
     own rule. `config.GREETINGS` is now the single source for both.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "codex")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "codex")
     for greeting in config.GREETINGS:
         said = f"{greeting} codex what is the status"
         addressed, text = WakeGate().evaluate(said, now=1.0)
@@ -310,7 +310,7 @@ def test_every_greeting_builds_a_phrase(monkeypatch):
 
 def test_an_ordinary_word_name_is_safe_because_the_greeting_is_mandatory(monkeypatch):
     """The payoff. A user can name their agent after a verb and nothing breaks."""
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "grok")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "grok")
 
     for said in ["I finally grok the cursor problem",
                  "did you grok that",
@@ -327,11 +327,11 @@ def test_renaming_does_not_end_the_conversation_in_progress(monkeypatch):
     the very next sentence would come back unaddressed and they would have to say the new phrase
     to resume something they never stopped doing.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "claude")
     g = WakeGate(window_s=30.0)
     assert g.evaluate("hey claude what is running", now=100.0)[0] is True
 
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "codex")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "codex")
     g.set_phrases(config.wake_phrases())
 
     # Mid-conversation, so no phrase is needed at all.

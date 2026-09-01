@@ -18,7 +18,7 @@ def test_arbitrary_public_ip_is_not_allowed_by_default():
 
 def test_tailscale_range_is_opt_in(monkeypatch):
     assert not security.ip_in_cidrs("100.101.102.103", security.allowed_cidrs())
-    monkeypatch.setenv("VOICE_TUNNEL_ALLOW_CIDRS", "100.64.0.0/10")
+    monkeypatch.setenv("COMMAND_BRIDGE_ALLOW_CIDRS", "100.64.0.0/10")
     assert security.ip_in_cidrs("100.101.102.103", security.allowed_cidrs())
 
 

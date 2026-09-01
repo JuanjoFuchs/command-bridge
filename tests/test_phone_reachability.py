@@ -132,7 +132,7 @@ def test_the_port_is_required_to_see_the_forwarder(monkeypatch):
 def test_a_proxy_can_be_asserted_when_it_cannot_be_detected(monkeypatch):
     """`tailscale serve`, cloudflared and reverse proxies have no local API to ask. The operator
     always knows; the tool never can. So it can be said, once, and persisted."""
-    monkeypatch.setenv("VOICE_TUNNEL_PUBLIC_URL", "https://box.tail1234.ts.net")
+    monkeypatch.setenv("COMMAND_BRIDGE_PUBLIC_URL", "https://box.tail1234.ts.net")
 
     verdict = cli._phone_reachability("127.0.0.1", 8765)
 
@@ -149,7 +149,7 @@ def test_an_unverifiable_answer_says_so_instead_of_prescribing(monkeypatch):
     verdict = cli._phone_reachability("127.0.0.1", 8765)
 
     why = verdict["why"]
-    assert "ngrok" in why and "VOICE_TUNNEL_PUBLIC_URL" in why, "name what was checked"
+    assert "ngrok" in why and "COMMAND_BRIDGE_PUBLIC_URL" in why, "name what was checked"
     assert "INVISIBLE" in why, "and admit what could not be"
     assert "tailscale serve" in why or "tailscale" in why.lower(), (
         "the ones it cannot see should be named, not left as 'something'"
@@ -169,7 +169,7 @@ def test_the_remedy_does_not_make_tailscale_the_only_answer(monkeypatch):
     assert "DNS" in remedy and "VPN" in remedy, (
         "the cost of the tailscale option must travel with it, not be discovered afterwards"
     )
-    assert "VOICE_TUNNEL_PUBLIC_URL" in remedy, "and the escape hatch for anything else"
+    assert "COMMAND_BRIDGE_PUBLIC_URL" in remedy, "and the escape hatch for anything else"
 
 
 # ------------------------------------------------------------------ the undocumented exposure
@@ -187,7 +187,7 @@ def test_a_fronted_port_reports_that_the_allowlist_is_inert(monkeypatch):
     assert exposure["public"] is True
     assert exposure["allowlist_effective"] is False, "THE FACT: the allowlist filters nothing"
     assert exposure["gates"] == ["the token in the URL"]
-    assert "VOICE_TUNNEL_ALLOW_CIDRS" in exposure["why"]
+    assert "COMMAND_BRIDGE_ALLOW_CIDRS" in exposure["why"]
     assert "credential" in exposure["treat_the_url_as"]
 
 
@@ -196,7 +196,7 @@ def test_an_unfronted_port_says_the_allowlist_is_doing_its_job(monkeypatch):
 
     assert exposure["public"] is False
     assert exposure["allowlist_effective"] is True
-    assert "VOICE_TUNNEL_ALLOW_CIDRS" in exposure["gates"]
+    assert "COMMAND_BRIDGE_ALLOW_CIDRS" in exposure["gates"]
 
 
 def test_status_carries_the_exposure_beside_the_url(capsys, tmp_sessions, monkeypatch):
@@ -265,15 +265,15 @@ def test_doctor_warns_when_a_public_port_is_gated_only_by_a_generated_token(
     cli.write_runtime("dev", "127.0.0.1", 8765, "generated-at-serve-time")
     front(monkeypatch)
     monkeypatch.setattr(cli, "_live_server_on", lambda c: c[0])
-    monkeypatch.delenv("VOICE_TUNNEL_TOKEN", raising=False)
+    monkeypatch.delenv("COMMAND_BRIDGE_TOKEN", raising=False)
 
     _, payload, _ = run(["doctor"], capsys)
     check = next(c for c in payload["checks"] if c["name"] == "exposure")
 
     assert check["status"] == "degraded", "this is a warning, not a footnote"
     assert "exposure" in payload["degraded"]
-    assert "VOICE_TUNNEL_ALLOW_CIDRS" in check["detail"], "say WHY the allowlist is not helping"
-    assert "VOICE_TUNNEL_TOKEN" in check["remedy"]
+    assert "COMMAND_BRIDGE_ALLOW_CIDRS" in check["detail"], "say WHY the allowlist is not helping"
+    assert "COMMAND_BRIDGE_TOKEN" in check["remedy"]
     assert "PUBLIC" in payload["next"], "the first line an agent reads must carry it"
 
 
@@ -283,7 +283,7 @@ def test_a_deliberately_set_token_is_reported_but_not_scolded(capsys, tmp_sessio
     cli.write_runtime("dev", "127.0.0.1", 8765, "chosen-by-a-person")
     front(monkeypatch)
     monkeypatch.setattr(cli, "_live_server_on", lambda c: c[0])
-    monkeypatch.setenv("VOICE_TUNNEL_TOKEN", "chosen-by-a-person")
+    monkeypatch.setenv("COMMAND_BRIDGE_TOKEN", "chosen-by-a-person")
 
     _, payload, _ = run(["doctor"], capsys)
     check = next(c for c in payload["checks"] if c["name"] == "exposure")

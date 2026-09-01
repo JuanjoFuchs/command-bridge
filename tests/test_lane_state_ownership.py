@@ -62,8 +62,8 @@ class _Req:
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "magnus")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "magnus")
     st = server.TunnelState("t", token=None)
     st.consumed_cursor = -1
     st.lanes = server.lanes_mod.LaneRegistry("magnus")
@@ -198,8 +198,8 @@ def test_a_single_lane_session_still_has_exactly_one_state(monkeypatch, tmp_path
     """AC-4 — NFR1. With one lane there is nothing to attribute, so the per-lane machine must
     produce exactly what the page showed before lanes existed: one state, on the one lane, and
     `agent_state` still carrying it for every client that predates the per-lane field."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "magnus")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "magnus")
     st = server.TunnelState("t", token=None)
     st.lanes = server.lanes_mod.LaneRegistry("magnus")
 

@@ -38,8 +38,8 @@ class _Req:
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "claude")
     st = server.TunnelState("t", token=None)
     st.consumed_cursor = -1
     # Rebuild the registry under the wake name this test pins; TunnelState read it at construction
@@ -134,8 +134,8 @@ def test_a_refused_summons_does_not_hold_the_conversation_window_open(state):
 def test_a_single_lane_server_stamps_the_default_and_never_refuses(monkeypatch, tmp_path):
     """NFR3 at the server level. With one lane the switch and refuse rows cannot fire, so every
     one of these — including the tokens that would be ambiguous with two lanes — is addressed."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "claude")
     st = server.TunnelState("solo", token=None)
     st.embedder.model_path = str(tmp_path / "no-such-voiceprint.onnx")
     st.lanes = server.lanes_mod.LaneRegistry("claude")
@@ -322,8 +322,8 @@ def test_a_restart_does_not_inherit_the_whole_logs_backlog_as_unanswered(monkeyp
     them afterwards measures a live session, which is a different question and was how the first
     version of this test fooled itself.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "claude")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "claude")
     store.append_turn("t", "said before this process existed", 0.0, 1.0, True,
                       lane="claude", stamp_lane=True)
 

@@ -13,4 +13,4 @@ import os
 
 def imaginary_backend_voice() -> str:
     """A plausible-looking read of a setting the CLI has never heard of."""
-    return os.getenv("VOICE_TUNNEL_NOT_A_REAL_SETTING", "")
+    return os.getenv("COMMAND_BRIDGE_NOT_A_REAL_SETTING", "")

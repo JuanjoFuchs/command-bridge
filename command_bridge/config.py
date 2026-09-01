@@ -81,10 +81,33 @@ def _default_path(name: str, kind: str = "data") -> str:
     return os.path.join(base, name)
 
 
+# ---------------------------------------------------- settings back-compat
+
+_PREFIX = "COMMAND_BRIDGE_"
+_LEGACY_PREFIX = "VOICE_TUNNEL_"
+_warned_legacy: set = set()
+
+
+def _resolve_env(name: str) -> str | None:
+    """Read an env var under the COMMAND_BRIDGE_ prefix, falling back to the legacy
+    VOICE_TUNNEL_ name so a `.env` written before the rename keeps working (spec 001 FR4).
+    The fallback warns ONCE per variable on stderr, so a live operator learns the new name
+    without a per-read flood. This is the single resolver both `_env` and `_int_env` call, so
+    no call site learns both prefixes (TC2)."""
+    val = os.environ.get(name)
+    if val is None and name.startswith(_PREFIX):
+        legacy = _LEGACY_PREFIX + name[len(_PREFIX):]
+        val = os.environ.get(legacy)
+        if val is not None and legacy not in _warned_legacy:
+            _warned_legacy.add(legacy)
+            print(f"[command-bridge] {legacy} is deprecated; use {name}", file=sys.stderr)
+    return val
+
+
 def _int_env(name: str, default: int) -> int:
     """An int tunable overridable at runtime, so pacing can be tuned by feel in a live session
     instead of requiring a code edit and a restart of the conversation."""
-    raw = (os.environ.get(name) or "").strip()
+    raw = (_resolve_env(name) or "").strip()
     try:
         return int(raw) if raw else default
     except ValueError:
@@ -136,8 +159,8 @@ A rolling percentile has no memory of a moment that will never recur. Over 8 sec
 always inter-word gaps even in continuous speech, so the 20th percentile lands on the room rather
 than on the voice — and when the AC switches on, the estimate follows within seconds."""
 
-END_OF_UTTERANCE_MS = _int_env("VOICE_TUNNEL_END_OF_UTTERANCE_MS", 1500)
-"""Silence that ends a turn. Override live with VOICE_TUNNEL_END_OF_UTTERANCE_MS.
+END_OF_UTTERANCE_MS = _int_env("COMMAND_BRIDGE_END_OF_UTTERANCE_MS", 1500)
+"""Silence that ends a turn. Override live with COMMAND_BRIDGE_END_OF_UTTERANCE_MS.
 
 Raised 1000 -> 1500 after this, live 2026-07-31: "whenever I haven't finished speaking, it ends my
 turn and you start processing and you might interrupt me." He thinks in pauses, and a threshold
@@ -171,7 +194,7 @@ The latency that actually mattered was never this — Parakeet cut transcription
 # somebody's tuned numbers is cheaper than rediscovering them and easier to compare against.
 
 TURN_DETECT = True
-"""Use the model when it is installed. Set VOICE_TUNNEL_TURN_DETECT=0 to force the plain timer —
+"""Use the model when it is installed. Set COMMAND_BRIDGE_TURN_DETECT=0 to force the plain timer —
 worth having as an A/B, since a silent fall back to the timer and a deliberate one look identical
 from the outside."""
 
@@ -188,7 +211,7 @@ is disabling the early exit while pretending to tune it.
 
 The model is not hesitant and wrong at the boundary; it is CONFIDENT and wrong, and confidence does
 not rank truncation. `TURN_MIN_SILENCE_MS` is the number that moved. Settable as
-VOICE_TUNNEL_TURN_THRESHOLD so the finding can be re-tested rather than re-argued. Full numbers in
+COMMAND_BRIDGE_TURN_THRESHOLD so the finding can be re-tested rather than re-argued. Full numbers in
 specs/005-one-wait-gated-on-speech.md."""
 
 TURN_MAX_WAIT_MS = 1500
@@ -231,7 +254,7 @@ times over by spec 005 deleting a collapsing wait ladder that cost up to 10.5 s 
 itself. Of the five truncations his real pauses were 0.64, 0.80, 0.98, 1.14 and 2.00 s, so this
 rescues the shortest. The other four are not segmenter defects — a one-second pause is a genuine
 end of utterance — they are one thought arriving as several turns, which is the waiting layer's
-job. Override with VOICE_TUNNEL_TURN_MIN_SILENCE_MS."""
+job. Override with COMMAND_BRIDGE_TURN_MIN_SILENCE_MS."""
 
 UNREAD_ON_SAY_MAX = 20
 """How many unread turns `say` hands back when it REFUSES, newest kept.
@@ -257,7 +280,7 @@ code has to name the CONDITION so the branch can be written before the condition
 
 
 def barge_in_enabled() -> bool:
-    raw = _env("VOICE_TUNNEL_BARGE_IN")
+    raw = _env("COMMAND_BRIDGE_BARGE_IN")
     if raw:
         return raw not in ("0", "false", "no", "off")
     return BARGE_IN
@@ -265,13 +288,13 @@ def barge_in_enabled() -> bool:
 
 def barge_in_threshold() -> float:
     try:
-        return float(_env("VOICE_TUNNEL_BARGE_IN_THRESHOLD") or BARGE_IN_THRESHOLD)
+        return float(_env("COMMAND_BRIDGE_BARGE_IN_THRESHOLD") or BARGE_IN_THRESHOLD)
     except ValueError:
         return BARGE_IN_THRESHOLD
 
 
 def turn_detect_enabled() -> bool:
-    raw = _env("VOICE_TUNNEL_TURN_DETECT")
+    raw = _env("COMMAND_BRIDGE_TURN_DETECT")
     if raw:
         return raw not in ("0", "false", "no", "off")
     return TURN_DETECT
@@ -279,7 +302,7 @@ def turn_detect_enabled() -> bool:
 
 def turn_threshold() -> float:
     try:
-        return min(1.0, max(0.0, float(_env("VOICE_TUNNEL_TURN_THRESHOLD") or TURN_THRESHOLD)))
+        return min(1.0, max(0.0, float(_env("COMMAND_BRIDGE_TURN_THRESHOLD") or TURN_THRESHOLD)))
     except ValueError:
         return TURN_THRESHOLD
 
@@ -293,7 +316,7 @@ def turn_min_silence_ms() -> int:
     negative floor would silently re-enable the behaviour this exists to stop.
     """
     try:
-        return max(0, int(float(_env("VOICE_TUNNEL_TURN_MIN_SILENCE_MS") or TURN_MIN_SILENCE_MS)))
+        return max(0, int(float(_env("COMMAND_BRIDGE_TURN_MIN_SILENCE_MS") or TURN_MIN_SILENCE_MS)))
     except ValueError:
         return TURN_MIN_SILENCE_MS
 
@@ -310,7 +333,7 @@ def turn_threads() -> int:
     starting on the same machine, and 8 was slower anyway. The intuition that fewer threads would
     be politer cost 79 ms per turn until it was actually measured."""
     try:
-        return max(1, int(_env("VOICE_TUNNEL_TURN_THREADS", "4")))
+        return max(1, int(_env("COMMAND_BRIDGE_TURN_THREADS", "4")))
     except ValueError:
         return 4
 
@@ -338,7 +361,7 @@ def turn_threads() -> int:
 # 0.035-0.096 over full utterances, well under his 1 s floor of 0.20.
 
 BARGE_IN = True
-"""Let his voice stop a reply mid-sentence. VOICE_TUNNEL_BARGE_IN=0 to disable."""
+"""Let his voice stop a reply mid-sentence. COMMAND_BRIDGE_BARGE_IN=0 to disable."""
 
 BARGE_IN_THRESHOLD = 0.15
 """Cosine floor for "this is a person, and not the agent".
@@ -418,7 +441,7 @@ name a user might actually pick — `grok` is an English verb, `cursor` and `gem
 words, and none of that matters once "hey" has to come first.
 
 This started as a per-name setting (`WAKE_REQUIRE_GREETING`, overridable with
-`VOICE_TUNNEL_WAKE_BARE`) on the theory that an uncommon name like "claude" could safely be said
+`COMMAND_BRIDGE_WAKE_BARE`) on the theory that an uncommon name like "claude" could safely be said
 bare. The owner removed the option: *"I would make it a default to always require the hey, and the only
 thing the agent or the user can choose is the wake word that is pronounced after hey."*
 
@@ -429,7 +452,7 @@ never part of."""
 
 
 def wake_name() -> str:
-    return (_env("VOICE_TUNNEL_WAKE_NAME") or WAKE_NAME).lower().strip()
+    return (_env("COMMAND_BRIDGE_WAKE_NAME") or WAKE_NAME).lower().strip()
 
 
 def wake_phrases() -> tuple:
@@ -546,7 +569,7 @@ the piper boundary ever sees it.
 1.18 (= 1/0.85) because en_GB-alan-medium — the voice the owner picked — reads noticeably slowly at
 native pace ("I kind of liked Alan, it's just he speaks too slowly"). This scales duration, not
 pitch, so the voice keeps its character. Above ~1.33 it starts clipping consonants and sounding
-rushed. Override with VOICE_TUNNEL_SPEECH_SPEED, or live and persistently with `voice-tunnel rate --speed`."""
+rushed. Override with COMMAND_BRIDGE_SPEECH_SPEED, or live and persistently with `voice-tunnel rate --speed`."""
 
 SPEED_MIN, SPEED_MAX = 0.5, 2.5
 """Accepted speed range: half speed to 2.5x. Bounded because a speed of 0 divides by zero on the
@@ -568,7 +591,7 @@ def speech_speed() -> float:
 
     The owner had to re-set this on every server start, which meant the value that was right for him
     lived only in a running process — the definition of a setting that will be lost."""
-    raw = _env("VOICE_TUNNEL_SPEECH_SPEED")
+    raw = _env("COMMAND_BRIDGE_SPEECH_SPEED")
     if raw:
         try:
             return max(SPEED_MIN, min(SPEED_MAX, float(raw)))
@@ -576,7 +599,7 @@ def speech_speed() -> float:
             pass
     # Backwards compatibility: honour a hand-written length_scale, converted. Retired because a
     # persisted setting in the inverted unit re-creates the exact confusion SPEECH_SPEED removes.
-    legacy = _env("VOICE_TUNNEL_PIPER_LENGTH_SCALE")
+    legacy = _env("COMMAND_BRIDGE_PIPER_LENGTH_SCALE")
     if legacy:
         try:
             return max(SPEED_MIN, min(SPEED_MAX, 1.0 / float(legacy)))
@@ -588,7 +611,7 @@ def speech_speed() -> float:
 def sentence_pause() -> float:
     """Persisted pause between sentences. Same reason as speech_speed: tuned by ear, so it has
     to outlive the process that was tuned."""
-    raw = _env("VOICE_TUNNEL_SENTENCE_PAUSE")
+    raw = _env("COMMAND_BRIDGE_SENTENCE_PAUSE")
     if raw:
         try:
             return max(0.0, min(PAUSE_MAX, float(raw)))
@@ -614,7 +637,7 @@ hear "the first consonant of each word". The working setting is the slower one."
 
 def consonant_boost() -> float:
     """Persisted consonant-boost strength, clamped to [0, 1]. Tuned by ear, so it must persist."""
-    raw = _env("VOICE_TUNNEL_CONSONANT_BOOST")
+    raw = _env("COMMAND_BRIDGE_CONSONANT_BOOST")
     if raw:
         try:
             return max(0.0, min(1.0, float(raw)))
@@ -643,7 +666,7 @@ this file, so it persists."""
 
 def deess() -> float:
     """Persisted de-esser strength, clamped to [0, 1]."""
-    raw = _env("VOICE_TUNNEL_DEESS")
+    raw = _env("COMMAND_BRIDGE_DEESS")
     if raw:
         try:
             return max(0.0, min(1.0, float(raw)))
@@ -659,9 +682,9 @@ DEFAULT_PIPER_VOICE = "en_GB-alan-medium"
 """Which voice piper uses when nothing names one.
 
 Alan is the voice the owner picked ("I kind of liked Alan") — the same choice SPEECH_SPEED above
-was tuned for. Naming a default here is what lets `VOICE_TUNNEL_TTS=piper` be the ONLY setting a piper
+was tuned for. Naming a default here is what lets `COMMAND_BRIDGE_TTS=piper` be the ONLY setting a piper
 session needs: with no default the backend refused to start unless the caller also threaded
-VOICE_TUNNEL_PIPER_VOICE through every invocation, which is precisely the env-var tax this file exists to
+COMMAND_BRIDGE_PIPER_VOICE through every invocation, which is precisely the env-var tax this file exists to
 remove. Falls back to the sole installed voice if Alan is not on disk, and to nothing if the
 choice would be a guess between several."""
 
@@ -681,27 +704,27 @@ makes it a reasonable thing to allow for phone access."""
 
 
 def _env(name: str, default: str = "") -> str:
-    return (os.environ.get(name) or default).strip()
+    return (_resolve_env(name) or default).strip()
 
 
 def home_dir() -> str:
     """One root that scopes EVERYTHING: settings, models, and turn logs.
 
-    `VOICE_TUNNEL_DIR` scopes only the session directory, which reads like isolation and is not.
+    `COMMAND_BRIDGE_DIR` scopes only the session directory, which reads like isolation and is not.
     A cold-start audit on 2026-08-10 set it, believed the environment was pristine, and found
-    `VOICE_TUNNEL_WAKE_NAME=codex` already applied — leaked from a different installation through
+    `COMMAND_BRIDGE_WAKE_NAME=codex` already applied — leaked from a different installation through
     the machine-wide settings file, which that variable never covered.
 
     That is the split-brain failure in miniature: two copies of the tool sharing state neither one
-    mentions. `VOICE_TUNNEL_HOME` is the switch that actually means "keep this copy to itself",
+    mentions. `COMMAND_BRIDGE_HOME` is the switch that actually means "keep this copy to itself",
     and the individual variables still win over it so a single override stays possible.
     """
-    return _env("VOICE_TUNNEL_HOME")
+    return _env("COMMAND_BRIDGE_HOME")
 
 
 def session_dir() -> str:
     """Where turn logs and voiceprints live. Repo-local in a checkout, per-user when installed."""
-    explicit = _env("VOICE_TUNNEL_DIR")
+    explicit = _env("COMMAND_BRIDGE_DIR")
     if explicit:
         return explicit
     home = home_dir()
@@ -719,19 +742,19 @@ def verbose_default() -> bool:
     Live, 2026-08-03: "I would like the verbose toggle to be server-side persisted. If I toggle
     it in a browser then it should be remembered on my phone."
     """
-    return (_env("VOICE_TUNNEL_VERBOSE", "0") or "0") not in ("0", "false", "no", "off")
+    return (_env("COMMAND_BRIDGE_VERBOSE", "0") or "0") not in ("0", "false", "no", "off")
 
 
 def cues_enabled() -> bool:
     """Audio cues on by default. They exist so a pause is legible without looking at the page —
-    disable with VOICE_TUNNEL_CUES=0 if they ever become noise rather than information."""
-    return (_env("VOICE_TUNNEL_CUES", "1") or "1") not in ("0", "false", "no", "off")
+    disable with COMMAND_BRIDGE_CUES=0 if they ever become noise rather than information."""
+    return (_env("COMMAND_BRIDGE_CUES", "1") or "1") not in ("0", "false", "no", "off")
 
 
 def owner_name() -> str:
     """Whose voice this tunnel belongs to. One operator, so a constant is enough — but it is a
     name rather than a boolean so a gallery can hold other speakers later (to *exclude* them)."""
-    return _env("VOICE_TUNNEL_OWNER", "me")
+    return _env("COMMAND_BRIDGE_OWNER", "me")
 
 
 def models_dir() -> str:
@@ -739,11 +762,11 @@ def models_dir() -> str:
     checkpoint is ~600 MB, which belongs in a cache the user owns, not in a wheel.
 
     SHARED ACROSS INSTALLATIONS by default, and that is deliberate: re-downloading 600 MB per copy
-    of the tool would be worse than the confusion it can cause. `VOICE_TUNNEL_HOME` scopes it when
+    of the tool would be worse than the confusion it can cause. `COMMAND_BRIDGE_HOME` scopes it when
     isolation matters more than disk, and `doctor` names it under `runtime.shared` so nobody has
     to discover the sharing by being surprised.
     """
-    explicit = _env("VOICE_TUNNEL_MODELS_DIR")
+    explicit = _env("COMMAND_BRIDGE_MODELS_DIR")
     if explicit:
         return explicit
     home = home_dir()
@@ -765,7 +788,7 @@ def parakeet_dir() -> str:
     autoregressively. Whisper stays as the fallback so a fresh clone still works with nothing
     downloaded beyond faster-whisper's own model.
     """
-    explicit = _env("VOICE_TUNNEL_PARAKEET_DIR")
+    explicit = _env("COMMAND_BRIDGE_PARAKEET_DIR")
     if explicit:
         return explicit
     default = os.path.join(models_dir(), "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
@@ -797,10 +820,10 @@ def asr_engine() -> str:
     word rather than at the download. A checkout always had both, so the distinction did not
     exist until this became installable with extras.
 
-    An explicit VOICE_TUNNEL_ASR is still obeyed either way: someone who names an engine deserves
+    An explicit COMMAND_BRIDGE_ASR is still obeyed either way: someone who names an engine deserves
     the error rather than a silent substitution. `doctor` reports the mismatch.
     """
-    forced = _env("VOICE_TUNNEL_ASR").lower()
+    forced = _env("COMMAND_BRIDGE_ASR").lower()
     if forced in ("parakeet", "whisper"):
         return forced
     return "parakeet" if (parakeet_dir() and have_module("sherpa_onnx")) else "whisper"
@@ -808,7 +831,7 @@ def asr_engine() -> str:
 
 def asr_threads() -> int:
     try:
-        return max(1, int(_env("VOICE_TUNNEL_ASR_THREADS", "4")))
+        return max(1, int(_env("COMMAND_BRIDGE_ASR_THREADS", "4")))
     except ValueError:
         return 4
 
@@ -816,12 +839,12 @@ def asr_threads() -> int:
 def hotwords_file() -> str:
     """The curated hotword list — one phrase per line, `#` comments ignored.
 
-    VOICE_TUNNEL_HOTWORDS_FILE, or `hotwords.txt` at the repo root. Its own resolver AND the value
+    COMMAND_BRIDGE_HOTWORDS_FILE, or `hotwords.txt` at the repo root. Its own resolver AND the value
     `parakeet_hotwords` reads, so `config get` cannot describe a file the decoder does not open.
     """
     import os
 
-    return _env("VOICE_TUNNEL_HOTWORDS_FILE") or os.path.join(
+    return _env("COMMAND_BRIDGE_HOTWORDS_FILE") or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hotwords.txt")
 
 
@@ -830,7 +853,7 @@ def hotwords_score() -> float:
     that fixes his terms without the repetition artefact a higher score produces on overlapping
     phrases. Falls back to 2.0 on a non-numeric override rather than raising."""
     try:
-        return float(_env("VOICE_TUNNEL_HOTWORDS_SCORE", "2.0"))
+        return float(_env("COMMAND_BRIDGE_HOTWORDS_SCORE", "2.0"))
     except ValueError:
         return 2.0
 
@@ -842,7 +865,7 @@ def parakeet_hotwords():
     engine is byte-identical to what it was before this existed:
 
       - a **hotwords file** the owner curated (one phrase per line), pointed at by
-        VOICE_TUNNEL_HOTWORDS_FILE or defaulting to `hotwords.txt` at the repo root;
+        COMMAND_BRIDGE_HOTWORDS_FILE or defaulting to `hotwords.txt` at the repo root;
       - a **bpe.vocab** inside the model dir, which sherpa needs to tokenise a hotword phrase the
         way the model itself would — the checkpoint ships only `tokens.txt`, so this is the file
         extracted from NVIDIA's `.nemo` on 2026-08-31 (the July "dead end" was exactly its absence);
@@ -887,7 +910,7 @@ def whisper_model() -> str:
     latency. Drop to tiny.en if you want faster still and can accept more errors on hard audio;
     raise to small.en only if base starts making mistakes that matter.
     """
-    return _env("VOICE_TUNNEL_WHISPER_MODEL", "base.en")
+    return _env("COMMAND_BRIDGE_WHISPER_MODEL", "base.en")
 
 
 def asr_beam_size() -> int:
@@ -895,7 +918,7 @@ def asr_beam_size() -> int:
     size dominates by ~3x — so this stays at 1 rather than being a tuning knob anyone reaches
     for expecting a win."""
     try:
-        return max(1, int(_env("VOICE_TUNNEL_ASR_BEAM", "1")))
+        return max(1, int(_env("COMMAND_BRIDGE_ASR_BEAM", "1")))
     except ValueError:
         return 1
 
@@ -908,17 +931,17 @@ def tts_backend() -> str:
     "sapi" no matter what was installed. So `voice-tunnel setup` could install Piper, download a
     neural voice, report `ok: true` on every step — and leave synthesis on the robotic system
     voice, with `describe` still calling setup "one command to make a fresh install fully
-    capable". Found by a cold-start audit that had to infer `config set VOICE_TUNNEL_TTS piper`
+    capable". Found by a cold-start audit that had to infer `config set COMMAND_BRIDGE_TTS piper`
     by analogy with the ASR remedy, because nothing in the tool ever named it.
 
     Both halves are required for the same reason they are in `asr_engine`: selecting on the voice
     file alone would flip an install with no `piper` package onto a backend that cannot load,
     moving the failure from the download to the first spoken word.
 
-    An explicit VOICE_TUNNEL_TTS still wins — naming a backend earns you its error rather than a
+    An explicit COMMAND_BRIDGE_TTS still wins — naming a backend earns you its error rather than a
     silent substitution — and `sapi` remains the answer when nothing better is installed.
     """
-    forced = _env("VOICE_TUNNEL_TTS").lower()
+    forced = _env("COMMAND_BRIDGE_TTS").lower()
     if forced:
         return forced
     usable = piper_voice() and (
@@ -928,14 +951,14 @@ def tts_backend() -> str:
 
 
 def extra_allow_cidrs() -> tuple[str, ...]:
-    raw = _env("VOICE_TUNNEL_ALLOW_CIDRS")
+    raw = _env("COMMAND_BRIDGE_ALLOW_CIDRS")
     return tuple(c.strip() for c in raw.split(",") if c.strip())
 
 
 def trusted_proxies() -> tuple[str, ...]:
     """Empty by default — see ai-docs/reference/security.md. An empty tuple means
     X-Forwarded-For is ignored entirely and the direct TCP peer decides."""
-    raw = _env("VOICE_TUNNEL_TRUSTED_PROXIES")
+    raw = _env("COMMAND_BRIDGE_TRUSTED_PROXIES")
     return tuple(c.strip() for c in raw.split(",") if c.strip())
 
 
@@ -956,7 +979,7 @@ def public_url() -> str:
 
     It changes no behaviour beyond the verdict. Nothing binds to it and nothing routes through it.
     """
-    return _env("VOICE_TUNNEL_PUBLIC_URL").strip()
+    return _env("COMMAND_BRIDGE_PUBLIC_URL").strip()
 
 
 # ------------------------------------------------------------------------ piper
@@ -989,7 +1012,7 @@ DEFAULT_KOKORO_VOICE = "bm_daniel"
 """Which Kokoro voice speaks when nothing names one.
 
 Daniel is one of the two the owner picked when he auditioned all six (the other was `bf_emma`).
-Same role `DEFAULT_PIPER_VOICE` plays: it is what lets `VOICE_TUNNEL_TTS=kokoro` be the only
+Same role `DEFAULT_PIPER_VOICE` plays: it is what lets `COMMAND_BRIDGE_TTS=kokoro` be the only
 setting a Kokoro session needs."""
 
 KOKORO_SR = 24000
@@ -1047,10 +1070,10 @@ def kokoro_model() -> str:
     loaded model can enumerate them.
 
     **The timestamped export wins when both are present** — same audio, plus the durations. An
-    explicit `VOICE_TUNNEL_KOKORO_MODEL` still outranks both, so pinning a specific file remains
+    explicit `COMMAND_BRIDGE_KOKORO_MODEL` still outranks both, so pinning a specific file remains
     possible.
     """
-    explicit = _env("VOICE_TUNNEL_KOKORO_MODEL")
+    explicit = _env("COMMAND_BRIDGE_KOKORO_MODEL")
     if explicit:
         return explicit
     # ONE DEFINITION OF WHICH MODEL IS LIVE. `doctor`, `status` and the loader all read this, and
@@ -1090,7 +1113,7 @@ def kokoro_voices_bin() -> str:
     style vector looked up in this file. Model-without-pack is a real state — the same
     engine-without-model trap `download` already warns about — so both are checked separately.
     """
-    explicit = _env("VOICE_TUNNEL_KOKORO_VOICES")
+    explicit = _env("COMMAND_BRIDGE_KOKORO_VOICES")
     if explicit:
         return explicit
     path = os.path.join(models_dir(), "voices-v1.0.bin")
@@ -1103,7 +1126,7 @@ def kokoro_voice() -> str:
     The asymmetry is the format's, not a design choice: a Piper voice IS a file, a Kokoro voice
     is a key inside one.
     """
-    return _env("VOICE_TUNNEL_KOKORO_VOICE") or DEFAULT_KOKORO_VOICE
+    return _env("COMMAND_BRIDGE_KOKORO_VOICE") or DEFAULT_KOKORO_VOICE
 
 
 def kokoro_lang_for(voice: str) -> str:
@@ -1132,7 +1155,7 @@ def piper_bin() -> str:
     PATH stays last for the original reason: a globally-installed piper of a different version
     should never silently beat the one installed alongside this package.
     """
-    explicit = _env("VOICE_TUNNEL_PIPER_BIN")
+    explicit = _env("COMMAND_BRIDGE_PIPER_BIN")
     if explicit:
         return explicit
     here = os.path.dirname(sys.executable)
@@ -1159,10 +1182,10 @@ def piper_inprocess() -> bool:
     That is 7-26x, and it made TTS slower than transcription by more than 10x — Parakeet does its
     half in 0.23 s. The model loads once and is reused, so the tax is paid at `serve` time.
 
-    Set VOICE_TUNNEL_PIPER_INPROCESS=0 to go back to spawning the binary. Kept as an escape hatch because
-    VOICE_TUNNEL_PIPER_BIN may point at a non-Python piper (the C++ releases), for which the resident path
+    Set COMMAND_BRIDGE_PIPER_INPROCESS=0 to go back to spawning the binary. Kept as an escape hatch because
+    COMMAND_BRIDGE_PIPER_BIN may point at a non-Python piper (the C++ releases), for which the resident path
     is a different implementation, not the same one held open."""
-    return (_env("VOICE_TUNNEL_PIPER_INPROCESS", "1") or "1") not in ("0", "false", "no", "off")
+    return (_env("COMMAND_BRIDGE_PIPER_INPROCESS", "1") or "1") not in ("0", "false", "no", "off")
 
 
 def piper_voice() -> str:
@@ -1172,7 +1195,7 @@ def piper_voice() -> str:
     the flag refuses paths (it is reachable over the tunnel, and a path turns text-to-speech into
     a file probe). This value is not caller-supplied, so it may be a path.
     """
-    explicit = _env("VOICE_TUNNEL_PIPER_VOICE")
+    explicit = _env("COMMAND_BRIDGE_PIPER_VOICE")
     if explicit:
         return explicit
     d = models_dir()
@@ -1189,7 +1212,7 @@ def piper_voice() -> str:
 #
 # THE PROBLEM THIS SOLVES. Before this existed, driving the tunnel with piper looked like:
 #
-#     VOICE_TUNNEL_DIR=... VOICE_TUNNEL_TTS=piper VOICE_TUNNEL_PIPER_BIN=... VOICE_TUNNEL_PIPER_VOICE=... python -c "import sys; ..."
+#     COMMAND_BRIDGE_DIR=... COMMAND_BRIDGE_TTS=piper COMMAND_BRIDGE_PIPER_BIN=... COMMAND_BRIDGE_PIPER_VOICE=... python -c "import sys; ..."
 #
 # on EVERY call, because nothing persisted and the repo shipped a `.env.example` telling you to
 # "copy to .env" that no code ever read. Four variables re-typed per invocation is not a
@@ -1214,7 +1237,7 @@ def env_file_default() -> str:
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 """What counts as a variable name when READING the file — the POSIX shell rule, permissive."""
 
-_WRITABLE_KEY_RE = re.compile(r"^VOICE_TUNNEL_[A-Z0-9_]+$")
+_WRITABLE_KEY_RE = re.compile(r"^COMMAND_BRIDGE_[A-Z0-9_]+$")
 """What `voice-tunnel config set` is allowed to WRITE — strict, this tool's own namespace only.
 
 Permissive on read, strict on write, and the asymmetry is the point: a file a human hand-edited
@@ -1228,22 +1251,22 @@ at load time or not at all."""
 
 
 def env_file_path() -> str:
-    """Where persisted settings live, or VOICE_TUNNEL_ENV_FILE if pointed elsewhere.
+    """Where persisted settings live, or COMMAND_BRIDGE_ENV_FILE if pointed elsewhere.
 
     In a checkout: `<repo>/.env`, gitignored, for the same reason session logs are repo-local —
     settings that travel with the working tree need no per-machine setup, and a shared secret
     that never leaves it cannot be committed by accident. Installed: the per-user config
     directory, because there is no working tree to travel with.
 
-    VOICE_TUNNEL_ENV_FILE exists so tests can point somewhere disposable — a suite that reads the
+    COMMAND_BRIDGE_ENV_FILE exists so tests can point somewhere disposable — a suite that reads the
     developer's real settings is not a suite, it's a mood.
 
     THE INSTALLED PATH IS SHARED BY EVERY INSTALLED COPY, which is how a wake name set by one
     agent turned up pre-applied in another copy's supposedly fresh environment. Preferences
     following the user is the intent; it stops being the intent when two tools disagree about
-    whose preferences they are. `VOICE_TUNNEL_HOME` scopes this too.
+    whose preferences they are. `COMMAND_BRIDGE_HOME` scopes this too.
     """
-    explicit = _env("VOICE_TUNNEL_ENV_FILE")
+    explicit = _env("COMMAND_BRIDGE_ENV_FILE")
     if explicit:
         return explicit
     home = home_dir()
@@ -1298,7 +1321,7 @@ def load_env_file(path: str | None = None) -> dict:
     Precedence is **process env > file > built-in default**, and that direction is the entire
     contract. A caller has to be able to override one setting for one invocation without editing
     a file every other session shares — scripts/e2e.py depends on exactly this, handing its child
-    a VOICE_TUNNEL_DIR/VOICE_TUNNEL_TOKEN/VOICE_TUNNEL_TTS triple that must beat whatever the developer has persisted.
+    a COMMAND_BRIDGE_DIR/COMMAND_BRIDGE_TOKEN/COMMAND_BRIDGE_TTS triple that must beat whatever the developer has persisted.
 
     Idempotent: a second call is a no-op, because the first call is what set the variable.
 
@@ -1318,6 +1341,18 @@ def load_env_file(path: str | None = None) -> dict:
             continue
         os.environ[key] = value
         applied.append(key)
+        # Back-compat (spec 001 FR4): a pre-rename .env carries VOICE_TUNNEL_* names. Populate the
+        # new COMMAND_BRIDGE_* twin so EVERY reader sees it — including the few that read os.environ
+        # directly rather than through _resolve_env — and warn once so the operator learns the name.
+        if key.startswith(_LEGACY_PREFIX):
+            new_key = _PREFIX + key[len(_LEGACY_PREFIX):]
+            if new_key not in os.environ:
+                os.environ[new_key] = value
+                applied.append(new_key)
+                if key not in _warned_legacy:
+                    _warned_legacy.add(key)
+                    print(f"[command-bridge] {key} in {path} is deprecated; use {new_key}",
+                          file=sys.stderr)
     _LOAD_REPORT = {
         "file": path,
         "exists": os.path.exists(path),
@@ -1345,7 +1380,7 @@ def validate_setting(key: str, value: str) -> None:
     if not _WRITABLE_KEY_RE.match(key or ""):
         raise ValueError(
             f"{key!r} is not a settable key. `voice-tunnel config set` writes only this tool's own "
-            f"namespace: an upper-case name starting with VOICE_TUNNEL_ (e.g. VOICE_TUNNEL_TTS). "
+            f"namespace: an upper-case name starting with COMMAND_BRIDGE_ (e.g. COMMAND_BRIDGE_TTS). "
             f"Run `voice-tunnel config show` for the full list."
         )
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
@@ -1396,7 +1431,7 @@ def write_setting(key: str, value: str | None, path: str | None = None) -> dict:
     if value is not None:
         validate_setting(key, value)
     elif not _WRITABLE_KEY_RE.match(key or ""):
-        raise ValueError(f"{key!r} is not a settable key (upper-case, VOICE_TUNNEL_ prefix)")
+        raise ValueError(f"{key!r} is not a settable key (upper-case, COMMAND_BRIDGE_ prefix)")
 
     try:
         with open(path, encoding="utf-8") as fh:
@@ -1436,7 +1471,7 @@ def write_setting(key: str, value: str | None, path: str | None = None) -> dict:
 
 # -------------------------------------------- the two tunables that live in cli.py
 #
-# `VOICE_TUNNEL_WATCH_MAX_S` and `VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S` are read by the watch
+# `COMMAND_BRIDGE_WATCH_MAX_S` and `COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S` are read by the watch
 # backoff, which lives in `cli.py` beside the constants it caps — and it belongs there, because
 # the ladder, the `describe` copy that publishes it and the arithmetic that generates that copy
 # are one unit. The registry below still has to resolve them, so the resolver DELEGATES rather
@@ -1453,7 +1488,7 @@ def watch_backoff_max_s() -> float:
     """The `watch` backoff ceiling, override applied — READ FROM THE LADDER, not recomputed.
 
     Reports the REACHABLE cap (`cli.WATCH_BACKOFF_MAX_S`), which is the path a normal quiet watch
-    takes. `VOICE_TUNNEL_WATCH_MAX_S` replaces the unreachable cap as well, and the two constants
+    takes. `COMMAND_BRIDGE_WATCH_MAX_S` replaces the unreachable cap as well, and the two constants
     are the same 540 s today, so one number answers for both — but they are separate constants on
     purpose, and if they ever diverge this value is the connected one.
     """
@@ -1481,129 +1516,129 @@ def _setting(key: str, what: str, resolve, secret: bool = False) -> dict:
 
 
 SETTINGS: tuple = (
-    _setting("VOICE_TUNNEL_ENV_FILE", "path to this settings file itself (default <repo>/.env)",
+    _setting("COMMAND_BRIDGE_ENV_FILE", "path to this settings file itself (default <repo>/.env)",
              env_file_path),
-    _setting("VOICE_TUNNEL_TOKEN", "shared secret for the WS handshake; generated at serve time if unset",
-             lambda: _env("VOICE_TUNNEL_TOKEN"), secret=True),
-    _setting("VOICE_TUNNEL_ALLOW_CIDRS", "extra CIDRs allowed (add 100.64.0.0/10 for Tailscale)",
+    _setting("COMMAND_BRIDGE_TOKEN", "shared secret for the WS handshake; generated at serve time if unset",
+             lambda: _env("COMMAND_BRIDGE_TOKEN"), secret=True),
+    _setting("COMMAND_BRIDGE_ALLOW_CIDRS", "extra CIDRs allowed (add 100.64.0.0/10 for Tailscale)",
              lambda: ",".join(extra_allow_cidrs())),
-    _setting("VOICE_TUNNEL_TRUSTED_PROXIES", "leave empty unless a real proxy fronts this",
+    _setting("COMMAND_BRIDGE_TRUSTED_PROXIES", "leave empty unless a real proxy fronts this",
              lambda: ",".join(trusted_proxies())),
-    _setting("VOICE_TUNNEL_PUBLIC_URL",
+    _setting("COMMAND_BRIDGE_PUBLIC_URL",
              "the https URL a phone opens, when something you started is forwarding to this port "
              "(tailscale serve, cloudflared, any reverse proxy). ngrok is detected on its own. "
              "Setting it makes `status.phone.ready` true and stops the remedy repeating advice "
              "you have already followed",
              public_url),
-    _setting("VOICE_TUNNEL_DIR", "where turn logs live", session_dir),
-    _setting("VOICE_TUNNEL_MODELS_DIR", "where downloaded models live", models_dir),
+    _setting("COMMAND_BRIDGE_DIR", "where turn logs live", session_dir),
+    _setting("COMMAND_BRIDGE_MODELS_DIR", "where downloaded models live", models_dir),
     # `kokoro` was missing from this description while it was the backend in production use, so
     # the one list an agent reads to find out what it may set omitted the answer. Same defect as
     # the unregistered Kokoro keys below: shipped, honoured, undiscoverable.
-    _setting("VOICE_TUNNEL_TTS", "sapi | piper | kokoro | none", tts_backend),
-    _setting("VOICE_TUNNEL_PIPER_BIN", "piper executable; auto-found in the repo venv or on PATH",
+    _setting("COMMAND_BRIDGE_TTS", "sapi | piper | kokoro | none", tts_backend),
+    _setting("COMMAND_BRIDGE_PIPER_BIN", "piper executable; auto-found in the repo venv or on PATH",
              piper_bin),
-    _setting("VOICE_TUNNEL_PIPER_VOICE", "default .onnx voice; auto-found in the models dir", piper_voice),
-    _setting("VOICE_TUNNEL_PIPER_INPROCESS",
+    _setting("COMMAND_BRIDGE_PIPER_VOICE", "default .onnx voice; auto-found in the models dir", piper_voice),
+    _setting("COMMAND_BRIDGE_PIPER_INPROCESS",
              "1 | 0 — hold the voice model in this process (7-26x faster than spawning piper)",
              lambda: "1" if piper_inprocess() else "0"),
     # THE THREE KOKORO VARIABLES WERE READ AND NEVER REGISTERED — the same defect the turn
     # variables carried below, found the same way and worth recording twice rather than once.
     # `kokoro_voice`, `kokoro_model` and `kokoro_voices_bin` have read the environment since the
-    # backend landed, so `config get VOICE_TUNNEL_KOKORO_VOICE` answered "unknown setting" for a
+    # backend landed, so `config get COMMAND_BRIDGE_KOKORO_VOICE` answered "unknown setting" for a
     # key that was live, honoured, and sitting in the owner's own `.env` selecting the voice he
     # was listening to. A knob you cannot reach through the documented interface is not tunable,
     # whatever the code does.
-    _setting("VOICE_TUNNEL_KOKORO_VOICE",
+    _setting("COMMAND_BRIDGE_KOKORO_VOICE",
              f"kokoro voice NAME, not a path — a voice is a style vector inside the one pack, "
              f"unlike piper where a voice IS a file (default {DEFAULT_KOKORO_VOICE}). "
              f"`voice-tunnel voices` lists what the pack holds",
              kokoro_voice),
-    _setting("VOICE_TUNNEL_KOKORO_MODEL",
+    _setting("COMMAND_BRIDGE_KOKORO_MODEL",
              "kokoro-v1.0.onnx; auto-found in the models dir. Empty means it is not downloaded "
              "— `voice-tunnel download kokoro`",
              kokoro_model),
-    _setting("VOICE_TUNNEL_KOKORO_VOICES",
+    _setting("COMMAND_BRIDGE_KOKORO_VOICES",
              "voices-v1.0.bin, the voice pack; auto-found in the models dir. Required AS WELL AS "
              "the model — the .onnx alone synthesizes nothing",
              kokoro_voices_bin),
-    _setting("VOICE_TUNNEL_SPEECH_SPEED",
+    _setting("COMMAND_BRIDGE_SPEECH_SPEED",
              f"how fast the agent talks; 1.0 is native pace, higher is faster "
              f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `voice-tunnel rate --speed`. "
              f"NOTE the kokoro backend caps at {KOKORO_SPEED_MAX} and clamps above it "
              f"(piper takes the full range); `status` says when it clamped",
              lambda: str(speech_speed())),
-    _setting("VOICE_TUNNEL_SENTENCE_PAUSE",
+    _setting("COMMAND_BRIDGE_SENTENCE_PAUSE",
              f"seconds of silence between sentences (0-{PAUSE_MAX}); the pause IS the "
              f"punctuation in speech. Set it live with `voice-tunnel rate --pause`",
              lambda: str(sentence_pause())),
-    _setting("VOICE_TUNNEL_CONSONANT_BOOST",
+    _setting("COMMAND_BRIDGE_CONSONANT_BOOST",
              f"0-1 — how hard to lift consonants so they survive fast speech. Default "
              f"{CONSONANT_BOOST}, i.e. OFF, and that is the sensible value: the broadband form "
              f"lifts the model's noise floor along with the consonants, and at 0.6 it sounded "
              f"'as if it's coming through an old speaker' without recovering the consonants it "
              f"was aimed at. Leave it at 0 unless you are re-testing that measurement",
              lambda: str(consonant_boost())),
-    _setting("VOICE_TUNNEL_DEESS",
+    _setting("COMMAND_BRIDGE_DEESS",
              "0-1 — tame the piercing 's'. Only attenuates frames where the high band dominates, "
              "so vowels and consonant attacks are untouched. 0 disables",
              lambda: str(deess())),
-    _setting("VOICE_TUNNEL_ASR", "parakeet | whisper (auto-selects parakeet when its model is present)",
+    _setting("COMMAND_BRIDGE_ASR", "parakeet | whisper (auto-selects parakeet when its model is present)",
              asr_engine),
-    _setting("VOICE_TUNNEL_PARAKEET_DIR", "sherpa-onnx Parakeet model dir", parakeet_dir),
+    _setting("COMMAND_BRIDGE_PARAKEET_DIR", "sherpa-onnx Parakeet model dir", parakeet_dir),
     # THE TWO HOTWORD VARIABLES WERE READ AND NEVER REGISTERED — the same defect the kokoro and
     # turn-detection keys above carried, recurring the moment the hotword feature landed
-    # (2026-08-31) and caught by AC9 the same day. `config get VOICE_TUNNEL_HOTWORDS_SCORE`
+    # (2026-08-31) and caught by AC9 the same day. `config get COMMAND_BRIDGE_HOTWORDS_SCORE`
     # answered "unknown setting" for a knob that was live and biasing his transcripts.
-    _setting("VOICE_TUNNEL_HOTWORDS_FILE",
+    _setting("COMMAND_BRIDGE_HOTWORDS_FILE",
              "contextual-biasing hotword list, one phrase per line (`#` comments ignored); default "
              "<repo>/hotwords.txt. Only takes effect when the parakeet model dir also holds a "
              "bpe.vocab — without it, decoding stays plain greedy and byte-identical",
              hotwords_file),
-    _setting("VOICE_TUNNEL_HOTWORDS_SCORE",
+    _setting("COMMAND_BRIDGE_HOTWORDS_SCORE",
              "how hard to bias toward a hotword on FINAL decodes (default 2.0, measured on his "
              "voice). A too-short common token like his wake word should be left OUT of the file "
              "rather than fought with a lower score — boosting a word already recognised makes the "
              "beam prepend it on near-empty turns",
              lambda: str(hotwords_score())),
-    _setting("VOICE_TUNNEL_WHISPER_MODEL", "whisper fallback model (parakeet is preferred)", whisper_model),
-    _setting("VOICE_TUNNEL_ASR_THREADS", "ASR worker threads", lambda: str(asr_threads())),
-    _setting("VOICE_TUNNEL_ASR_BEAM", "whisper beam width; size dominates speed, not this",
+    _setting("COMMAND_BRIDGE_WHISPER_MODEL", "whisper fallback model (parakeet is preferred)", whisper_model),
+    _setting("COMMAND_BRIDGE_ASR_THREADS", "ASR worker threads", lambda: str(asr_threads())),
+    _setting("COMMAND_BRIDGE_ASR_BEAM", "whisper beam width; size dominates speed, not this",
              lambda: str(asr_beam_size())),
-    _setting("VOICE_TUNNEL_END_OF_UTTERANCE_MS", "silence that ends a turn; raise it if you get cut off",
+    _setting("COMMAND_BRIDGE_END_OF_UTTERANCE_MS", "silence that ends a turn; raise it if you get cut off",
              lambda: str(END_OF_UTTERANCE_MS)),
     # THE THREE TURN-DETECTION VARIABLES WERE READ AND NEVER REGISTERED. `config.turn_threshold`,
     # `turn_detect_enabled` and `turn_threads` have read the environment since spec 004, so
-    # `config set VOICE_TUNNEL_TURN_THRESHOLD 0.7` answered "unknown setting" for a key that was
+    # `config set COMMAND_BRIDGE_TURN_THRESHOLD 0.7` answered "unknown setting" for a key that was
     # live and honoured — the same defect class as 0.2.1's unreachable `[turn]` extra. A knob you
     # cannot reach through the documented interface is not tunable, whatever the code does.
-    _setting("VOICE_TUNNEL_TURN_DETECT",
+    _setting("COMMAND_BRIDGE_TURN_DETECT",
              "1 | 0 — let the learned turn model decide when a turn ends. 0 falls back to the "
              "fixed END_OF_UTTERANCE_MS timer, which was raised from 1000 BECAUSE it cut him off",
              lambda: "1" if turn_detect_enabled() else "0"),
-    _setting("VOICE_TUNNEL_TURN_THRESHOLD",
+    _setting("COMMAND_BRIDGE_TURN_THRESHOLD",
              "0-1 — probability at or above which an utterance counts as finished. Measured "
              "2026-08-17: raising this does NOT reduce truncation, because the model is "
              "confidently wrong rather than hesitant. Use TURN_MIN_SILENCE_MS instead",
              lambda: str(turn_threshold())),
-    _setting("VOICE_TUNNEL_TURN_MIN_SILENCE_MS",
+    _setting("COMMAND_BRIDGE_TURN_MIN_SILENCE_MS",
              "the floor below which no amount of model confidence may close a turn early. THIS "
              "is the knob that stops him being cut off mid-sentence; 800 was measured, not "
              "guessed. Raise it if you are still being truncated",
              lambda: str(turn_min_silence_ms())),
-    _setting("VOICE_TUNNEL_TURN_THREADS", "ONNX intra-op threads for the turn model (4 measured "
+    _setting("COMMAND_BRIDGE_TURN_THREADS", "ONNX intra-op threads for the turn model (4 measured "
              "fastest on this machine; 1 and 8 are both slower)",
              lambda: str(turn_threads())),
     # BARGE-IN WAS READ AND UNREGISTERED TOO, and the pair is worth stating rather than counting:
     # a switch nobody can find and a threshold nobody can find are not one defect twice, they are
     # a feature whose entire tuning surface was invisible. `barge_in_enabled` and
     # `barge_in_threshold` have read the environment since the voiceprint gate landed.
-    _setting("VOICE_TUNNEL_BARGE_IN",
+    _setting("COMMAND_BRIDGE_BARGE_IN",
              "1 | 0 — let his voice stop a reply mid-sentence. Default 1, and 1 is almost always "
              "right: a tunnel you cannot interrupt makes you wait out an answer to the wrong "
              "question. Set 0 only when a reply being cut short is worse than being talked over",
              lambda: "1" if barge_in_enabled() else "0"),
-    _setting("VOICE_TUNNEL_BARGE_IN_THRESHOLD",
+    _setting("COMMAND_BRIDGE_BARGE_IN_THRESHOLD",
              f"0-1 — the voiceprint cosine floor for 'this is a person, and NOT the agent's own "
              f"voice coming back through the speakers'. Default {BARGE_IN_THRESHOLD}, measured: "
              f"agent echo scores 0.000, other speakers 0.035-0.096, and his own worst one-second "
@@ -1612,38 +1647,38 @@ SETTINGS: tuple = (
              f"decides whether to answer, this one decides whether to stop talking",
              lambda: str(barge_in_threshold())),
     # THE TWO WATCH CEILINGS. Read by `cli._backoff_cap` and `cli._disconnected_ceiling`, and
-    # unregistered until now — which is how VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S came to be
+    # unregistered until now — which is how COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S came to be
     # hand-written into the owner's `.env` with an explanatory comment: editing the file was the
     # only way to set a value `config set` called an unknown setting. The resolvers delegate to
     # cli rather than recomputing; see `watch_backoff_max_s` above for why that is load-bearing.
-    _setting("VOICE_TUNNEL_WATCH_MAX_S",
+    _setting("COMMAND_BRIDGE_WATCH_MAX_S",
              "seconds — the ceiling the `watch` backoff ladder tops out at (30s doubling: "
              "30 -> 60 -> 2min -> 4min -> 8min -> this). Default 540, i.e. 9min, which is the "
              "largest value that still fits inside a 10-minute harness tool timeout and so keeps "
              "the wait in the FOREGROUND. It replaces the unreachable cap as well; the value "
              "shown here is the reachable one, the path a normal quiet watch takes",
              lambda: str(watch_backoff_max_s())),
-    _setting("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S",
+    _setting("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S",
              "seconds — the FLAT wait used when no turn can arrive at all: no page open, or the "
              "orb switched off and the microphone released. No ladder, because there is no "
              "evidence to accumulate. Default 28800, i.e. 8h, measured against a six-hour absence "
              "that otherwise cost ~35 guaranteed-empty wakes. Lower it to 540 to match "
-             "VOICE_TUNNEL_WATCH_MAX_S when your harness pokes an idle agent on a timer — a "
+             "COMMAND_BRIDGE_WATCH_MAX_S when your harness pokes an idle agent on a timer — a "
              "detached watch then costs more turns than a blocking one",
              lambda: str(watch_disconnected_max_s())),
-    _setting("VOICE_TUNNEL_CUES", "1 | 0 — short non-speech cues so a pause is audible",
+    _setting("COMMAND_BRIDGE_CUES", "1 | 0 — short non-speech cues so a pause is audible",
              lambda: "1" if cues_enabled() else "0"),
-    _setting("VOICE_TUNNEL_VERBOSE",
+    _setting("COMMAND_BRIDGE_VERBOSE",
              "1 | 0 — narrate every action before doing it. Global across devices; "
              "set live with `voice-tunnel verbose on`",
              lambda: "1" if verbose_default() else "0"),
-    _setting("VOICE_TUNNEL_OWNER", "name the voiceprint gallery learns under", owner_name),
-    _setting("VOICE_TUNNEL_WAKE_NAME",
+    _setting("COMMAND_BRIDGE_OWNER", "name the voiceprint gallery learns under", owner_name),
+    _setting("COMMAND_BRIDGE_WAKE_NAME",
              "what you call the agent; 'hey <name>' summons it, and a greeting is always "
              "required. Set it to the agent's own name with `serve --wake <name>`",
              wake_name),
 )
-"""Every VOICE_TUNNEL_* variable, in one place, with what it does and how to read its live value.
+"""Every COMMAND_BRIDGE_* variable, in one place, with what it does and how to read its live value.
 
 ONE registry, three consumers: `voice-tunnel describe`'s env block, `voice-tunnel config show`, and the test that
 asserts `.env.example` documents all of it. Before this, `describe` listed eight variables and
@@ -1654,7 +1689,7 @@ because it is trusted."""
 REDACTED = "***"
 """Stand-in for a secret's value in a BULK dump.
 
-`config show` redacts; `config get VOICE_TUNNEL_TOKEN` does not. The rule is that an explicit single-key
+`config show` redacts; `config get COMMAND_BRIDGE_TOKEN` does not. The rule is that an explicit single-key
 read is someone asking for that secret, while a bulk dump is someone asking for orientation and
 getting the secret as a side effect — into a transcript, a log, and an agent's context."""
 

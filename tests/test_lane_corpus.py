@@ -6,10 +6,10 @@ ever logged here rather than over examples chosen by the author.
 
 The corpus is JJ's own speech and is deliberately NOT in the repo, so these **skip** rather than
 fail when it is absent — a fresh clone and CI stay green. Point them at it explicitly with
-`VOICE_TUNNEL_CORPUS_DIR`; they read it and never write to it.
+`COMMAND_BRIDGE_CORPUS_DIR`; they read it and never write to it.
 
 ⚠ Read read-only and never through `config.session_dir()`. The suite's autouse fixture
-redirects `VOICE_TUNNEL_DIR` at a temp path to keep tests off the developer's real sessions, and
+redirects `COMMAND_BRIDGE_DIR` at a temp path to keep tests off the developer's real sessions, and
 that isolation is correct and must not be undone here — so the corpus is found by its own
 variable instead.
 """
@@ -27,7 +27,7 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _corpus_dir() -> str | None:
-    for candidate in (os.environ.get("VOICE_TUNNEL_CORPUS_DIR"), os.path.join(_REPO, "sessions")):
+    for candidate in (os.environ.get("COMMAND_BRIDGE_CORPUS_DIR"), os.path.join(_REPO, "sessions")):
         if candidate and os.path.isdir(candidate):
             return candidate
     return None
@@ -58,7 +58,7 @@ def _turns() -> list[dict]:
 CORPUS = _turns()
 needs_corpus = pytest.mark.skipif(
     not CORPUS,
-    reason="no recorded corpus — set VOICE_TUNNEL_CORPUS_DIR to a sessions/ directory to run "
+    reason="no recorded corpus — set COMMAND_BRIDGE_CORPUS_DIR to a sessions/ directory to run "
            "the replay guards (they are read-only)",
 )
 
@@ -186,15 +186,15 @@ def test_the_corpus_loader_survives_a_corrupt_line(tmp_path):
         '{"id":2,"text":',                 # truncated mid-write, as a live tail really looks
         encoding="utf-8",
     )
-    os.environ["VOICE_TUNNEL_CORPUS_DIR"] = str(tmp_path)
+    os.environ["COMMAND_BRIDGE_CORPUS_DIR"] = str(tmp_path)
     try:
         turns = _turns()
     finally:
-        os.environ.pop("VOICE_TUNNEL_CORPUS_DIR", None)
+        os.environ.pop("COMMAND_BRIDGE_CORPUS_DIR", None)
     assert [t["text"] for t in turns] == ["hey claude", "hey codex"]
 
 
 def test_the_skip_reason_names_the_variable_that_enables_it():
     """A skip nobody can act on is a silent hole. If these guards are skipping, the message has to
     say exactly how to turn them on."""
-    assert re.search(r"VOICE_TUNNEL_CORPUS_DIR", needs_corpus.kwargs["reason"])
+    assert re.search(r"COMMAND_BRIDGE_CORPUS_DIR", needs_corpus.kwargs["reason"])

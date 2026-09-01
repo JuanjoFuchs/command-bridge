@@ -223,7 +223,7 @@ def test_a_clamped_speed_says_so_in_the_status_line(monkeypatch, _kokoro_present
 
     assert "clamped" in line
     assert "2.5" in line and str(config.KOKORO_SPEED_MAX) in line
-    assert "VOICE_TUNNEL_SPEECH_SPEED" in line, "name the setting to change, not just the symptom"
+    assert "COMMAND_BRIDGE_SPEECH_SPEED" in line, "name the setting to change, not just the symptom"
 
 
 class _StubKokoro:

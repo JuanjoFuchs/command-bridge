@@ -176,7 +176,7 @@ the gap. So the ceiling is set by how long HE might plausibly be away, not by a 
 and an agent whose harness caps blocking calls should run the long ones detached ON PURPOSE
 rather than shortening them.
 
-Raise or lower with VOICE_TUNNEL_WATCH_MAX_S."""
+Raise or lower with COMMAND_BRIDGE_WATCH_MAX_S."""
 
 WATCH_BACKOFF_UNREACHABLE_MAX_S = 540.0
 """THE SAME NINE MINUTES, and since 2026-08-17 almost nothing reaches it.
@@ -234,7 +234,7 @@ one case where there is nothing to keep in the foreground for, so detach it (see
 `watchdog.detaching_the_exception`). An agent that cannot detach pins `--timeout`, which is honoured
 exactly and is the documented opt-out.
 
-Raise or lower with VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S."""
+Raise or lower with COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S."""
 
 
 def _no_turn_possible(live: Any) -> bool:
@@ -264,17 +264,17 @@ def _no_turn_possible(live: Any) -> bool:
 def _disconnected_ceiling() -> float:
     """`WATCH_DISCONNECTED_MAX_S`, with its env override applied. One reader, so one behaviour."""
     try:
-        return float(os.environ.get("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S")
+        return float(os.environ.get("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S")
                      or WATCH_DISCONNECTED_MAX_S)
     except ValueError:
         return WATCH_DISCONNECTED_MAX_S
 
 
 def _backoff_cap(reachable: bool = True) -> float:
-    """The number the ladder tops out at, with `VOICE_TUNNEL_WATCH_MAX_S` applied. One reader.
+    """The number the ladder tops out at, with `COMMAND_BRIDGE_WATCH_MAX_S` applied. One reader.
 
     EXTRACTED SO THE SETTINGS REGISTRY CAN REPORT WHAT THE BACKOFF ACTUALLY USES. `config.SETTINGS`
-    has to resolve `VOICE_TUNNEL_WATCH_MAX_S` to a live value, and the only safe way to do that is
+    has to resolve `COMMAND_BRIDGE_WATCH_MAX_S` to a live value, and the only safe way to do that is
     to call the function the ladder itself calls. Three hand-written copies of this one cap already
     drifted three different ways (see `_human_seconds`), and a registry that publishes a
     *recomputed* number would have been the fourth — worse than the others, because `config show`
@@ -285,7 +285,7 @@ def _backoff_cap(reachable: bool = True) -> float:
     """
     cap = WATCH_BACKOFF_MAX_S if reachable else WATCH_BACKOFF_UNREACHABLE_MAX_S
     try:
-        return float(os.environ.get("VOICE_TUNNEL_WATCH_MAX_S") or cap)
+        return float(os.environ.get("COMMAND_BRIDGE_WATCH_MAX_S") or cap)
     except ValueError:
         return cap
 
@@ -395,9 +395,9 @@ INVOCATION = {
     "no_env_vars_needed": (
         "Settings persist in a .env file loaded by every command — `voice-tunnel config path` "
         "says where (repo-local in a checkout, your user config dir once installed). "
-        "`voice-tunnel config set VOICE_TUNNEL_TTS piper` once, not four exports per call. "
+        "`voice-tunnel config set COMMAND_BRIDGE_TTS piper` once, not four exports per call. "
         "Process environment variables still win over the file, so a one-off override is still "
-        "one prefix. THE EXCEPTION is `env_process_only` below — VOICE_TUNNEL_HOME and friends "
+        "one prefix. THE EXCEPTION is `env_process_only` below — COMMAND_BRIDGE_HOME and friends "
         "decide WHERE that file lives, so they cannot be stored in it and must be exported on "
         "every call. An audit isolating an install had to keep prefixing while reading this "
         "line promising it did not."
@@ -635,7 +635,7 @@ DESCRIBE: dict[str, Any] = {
             # synthesis on the system voice. The engines now both upgrade themselves, and the
             # claim is qualified rather than absolute — `doctor` is the thing that answers it.
             "notes": "Makes a fresh install capable in one command, then CONFIRM WITH `doctor` "
-                     "— an explicit VOICE_TUNNEL_TTS or VOICE_TUNNEL_ASR still wins over what is "
+                     "— an explicit COMMAND_BRIDGE_TTS or COMMAND_BRIDGE_ASR still wins over what is "
                      "installed, and only `doctor` can tell you that is happening. Installs "
                      "`voice-tunnel[all]` into THIS interpreter and downloads all four assets: a "
                      "neural voice, the fast recognizer, the voiceprint, and the turn model. "
@@ -657,7 +657,7 @@ DESCRIBE: dict[str, Any] = {
             "returns": "varies by subcommand; always JSON",
             "notes": "This is why you do not need env vars on every call. Precedence is "
                      "process env > .env file > built-in default, so an export still overrides "
-                     "for one invocation. `set` writes only VOICE_TUNNEL_* keys.",
+                     "for one invocation. `set` writes only COMMAND_BRIDGE_* keys.",
         },
         "serve": {
             "args": {
@@ -1128,14 +1128,14 @@ DESCRIBE: dict[str, Any] = {
                          "loopback, and a browser gives no microphone at all outside a secure "
                          "context, so the page will look connected and hear nothing. `ready` is "
                          "true when a FORWARDER is fronting this port (ngrok is detected; "
-                         "anything else is asserted with VOICE_TUNNEL_PUBLIC_URL) — it used to be "
+                         "anything else is asserted with COMMAND_BRIDGE_PUBLIC_URL) — it used to be "
                          "derived from the bind host alone, which every working phone path leaves "
                          "on loopback, so it could never become true after you followed the "
                          "remedy. When it is false, `why` names what was actually checked.",
                 "phone.exposure": "{public, via, public_url, allowlist_effective, gates} — WHO "
                                   "CAN REACH THE MICROPHONE. Read it before you hand the URL to "
                                   "anyone. A forwarder relays from 127.0.0.1, so its traffic "
-                                  "arrives as a loopback peer and passes VOICE_TUNNEL_ALLOW_CIDRS "
+                                  "arrives as a loopback peer and passes COMMAND_BRIDGE_ALLOW_CIDRS "
                                   "unconditionally: while a tunnel is up that allowlist filters "
                                   "NOTHING and the token in the query string is the only gate on "
                                   "a live microphone. `allowlist_effective: false` is that fact. "
@@ -1314,7 +1314,7 @@ DESCRIBE: dict[str, Any] = {
                 "--learn-from": "WAV file or directory — bootstrap the gallery from recordings "
                                 "you already have, instead of waiting for live wake-confirmed "
                                 "turns. The fastest way to make the wake phrase optional.",
-                "--owner": "name to learn under (default: VOICE_TUNNEL_OWNER)",
+                "--owner": "name to learn under (default: COMMAND_BRIDGE_OWNER)",
                 "--channel": "0 = mic/left (you), 1 = system/right (everyone else)",
             },
             "returns": {"known": "[{name, count, updated}]", "threshold": "float"},
@@ -1350,31 +1350,31 @@ DESCRIBE: dict[str, Any] = {
         "path": config.env_file_path(),
         "also": "`voice-tunnel config path` prints this; `voice-tunnel doctor` says if it is writable",
         "precedence": "process env > .env file > built-in default",
-        "write_it_with": "voice-tunnel config set VOICE_TUNNEL_TTS piper",
+        "write_it_with": "voice-tunnel config set COMMAND_BRIDGE_TTS piper",
         "read_it_with": "voice-tunnel config show",
-        "why": "So an agent never has to re-type VOICE_TUNNEL_TTS/VOICE_TUNNEL_PIPER_BIN/VOICE_TUNNEL_PIPER_VOICE/VOICE_TUNNEL_DIR on "
+        "why": "So an agent never has to re-type COMMAND_BRIDGE_TTS/COMMAND_BRIDGE_PIPER_BIN/COMMAND_BRIDGE_PIPER_VOICE/COMMAND_BRIDGE_DIR on "
                "each invocation. A setting repeated on every call is a setting that will "
                "eventually be repeated wrong.",
     },
     # Generated from command_bridge.config.SETTINGS, never hand-listed: the previous hand-written block
-    # documented 8 of the 17 variables the code reads, and the ones it omitted (VOICE_TUNNEL_PIPER_BIN,
-    # VOICE_TUNNEL_PIPER_VOICE) were exactly the ones an agent could not run piper without.
+    # documented 8 of the 17 variables the code reads, and the ones it omitted (COMMAND_BRIDGE_PIPER_BIN,
+    # COMMAND_BRIDGE_PIPER_VOICE) were exactly the ones an agent could not run piper without.
     "env": {s["key"]: s["what"] for s in config.SETTINGS},
     # SETTINGS THAT CANNOT BE SETTINGS. These decide WHERE the settings file is, so a value stored
     # inside it could never be read in time to matter — they are process-environment only, by
     # construction. That is a good reason to leave them out of `config`, and it was not a reason to
-    # leave them undocumented: an audit ran an entire session inside VOICE_TUNNEL_HOME, found it
+    # leave them undocumented: an audit ran an entire session inside COMMAND_BRIDGE_HOME, found it
     # absent from `env`, absent from `config show`, and rejected by `config get` as an unknown
     # setting, and had to reconstruct what it did from one line of `doctor.runtime.isolate_with`.
     # The most important variable in the tool read as one it had never heard of.
     "env_process_only": {
-        "VOICE_TUNNEL_HOME": (
+        "COMMAND_BRIDGE_HOME": (
             "One root scoping the settings file, the model cache and the session directory "
             "together — the way to keep one installation to itself. PROCESS ENVIRONMENT ONLY: it "
             "decides where the file that would persist it lives, so it cannot be stored there and "
-            "`config set` refuses it. VOICE_TUNNEL_ENV_FILE, VOICE_TUNNEL_MODELS_DIR and "
-            "VOICE_TUNNEL_DIR each override one of the three, so isolating everything while "
-            "sharing one 600 MB model cache is possible. Note VOICE_TUNNEL_DIR scopes the session "
+            "`config set` refuses it. COMMAND_BRIDGE_ENV_FILE, COMMAND_BRIDGE_MODELS_DIR and "
+            "COMMAND_BRIDGE_DIR each override one of the three, so isolating everything while "
+            "sharing one 600 MB model cache is possible. Note COMMAND_BRIDGE_DIR scopes the session "
             "directory ONLY — setting it does not isolate settings or models, which is the "
             "mistake this variable exists to fix."
         ),
@@ -1443,7 +1443,7 @@ NGROK_API = "http://127.0.0.1:4040/api/tunnels"
 
 Probed rather than asked about, because the alternative was a phone verdict that could not be
 true. It is the only forwarder with a stable local interface — everything else is a process with
-no way to interrogate it, which is why `VOICE_TUNNEL_PUBLIC_URL` exists beside this."""
+no way to interrogate it, which is why `COMMAND_BRIDGE_PUBLIC_URL` exists beside this."""
 
 PROXY_PROBE_TIMEOUT_S = 0.5
 """`status` is on the watchdog's path, so this probe has to be invisible. It is a loopback
@@ -1487,13 +1487,13 @@ def _public_front(port: int | None) -> dict[str, Any] | None:
     Two ways to know, and the tool cannot have a third. ngrok publishes a local API, so it is
     detected. Everything else — `tailscale serve`, cloudflared, a reverse proxy, an SSH tunnel —
     is a separate process with no common interface, so it has to be ASSERTED with
-    VOICE_TUNNEL_PUBLIC_URL. Inferring it from an open socket somewhere would be a guess wearing
+    COMMAND_BRIDGE_PUBLIC_URL. Inferring it from an open socket somewhere would be a guess wearing
     a fact's clothes, and this field's whole problem was already a confident wrong answer.
     """
     asserted = config.public_url()
     if asserted:
         return {"via": "asserted", "public_url": asserted, "detected": False,
-                "how": "VOICE_TUNNEL_PUBLIC_URL says so — this tool did not verify it"}
+                "how": "COMMAND_BRIDGE_PUBLIC_URL says so — this tool did not verify it"}
     if port is None:
         return None
     return _ngrok_fronts(int(port))
@@ -1504,7 +1504,7 @@ def _exposure(front: dict[str, Any] | None) -> dict[str, Any]:
 
     THE FACT NOTHING SAID OUT LOUD. A forwarder connects to this server from 127.0.0.1, so every
     request it relays arrives as a LOOPBACK PEER — and loopback is unconditionally allowed, by
-    design, in `security.allowed_cidrs`. The moment a tunnel is up, VOICE_TUNNEL_ALLOW_CIDRS
+    design, in `security.allowed_cidrs`. The moment a tunnel is up, COMMAND_BRIDGE_ALLOW_CIDRS
     stops being a control at all: it is still configured, still reported, and no longer filtering
     anything. The token in the query string is the entire gate.
 
@@ -1518,7 +1518,7 @@ def _exposure(front: dict[str, Any] | None) -> dict[str, Any]:
             "public": False,
             "reachable_from": "this machine only",
             "allowlist_effective": True,
-            "gates": ["the bind address", "VOICE_TUNNEL_ALLOW_CIDRS", "the token"],
+            "gates": ["the bind address", "COMMAND_BRIDGE_ALLOW_CIDRS", "the token"],
         }
     return {
         "public": True,
@@ -1529,7 +1529,7 @@ def _exposure(front: dict[str, Any] | None) -> dict[str, Any]:
         "allowlist_effective": False,
         "gates": ["the token in the URL"],
         "why": "a forwarder relays from 127.0.0.1, so its requests arrive as a loopback peer and "
-               "pass VOICE_TUNNEL_ALLOW_CIDRS unconditionally. That allowlist is not filtering "
+               "pass COMMAND_BRIDGE_ALLOW_CIDRS unconditionally. That allowlist is not filtering "
                "anything while this tunnel is up; the token in the query string is the only gate "
                "on a live microphone.",
         "treat_the_url_as": "a credential — anyone who has it can listen and speak",
@@ -1578,7 +1578,7 @@ def _phone_reachability(host: str, port: int | None = None) -> dict[str, Any]:
                     f"opens an https page and gets a microphone. The bind address is loopback and "
                     f"that is correct — the forwarder is what crosses the network."
                     if front["detected"] else
-                    f"VOICE_TUNNEL_PUBLIC_URL asserts {front['public_url']} is forwarding to this "
+                    f"COMMAND_BRIDGE_PUBLIC_URL asserts {front['public_url']} is forwarding to this "
                     f"port. NOT VERIFIED by this tool — you set it, so you own it; unset it if it "
                     f"is no longer true."),
             "url": front["public_url"],
@@ -1590,10 +1590,10 @@ def _phone_reachability(host: str, port: int | None = None) -> dict[str, Any]:
     # actually checked is named, so a reader whose forwarder is not on that list knows the verdict
     # is about this tool's blind spot rather than about their setup.
     unseen = ("Nothing was found fronting this port: ngrok's local agent API was not answering "
-              "and VOICE_TUNNEL_PUBLIC_URL is unset. Those are the only two things checked — "
+              "and COMMAND_BRIDGE_PUBLIC_URL is unset. Those are the only two things checked — "
               "`tailscale serve`, cloudflared, a reverse proxy and an SSH tunnel are all "
               "INVISIBLE from in here. If one of them is already running, this verdict is wrong: "
-              "`voice-tunnel config set VOICE_TUNNEL_PUBLIC_URL <https url>` and it stops asking.")
+              "`voice-tunnel config set COMMAND_BRIDGE_PUBLIC_URL <https url>` and it stops asking.")
     # ONE REMEDY, TWO OPTIONS, AND THE ORDER IS THE ADVICE. ngrok forwards from loopback and needs
     # no CIDR change, so it is one command and nothing else moves. `tailscale serve` also works,
     # but it takes over the device's DNS through MagicDNS, which is a system-wide change that can
@@ -1604,10 +1604,10 @@ def _phone_reachability(host: str, port: int | None = None) -> dict[str, Any]:
         "front this port with an https tunnel and hand over the URL it prints. `ngrok http "
         "<port>` is the smallest — it forwards from loopback, so no allowlist change is needed "
         "and this command detects it on its own. `tailscale serve --bg <port>` also works and "
-        "needs `voice-tunnel config set VOICE_TUNNEL_ALLOW_CIDRS 100.64.0.0/10`, but it takes "
+        "needs `voice-tunnel config set COMMAND_BRIDGE_ALLOW_CIDRS 100.64.0.0/10`, but it takes "
         "over this device's DNS (MagicDNS) system-wide, which can break a corporate VPN on the "
         "same machine — check that before choosing it. Anything else (cloudflared, a reverse "
-        "proxy): assert it with `voice-tunnel config set VOICE_TUNNEL_PUBLIC_URL <https url>`. "
+        "proxy): assert it with `voice-tunnel config set COMMAND_BRIDGE_PUBLIC_URL <https url>`. "
         "READ `exposure` FIRST — fronting this port makes the token the only gate."
     )
     if loopback:
@@ -1769,10 +1769,10 @@ def cmd_serve(args) -> None:
         wake = wake.strip().lower()
         if " " in wake:
             raise ValueError("--wake must be a single word; the greeting is added automatically")
-        os.environ["VOICE_TUNNEL_WAKE_NAME"] = wake
-        config.write_setting("VOICE_TUNNEL_WAKE_NAME", wake)
+        os.environ["COMMAND_BRIDGE_WAKE_NAME"] = wake
+        config.write_setting("COMMAND_BRIDGE_WAKE_NAME", wake)
 
-    token = args.token or os.environ.get("VOICE_TUNNEL_TOKEN") or security.generate_token()
+    token = args.token or os.environ.get("COMMAND_BRIDGE_TOKEN") or security.generate_token()
     write_runtime(args.session, args.host, args.port, token)
     server.run(
         session=args.session,
@@ -3122,11 +3122,11 @@ def cmd_rate(args) -> dict[str, Any]:
     written = {}
     if not args.no_save:
         if speed is not None:
-            config.write_setting("VOICE_TUNNEL_SPEECH_SPEED", str(speed))
-            written["VOICE_TUNNEL_SPEECH_SPEED"] = str(speed)
+            config.write_setting("COMMAND_BRIDGE_SPEECH_SPEED", str(speed))
+            written["COMMAND_BRIDGE_SPEECH_SPEED"] = str(speed)
         if pause is not None:
-            config.write_setting("VOICE_TUNNEL_SENTENCE_PAUSE", str(pause))
-            written["VOICE_TUNNEL_SENTENCE_PAUSE"] = str(pause)
+            config.write_setting("COMMAND_BRIDGE_SENTENCE_PAUSE", str(pause))
+            written["COMMAND_BRIDGE_SENTENCE_PAUSE"] = str(pause)
 
     payload = {k: v for k, v in (("speed", speed), ("pause", pause)) if v is not None}
     live = _request(args.session, "/rate", payload)
@@ -3222,7 +3222,7 @@ def cmd_wake(args) -> dict[str, Any]:
         # install with no settings file answered `persisted: {"name": "assistant"}` while
         # `config path` said that file did not exist. A default presented as a saved value is how
         # somebody concludes a setting is already applied and stops looking.
-        row = next((r for r in config.effective() if r["key"] == "VOICE_TUNNEL_WAKE_NAME"), None)
+        row = next((r for r in config.effective() if r["key"] == "COMMAND_BRIDGE_WAKE_NAME"), None)
         source = row["source"] if row else "default"
         live = _request(args.session, "/status")
         running = live.get("running") is not False and not live.get("error")
@@ -3250,8 +3250,8 @@ def cmd_wake(args) -> dict[str, Any]:
 
     written = {}
     if not args.no_save:
-        config.write_setting("VOICE_TUNNEL_WAKE_NAME", name)
-        written["VOICE_TUNNEL_WAKE_NAME"] = name
+        config.write_setting("COMMAND_BRIDGE_WAKE_NAME", name)
+        written["COMMAND_BRIDGE_WAKE_NAME"] = name
 
     live = _request(args.session, "/wake", {"name": name})
     applied = live.get("running") is not False and not live.get("error")
@@ -3287,8 +3287,8 @@ def cmd_verbose(args) -> dict[str, Any]:
     value = args.state == "on"
     written = {}
     if not args.no_save:
-        config.write_setting("VOICE_TUNNEL_VERBOSE", "1" if value else "0")
-        written["VOICE_TUNNEL_VERBOSE"] = "1" if value else "0"
+        config.write_setting("COMMAND_BRIDGE_VERBOSE", "1" if value else "0")
+        written["COMMAND_BRIDGE_VERBOSE"] = "1" if value else "0"
     result = _request(args.session, "/verbose", {"value": value})
     applied = result.get("running") is not False and not result.get("error")
     return {
@@ -3448,7 +3448,7 @@ def cmd_download(args) -> dict[str, Any]:
         result["also_needed"] = ("`pip install voice-tunnel[piper]` — the voice is downloaded but "
                                  "piper-tts is not installed, so it cannot be used yet")
     elif args.what == "voice":
-        result["use_it_with"] = "voice-tunnel config set VOICE_TUNNEL_TTS piper"
+        result["use_it_with"] = "voice-tunnel config set COMMAND_BRIDGE_TTS piper"
     elif args.what == "kokoro" and not config.have_module("kokoro_onnx"):
         # Kokoro has NO subprocess fallback — resident is the only path — so the model without
         # its runtime is not a degraded mode, it is a backend that raises on every reply.
@@ -3456,7 +3456,7 @@ def cmd_download(args) -> dict[str, Any]:
                                  "are here but kokoro-onnx is not installed, so nothing can "
                                  "load them")
     elif args.what == "kokoro":
-        result["use_it_with"] = "voice-tunnel config set VOICE_TUNNEL_TTS kokoro"
+        result["use_it_with"] = "voice-tunnel config set COMMAND_BRIDGE_TTS kokoro"
     elif args.what == "turn" and not config.have_module("transformers"):
         result["also_needed"] = ("`pip install voice-tunnel[turn]` — the model is here but "
                                  "onnxruntime and transformers are not, so it cannot load")
@@ -3540,7 +3540,7 @@ def _clear_runtime(session: str) -> None:
 def cmd_config(args) -> dict[str, Any]:
     """Read and write the persisted settings file.
 
-    Argument-shaped (`config set VOICE_TUNNEL_TTS piper`), not payload-shaped (`config set --json {...}`),
+    Argument-shaped (`config set COMMAND_BRIDGE_TTS piper`), not payload-shaped (`config set --json {...}`),
     and deliberately so. Mastykarz's measurements are unambiguous: a constrained argument surface
     scored 5/5 for every model tested while a JSON payload degraded on the smaller ones and cost
     4-11x the tokens, because JSON asks the caller to author syntax, nesting, field names and
@@ -3567,7 +3567,7 @@ def cmd_config(args) -> dict[str, Any]:
         for row in config.effective(reveal=True):
             if row["key"] == args.key:
                 return row
-        # PROCESS-ONLY VARIABLES ARE NOT UNKNOWN VARIABLES. `config get VOICE_TUNNEL_HOME` used to
+        # PROCESS-ONLY VARIABLES ARE NOT UNKNOWN VARIABLES. `config get COMMAND_BRIDGE_HOME` used to
         # answer "unknown setting" about the variable scoping the very file `config` reads —
         # technically true of this command's namespace and completely misleading about the tool.
         # Say what it is and why it cannot live here.
@@ -3791,7 +3791,7 @@ def _exposure_check() -> dict[str, Any]:
     """Is a live microphone on the public internet, and is the token the only thing in front of it?
 
     NOTHING IN THIS TOOL SAID SO. A forwarder relays from 127.0.0.1, so its traffic arrives as a
-    loopback peer and passes `VOICE_TUNNEL_ALLOW_CIDRS` unconditionally — the allowlist is inert
+    loopback peer and passes `COMMAND_BRIDGE_ALLOW_CIDRS` unconditionally — the allowlist is inert
     for exactly as long as the tunnel is up, which is exactly when it would matter. `status`
     printed the tokenised URL with no caveat, `describe` did not mention it, and `doctor` had no
     opinion at all. The result is a one-factor gate on a microphone in someone's house that
@@ -3804,7 +3804,7 @@ def _exposure_check() -> dict[str, Any]:
       that a URL parameter was an acceptable amount of security for a live microphone;
     * it changes on every restart, so the working phone URL silently dies and gets replaced by a
       fresh secret in a fresh link, which trains everyone to paste tokenised URLs around; and
-    * the operator who set VOICE_TUNNEL_ALLOW_CIDRS believes that is what is protecting them.
+    * the operator who set COMMAND_BRIDGE_ALLOW_CIDRS believes that is what is protecting them.
 
     Set it deliberately and this drops to `info`: the exposure is still reported, because it is
     still true, but there is nothing left to fix that the tool can see.
@@ -3827,21 +3827,21 @@ def _exposure_check() -> dict[str, Any]:
         return _check(
             "exposure", True,
             (f"not publicly fronted — {len(by_port)} port(s) recorded locally, and neither ngrok "
-             f"nor VOICE_TUNNEL_PUBLIC_URL reports a tunnel to any of them. NOTE: `tailscale "
+             f"nor COMMAND_BRIDGE_PUBLIC_URL reports a tunnel to any of them. NOTE: `tailscale "
              f"serve`, cloudflared and reverse proxies are INVISIBLE from here, so this is "
              f"'nothing found', not 'nothing there'."
              if by_port else "no server has been started here"),
             "nothing to fix — but this is also the answer to 'why can't my phone open the URL'. "
             "To reach a phone, front the port with an https tunnel (`ngrok http <port>` is "
             "detected automatically; anything else needs `voice-tunnel config set "
-            "VOICE_TUNNEL_PUBLIC_URL <https url>`), and read `status.phone.exposure` first.",
+            "COMMAND_BRIDGE_PUBLIC_URL <https url>`), and read `status.phone.exposure` first.",
             advisory=True,
         )
 
     # The token the LIVE server is serving, not the one currently configured — a server started
     # before the setting changed is still answering on the token it was born with, and that is
     # the one in the URL somebody is holding.
-    configured = config._env("VOICE_TUNNEL_TOKEN")
+    configured = config._env("COMMAND_BRIDGE_TOKEN")
     unchosen = [str(port) for port, live, _ in fronted
                 if live and (not configured or live[1].get("token") != configured)]
     where = ", ".join(
@@ -3852,7 +3852,7 @@ def _exposure_check() -> dict[str, Any]:
     )
     detail = (
         f"{PUBLIC_EXPOSURE_PREFIX} {where}. The forwarder connects from 127.0.0.1, so every request "
-        f"it relays arrives as a loopback peer and passes VOICE_TUNNEL_ALLOW_CIDRS "
+        f"it relays arrives as a loopback peer and passes COMMAND_BRIDGE_ALLOW_CIDRS "
         f"unconditionally — that allowlist is not filtering anything right now, and the token in "
         f"the URL is the only gate on a live microphone. Treat the URL as a credential."
     )
@@ -3862,7 +3862,7 @@ def _exposure_check() -> dict[str, Any]:
             detail + (f" The token on {', '.join(unchosen)} was GENERATED at serve time rather "
                       f"than chosen — and a generated one is new on every restart, so the working "
                       f"phone URL dies and is replaced by a fresh secret in a fresh link."),
-            "`voice-tunnel config set VOICE_TUNNEL_TOKEN <a value you choose>` so the only gate "
+            "`voice-tunnel config set COMMAND_BRIDGE_TOKEN <a value you choose>` so the only gate "
             "is one somebody picked and the phone URL survives a restart; and add a second gate "
             "if your forwarder has one (ngrok: `--basic-auth`, or its OAuth options).",
             degraded=True,
@@ -3938,7 +3938,7 @@ def cmd_doctor(_args) -> dict[str, Any]:
         writable, sessions = False, f"{sessions} ({exc})"
     checks.append(_check(
         "session_dir", writable, str(sessions),
-        "point VOICE_TUNNEL_DIR somewhere writable: `voice-tunnel config set VOICE_TUNNEL_DIR <path>`",
+        "point COMMAND_BRIDGE_DIR somewhere writable: `voice-tunnel config set COMMAND_BRIDGE_DIR <path>`",
     ))
 
     backend = config.tts_backend()
@@ -3992,22 +3992,22 @@ def cmd_doctor(_args) -> dict[str, Any]:
             "sapi (Windows System.Speech) — the zero-install fallback, not a neural voice",
             # THE REMEDY HAS TO KNOW WHAT IS ALREADY DONE. This used to print "run setup" whether
             # or not setup had already run, so after a successful setup it advised a no-op while
-            # the real remaining gap — an explicit VOICE_TUNNEL_TTS pinning sapi — went unnamed.
+            # the real remaining gap — an explicit COMMAND_BRIDGE_TTS pinning sapi — went unnamed.
             # An auditor had to infer the fix by analogy with the ASR remedy.
-            ("`voice-tunnel config set VOICE_TUNNEL_TTS piper` — Piper and a voice are already "
+            ("`voice-tunnel config set COMMAND_BRIDGE_TTS piper` — Piper and a voice are already "
              "installed; an explicit setting is pinning this to sapi"
              if (config.piper_voice() and config.have_module("piper"))
              else
              "`voice-tunnel setup` installs Piper and downloads a voice; or "
              "`pip install voice-tunnel[piper]` then `voice-tunnel download voice`")
             if _windows() else
-            ("sapi is Windows-only: `voice-tunnel config set VOICE_TUNNEL_TTS piper` or "
-             "`voice-tunnel config set VOICE_TUNNEL_TTS none`"),
+            ("sapi is Windows-only: `voice-tunnel config set COMMAND_BRIDGE_TTS piper` or "
+             "`voice-tunnel config set COMMAND_BRIDGE_TTS none`"),
             degraded=_windows(),
         ))
     elif backend == "kokoro":
         # KOKORO FELL THROUGH TO THE `else` AND WAS REPORTED AS AN INVALID BACKEND. The whole
-        # check read `backend=kokoro` / "VOICE_TUNNEL_TTS must be sapi | piper | none" — a hard
+        # check read `backend=kokoro` / "COMMAND_BRIDGE_TTS must be sapi | piper | none" — a hard
         # FAIL, and therefore `doctor.ok = false`, on the backend actually in production use.
         # A diagnostic that calls the working configuration invalid is worse than no diagnostic,
         # because the next thing anyone does is follow its remedy and change something that was
@@ -4035,11 +4035,11 @@ def cmd_doctor(_args) -> dict[str, Any]:
         asked = config.speech_speed()
         if asked > config.KOKORO_SPEED_MAX:
             detail += (f", speed clamped {asked}→{config.KOKORO_SPEED_MAX} "
-                       f"(kokoro's ceiling; VOICE_TUNNEL_SPEECH_SPEED asks for more)")
+                       f"(kokoro's ceiling; COMMAND_BRIDGE_SPEECH_SPEED asks for more)")
         checks.append(_check("tts", runtime and not missing, detail, remedy))
     else:
         checks.append(_check("tts", backend == "none", f"backend={backend}",
-                             "VOICE_TUNNEL_TTS must be sapi | piper | kokoro | none"))
+                             "COMMAND_BRIDGE_TTS must be sapi | piper | kokoro | none"))
 
     engine = config.asr_engine()
     if engine == "parakeet":
@@ -4054,11 +4054,11 @@ def cmd_doctor(_args) -> dict[str, Any]:
         elif have_model:
             detail = "parakeet model is present but sherpa-onnx is not installed"
             remedy = ("`pip install voice-tunnel[parakeet]`, or fall back with "
-                      "`voice-tunnel config set VOICE_TUNNEL_ASR whisper`")
+                      "`voice-tunnel config set COMMAND_BRIDGE_ASR whisper`")
         else:
-            detail = "VOICE_TUNNEL_ASR=parakeet but no model directory was found"
+            detail = "COMMAND_BRIDGE_ASR=parakeet but no model directory was found"
             remedy = ("run `voice-tunnel download asr`, or fall back with "
-                      "`voice-tunnel config set VOICE_TUNNEL_ASR whisper`")
+                      "`voice-tunnel config set COMMAND_BRIDGE_ASR whisper`")
         asr_degraded = False
     else:
         # Same shape as SAPI: whisper runs everywhere and is ~8x slower than the model this
@@ -4072,13 +4072,13 @@ def cmd_doctor(_args) -> dict[str, Any]:
                       "(~8x faster once installed)")
             # NO `config set` HERE. Installing the runtime is enough — `asr_engine()` selects
             # parakeet on its own the moment both halves exist. This used to end with
-            # `config set VOICE_TUNNEL_ASR parakeet`, which PINS the choice, and the same
+            # `config set COMMAND_BRIDGE_ASR parakeet`, which PINS the choice, and the same
             # `describe` warns that an explicit value wins over what is installed. Two parts of
             # the tool giving opposite advice is worse than either one alone, and it turned a
             # remedy into a footgun: pin it now and a later `setup` cannot move you off it.
             remedy = ("`voice-tunnel setup`, or `pip install voice-tunnel[parakeet]` — that is "
                       "all; parakeet is selected automatically once its runtime is present, so "
-                      "do NOT pin VOICE_TUNNEL_ASR")
+                      "do NOT pin COMMAND_BRIDGE_ASR")
     checks.append(_check("asr", asr_ok, detail, remedy, degraded=asr_degraded))
 
     # Not a failure: the voiceprint is additive. A match can grant attention but never withhold
@@ -4124,7 +4124,7 @@ def cmd_doctor(_args) -> dict[str, Any]:
     # broken one, and a doctor that cries wolf about optional things trains people to ignore it.
     from . import turndetect as _td
     if not config.turn_detect_enabled():
-        detail = "disabled by VOICE_TUNNEL_TURN_DETECT=0 — using the fixed silence timer"
+        detail = "disabled by COMMAND_BRIDGE_TURN_DETECT=0 — using the fixed silence timer"
         turn_remedy = ""
     elif not _td.installed():
         detail = (f"not installed — turns end on a fixed {config.END_OF_UTTERANCE_MS} ms "
@@ -4222,14 +4222,14 @@ def cmd_doctor(_args) -> dict[str, Any]:
         "shared": [
             name for name, shared in (
                 ("settings_file", not config.home_dir()
-                 and not os.environ.get("VOICE_TUNNEL_ENV_FILE")
+                 and not os.environ.get("COMMAND_BRIDGE_ENV_FILE")
                  and not config._in_source_checkout()),
                 ("models_dir", not config.home_dir()
-                 and not os.environ.get("VOICE_TUNNEL_MODELS_DIR")
+                 and not os.environ.get("COMMAND_BRIDGE_MODELS_DIR")
                  and not config._in_source_checkout()),
             ) if shared
         ],
-        "isolate_with": "VOICE_TUNNEL_HOME=<dir> scopes settings, models and sessions together",
+        "isolate_with": "COMMAND_BRIDGE_HOME=<dir> scopes settings, models and sessions together",
     }
 
     advisories = [c["name"] for c in checks if c["status"] == "info"]
@@ -4428,7 +4428,7 @@ def build_parser() -> argparse.ArgumentParser:
     vpp.add_argument("--learn-from", default=None, metavar="WAV_OR_DIR",
                      help="bootstrap from existing recordings you already have")
     vpp.add_argument("--owner", default=None,
-                     help="name to learn under (default: VOICE_TUNNEL_OWNER)")
+                     help="name to learn under (default: COMMAND_BRIDGE_OWNER)")
     vpp.add_argument("--channel", type=int, default=0,
                      help="0 = mic/left (you), 1 = system/right (everyone else)")
 
@@ -4569,7 +4569,7 @@ def _unknown_command(argv: list[str], parser: argparse.ArgumentParser) -> dict[s
 
 def main(argv=None) -> int:
     # FIRST, before anything reads a setting. This is what makes `voice-tunnel watch --session x --since -1`
-    # a complete command: VOICE_TUNNEL_TTS / VOICE_TUNNEL_PIPER_BIN / VOICE_TUNNEL_PIPER_VOICE / VOICE_TUNNEL_DIR come off disk instead of
+    # a complete command: COMMAND_BRIDGE_TTS / COMMAND_BRIDGE_PIPER_BIN / COMMAND_BRIDGE_PIPER_VOICE / COMMAND_BRIDGE_DIR come off disk instead of
     # off the caller's memory. Never overwrites a variable already exported, so a one-off override
     # is still just a prefix — which is exactly what scripts/e2e.py relies on.
     config.load_env_file()

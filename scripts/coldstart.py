@@ -13,7 +13,7 @@ thing under test.
 
 ISOLATION IS THE POINT, NOT A CONVENIENCE. A fresh virtualenv is not a fresh installation: 0.2.2
 came out of an audit that built one, believed it was pristine, and inherited another agent's wake
-name through the machine-wide settings file. So this points VOICE_TUNNEL_HOME at a directory
+name through the machine-wide settings file. So this points COMMAND_BRIDGE_HOME at a directory
 inside the sandbox before anything runs. Models are the one deliberate exception — a Parakeet
 checkpoint is ~600 MB and re-downloading it per iteration is worse than the sharing — and
 `--no-share-models` turns even that off when the download path is what you are testing.
@@ -77,11 +77,11 @@ def provision(root: str, wheel: str, extras: str, share_models: bool) -> dict:
 
     home = os.path.join(root, "home")
     os.makedirs(home, exist_ok=True)
-    env = {"VOICE_TUNNEL_HOME": home}
+    env = {"COMMAND_BRIDGE_HOME": home}
     if share_models:
         # The one path shared on purpose. `doctor` reports it under runtime.shared, so the agent
         # can see it rather than discover it — which is the lesson 0.2.2 was named after.
-        env["VOICE_TUNNEL_MODELS_DIR"] = os.path.join(
+        env["COMMAND_BRIDGE_MODELS_DIR"] = os.path.join(
             os.path.expanduser("~"), ".voice-tunnel", "models")
 
     return {

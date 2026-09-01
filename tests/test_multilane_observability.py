@@ -34,8 +34,8 @@ class _Req:
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "magnus")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "magnus")
     st = server.TunnelState("t", token=None)
     st.consumed_cursor = -1
     st.lanes = server.lanes_mod.LaneRegistry("magnus")
@@ -115,7 +115,7 @@ def test_the_fan_out_is_published_so_a_lane_can_read_its_own_answer(state):
 def test_the_backoff_ladder_is_per_lane(monkeypatch, tmp_path):
     """AC-3 — FR3. A lane quiet for nine minutes left the shared ladder at its cap, so a DIFFERENT
     lane's first wait after he spoke opened on that rung."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     cli._set_empty_streak("t018a", 5, "magnus")
 
     assert cli._empty_streak("t018a", "magnus") == 5
@@ -133,7 +133,7 @@ def test_the_backoff_ladder_is_per_lane(monkeypatch, tmp_path):
 def test_an_existing_session_keyed_streak_is_inherited_not_discarded(monkeypatch, tmp_path):
     """AC-3 — TC2. The streak is persisted in a file that survives the upgrade. Resetting every
     ladder to zero on first read would start a round of hot polling on every live session."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     cli._set_empty_streak("t018b", 4)          # the old, lane-less shape
 
     assert cli._empty_streak("t018b", "magnus") == 4

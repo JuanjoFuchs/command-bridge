@@ -1,6 +1,6 @@
 """command_bridge.store — the JSONL turn log and its cursor reads.
 
-One file per session at `<VOICE_TUNNEL_DIR>/<session>.jsonl`, one turn object per line. The server
+One file per session at `<COMMAND_BRIDGE_DIR>/<session>.jsonl`, one turn object per line. The server
 appends while readers read concurrently; a single writer doing line-buffered appends plus
 whole-file reads needs no locking.
 

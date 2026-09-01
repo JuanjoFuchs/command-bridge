@@ -35,7 +35,7 @@ def test_the_retired_name_exits_non_zero_as_an_unknown_command_and_names_watch(t
     because the retirement lookup happens in `main` before `parse_args` and an in-process call to
     a handler would step straight over it.
 
-    VOICE_TUNNEL_DIR is pointed at an empty directory ON PURPOSE and it is not only hygiene: a
+    COMMAND_BRIDGE_DIR is pointed at an empty directory ON PURPOSE and it is not only hygiene: a
     live voice session is running on session `dev` while this spec lands (TC5), and the session
     directory is where `read_runtime` looks for a server to talk to. Isolating it means the worst
     case — a regression where the old name still dispatches — is a wait that finds no server and
@@ -45,9 +45,9 @@ def test_the_retired_name_exits_non_zero_as_an_unknown_command_and_names_watch(t
     to fake it. So this also pins the shape: an `unknown_command` code, and `watch` named as the
     replacement.
     """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("VOICE_TUNNEL_")}
-    env["VOICE_TUNNEL_DIR"] = str(tmp_path)
-    env["VOICE_TUNNEL_ENV_FILE"] = str(tmp_path / "absent.env")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("COMMAND_BRIDGE_")}
+    env["COMMAND_BRIDGE_DIR"] = str(tmp_path)
+    env["COMMAND_BRIDGE_ENV_FILE"] = str(tmp_path / "absent.env")
 
     proc = subprocess.run(
         [sys.executable, RUNNER, "drain"],

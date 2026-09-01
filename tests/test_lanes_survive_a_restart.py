@@ -32,8 +32,8 @@ class _Req:
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "magnus")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "magnus")
     return tmp_path
 
 
@@ -81,7 +81,7 @@ def test_the_wake_name_still_decides_the_default(env, monkeypatch):
     st = restart()
     lane(st, "add", "atlas")
 
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "dexter")
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "dexter")
     after = restart()
 
     assert after.lanes.default == "dexter", "the flag he typed wins"

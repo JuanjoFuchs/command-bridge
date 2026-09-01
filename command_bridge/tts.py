@@ -113,7 +113,7 @@ def _synth_sapi(text: str) -> tuple[bytes, int]:
     this keeps the whole backend to one subprocess call with no pywin32 dependency.
     """
     if os.name != "nt":
-        raise TTSError("the sapi backend requires Windows; set VOICE_TUNNEL_TTS=piper or none")
+        raise TTSError("the sapi backend requires Windows; set COMMAND_BRIDGE_TTS=piper or none")
     fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
@@ -432,7 +432,7 @@ class _ResidentKokoro:
             self._kokoro = None
             return None
         # ASK THE SESSION, NOT THE FILENAME. Whether this export reports durations is a property
-        # of the graph, and a path can be overridden by `VOICE_TUNNEL_KOKORO_MODEL` to anything.
+        # of the graph, and a path can be overridden by `COMMAND_BRIDGE_KOKORO_MODEL` to anything.
         # This flag is also what keeps the ORIGINAL synthesis path intact: without durations the
         # backend still goes through `Kokoro.create` exactly as before, so swapping the model is
         # the only thing that changes behaviour.
@@ -824,7 +824,7 @@ def _piper_paths(voice_path: str | None) -> tuple[str, str]:
     """Resolve (binary, voice), raising a TTSError that names the remedy if either is missing.
 
     Resolution lives in config: the binary is findable in the repo venv and the voice in the
-    models dir, so `VOICE_TUNNEL_TTS=piper` is the ONLY setting a piper session needs. Requiring all three
+    models dir, so `COMMAND_BRIDGE_TTS=piper` is the ONLY setting a piper session needs. Requiring all three
     on every call is what produced the wall of env-var prefixes this design exists to delete.
     """
     binary = config.piper_bin()
@@ -838,8 +838,8 @@ def _piper_paths(voice_path: str | None) -> tuple[str, str]:
         )
         raise TTSError(
             f"the piper backend cannot start: no {missing}. Run `voice-tunnel doctor` for the exact "
-            f"remedy, or set it explicitly: `voice-tunnel config set VOICE_TUNNEL_PIPER_BIN <path>` / "
-            f"`voice-tunnel config set VOICE_TUNNEL_PIPER_VOICE <path>` (see `voice-tunnel voices`)."
+            f"remedy, or set it explicitly: `voice-tunnel config set COMMAND_BRIDGE_PIPER_BIN <path>` / "
+            f"`voice-tunnel config set COMMAND_BRIDGE_PIPER_VOICE <path>` (see `voice-tunnel voices`)."
         )
     return binary, voice
 
@@ -1034,7 +1034,7 @@ def available() -> str:
             if asked > config.KOKORO_SPEED_MAX:
                 return (f"kokoro (resident, {config.kokoro_voice()}; speed clamped "
                         f"{asked}→{config.KOKORO_SPEED_MAX} — kokoro's own ceiling, "
-                        f"VOICE_TUNNEL_SPEECH_SPEED asks for more)")
+                        f"COMMAND_BRIDGE_SPEECH_SPEED asks for more)")
             return f"kokoro (resident, {config.kokoro_voice()})"
         missing = " and ".join(
             n for n, p in (("kokoro-v1.0.onnx", config.kokoro_model()),

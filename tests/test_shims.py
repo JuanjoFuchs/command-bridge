@@ -33,10 +33,10 @@ def test_the_launcher_runs_from_an_unrelated_cwd(tmp_path):
 
 
 def test_the_launcher_needs_no_environment(tmp_path):
-    """No VOICE_TUNNEL_* variables, no PYTHONPATH, no activated venv: the four env-var prefixes this whole
+    """No COMMAND_BRIDGE_* variables, no PYTHONPATH, no activated venv: the four env-var prefixes this whole
     change exists to delete."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("VOICE_TUNNEL_", "PYTHONPATH"))}
-    env["VOICE_TUNNEL_ENV_FILE"] = str(tmp_path / "absent.env")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("COMMAND_BRIDGE_", "PYTHONPATH"))}
+    env["COMMAND_BRIDGE_ENV_FILE"] = str(tmp_path / "absent.env")
 
     proc = subprocess.run(
         [sys.executable, os.path.join(BIN, "voice-tunnel-run.py"), "config", "path"],

@@ -234,7 +234,7 @@ def test_no_confidence_closes_a_turn_below_the_new_floor():
 def test_the_floor_is_tunable_without_a_code_change(monkeypatch):
     """AC16. It is the number that decides whether he gets cut off, and it was set from a
     measurement the next session may refine — so it has to move without a release."""
-    monkeypatch.setenv("VOICE_TUNNEL_TURN_MIN_SILENCE_MS", "1200")
+    monkeypatch.setenv("COMMAND_BRIDGE_TURN_MIN_SILENCE_MS", "1200")
     assert config.turn_min_silence_ms() == 1200
 
     buf = asr.UtteranceBuffer(turn_detector=lambda s: True)
@@ -246,7 +246,7 @@ def test_the_floor_is_tunable_without_a_code_change(monkeypatch):
 def test_a_bad_floor_falls_back_rather_than_crashing_the_segmenter(monkeypatch):
     """A tunnel that stopped segmenting over a typo in a settings file would be a far worse
     regression than the one being fixed. Same rule as every other failure in this feature."""
-    monkeypatch.setenv("VOICE_TUNNEL_TURN_MIN_SILENCE_MS", "not-a-number")
+    monkeypatch.setenv("COMMAND_BRIDGE_TURN_MIN_SILENCE_MS", "not-a-number")
     assert config.turn_min_silence_ms() == config.TURN_MIN_SILENCE_MS
 
 
@@ -260,7 +260,7 @@ def test_the_threshold_default_is_unchanged_and_that_is_the_finding(monkeypatch)
     Kept at HuggingFace's 0.5 because no measured value is better, and made settable so the
     finding can be re-tested rather than re-argued."""
     assert config.TURN_THRESHOLD == 0.5
-    monkeypatch.setenv("VOICE_TUNNEL_TURN_THRESHOLD", "0.9")
+    monkeypatch.setenv("COMMAND_BRIDGE_TURN_THRESHOLD", "0.9")
     assert config.turn_threshold() == 0.9
 
 
@@ -283,11 +283,11 @@ def test_turn_detection_stays_on_and_the_extension_half_is_untouched():
 
 def test_every_turn_setting_is_registered_so_config_set_can_reach_it():
     """AC16, and the defect class it closes. These three have read the environment since spec 004
-    and were in no registry, so `config set VOICE_TUNNEL_TURN_THRESHOLD 0.7` answered "unknown
+    and were in no registry, so `config set COMMAND_BRIDGE_TURN_THRESHOLD 0.7` answered "unknown
     setting" for a key that was live and honoured — the same shape as 0.2.1's unreachable
     `[turn]` extra. A knob you cannot reach through the documented interface is not tunable."""
     keys = {s["key"] for s in config.SETTINGS}
 
-    for key in ("VOICE_TUNNEL_TURN_DETECT", "VOICE_TUNNEL_TURN_THRESHOLD",
-                "VOICE_TUNNEL_TURN_MIN_SILENCE_MS", "VOICE_TUNNEL_TURN_THREADS"):
+    for key in ("COMMAND_BRIDGE_TURN_DETECT", "COMMAND_BRIDGE_TURN_THRESHOLD",
+                "COMMAND_BRIDGE_TURN_MIN_SILENCE_MS", "COMMAND_BRIDGE_TURN_THREADS"):
         assert key in keys, f"{key} is read by the code and registered nowhere"

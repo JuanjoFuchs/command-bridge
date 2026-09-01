@@ -118,9 +118,9 @@ def test_an_explicit_timeout_still_wins_over_the_long_wait():
 
 
 def test_the_ceiling_is_overridable_without_editing_the_code(monkeypatch):
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", "600")
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", "600")
     assert cli._watch_ceiling(30.0, 0, reachable=False, unattended=True, explicit=False) == 600.0
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", "not a number")
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", "not a number")
     assert cli._disconnected_ceiling() == cli.WATCH_DISCONNECTED_MAX_S
 
 
@@ -153,7 +153,7 @@ def _run(monkeypatch, tmp_path, first, later, ceiling):
     every poll inside the loop. The disconnected ceiling is shrunk to seconds — the branch under
     test is which ceiling gets chosen, not how long eight hours is."""
     monkeypatch.setattr(cli.config, "session_dir", lambda: str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", str(ceiling))
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", str(ceiling))
     calls = {"n": 0}
 
     def request(session, path, payload=None):

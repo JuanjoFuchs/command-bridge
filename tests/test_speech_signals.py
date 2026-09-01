@@ -33,7 +33,7 @@ SERVER = pathlib.Path(__file__).resolve().parents[1] / "command_bridge" / "serve
 
 @pytest.fixture()
 def state(tmp_path, monkeypatch):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     # No turn model and no recognizer work: this file is about the SIGNALS, and loading an 8 MB
     # ONNX session here would make every one of these tests depend on a download.
     monkeypatch.setattr(config, "turn_detect_enabled", lambda: False)

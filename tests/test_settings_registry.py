@@ -1,9 +1,9 @@
-"""Every VOICE_TUNNEL_* variable the running code reads is a variable the CLI can describe.
+"""Every COMMAND_BRIDGE_* variable the running code reads is a variable the CLI can describe.
 
 WHY THIS FILE EXISTS. Three times now the package has read a setting the CLI knew nothing about.
 The piper paths went undocumented while `describe` listed 8 of the 17 variables the code read.
 The three Kokoro keys were live, honoured, and sitting in the owner's own `.env` selecting the
-voice he was listening to, while `config get VOICE_TUNNEL_KOKORO_VOICE` answered "unknown
+voice he was listening to, while `config get COMMAND_BRIDGE_KOKORO_VOICE` answered "unknown
 setting". Then, the moment someone looked again, five more — including one the owner had
 hand-written into `.env` with a comment, because editing the file was the only way to set it.
 
@@ -11,7 +11,7 @@ Each time, the fix was the instances. This is the fix for the class. It walks th
 fails when the code reads a name the registry does not declare, because a table that can only be
 wrong when someone forgets to update it cannot catch someone forgetting to update it.
 
-THE FOUR BUCKETS. Every VOICE_TUNNEL_* name the package reads falls into exactly one, and a name
+THE FOUR BUCKETS. Every COMMAND_BRIDGE_* name the package reads falls into exactly one, and a name
 in none of them fails the build:
 
 1. **registered** — in `config.SETTINGS`, which is the answer for almost everything;
@@ -23,7 +23,7 @@ in none of them fails the build:
 
 WHY AN AST WALK AND NOT A REGEX. A regex over string literals cannot tell a *read* from a
 *mention*, and this repo deliberately keeps retired names in prose: `config.py` records that the
-per-name `VOICE_TUNNEL_WAKE_BARE` opt-in was deleted, and `cli.py` names `VOICE_TUNNEL_HOME` as a
+per-name `COMMAND_BRIDGE_WAKE_BARE` opt-in was deleted, and `cli.py` names `COMMAND_BRIDGE_HOME` as a
 dict key in the `describe` payload as well as reading it somewhere else entirely. Both would fail
 a regex, neither is a read, and a guard that fails on correct code is a guard somebody disables.
 
@@ -49,16 +49,16 @@ FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 # walk to either makes this guard fail on correct code.
 PACKAGE = ROOT / "command_bridge"
 
-NAMESPACE = "VOICE_TUNNEL_"
+NAMESPACE = "COMMAND_BRIDGE_"
 
 # THE EXCLUSION TABLE. One entry, one reason, written down rather than implied — a name silently
 # missing from the registry reads like an oversight to the next person, which is how the last
 # three of these survived review.
 EXCLUDED: dict[str, str] = {
-    "VOICE_TUNNEL_PIPER_LENGTH_SCALE": (
+    "COMMAND_BRIDGE_PIPER_LENGTH_SCALE": (
         "Deliberately retired. `speech_speed()` still honours a hand-written length_scale and "
         "converts it, so an old .env keeps working — but the unit is INVERTED (lower is faster), "
-        "which is the exact confusion VOICE_TUNNEL_SPEECH_SPEED exists to remove. Registering it "
+        "which is the exact confusion COMMAND_BRIDGE_SPEECH_SPEED exists to remove. Registering it "
         "would re-publish the inverted unit as a supported knob; leaking it once already produced "
         "half speed when the owner asked for double."
     ),
@@ -175,7 +175,7 @@ def classify(name: str) -> str:
 
 
 def unclassified_reads(directory: pathlib.Path) -> list[Read]:
-    """The guard's answer: reads of a VOICE_TUNNEL_* name that nothing declares."""
+    """The guard's answer: reads of a COMMAND_BRIDGE_* name that nothing declares."""
     return [r for r in scan(directory) if r.name and classify(r.name) == "unclassified"]
 
 
@@ -186,7 +186,7 @@ def failure_report(findings: list[Read]) -> str:
     obeyed, so the offending line is printed rather than the count.
     """
     lines = [
-        "The code reads VOICE_TUNNEL_* variables the CLI does not declare.",
+        "The code reads COMMAND_BRIDGE_* variables the CLI does not declare.",
         "Each one is invisible to `describe`, to `config get` and to `.env.example`, so the only "
         "way to set it is to hand-edit a file — which is the defect this guard exists to stop "
         "happening a fourth time.",
@@ -224,14 +224,14 @@ def test_the_walk_actually_finds_reads_in_the_package():
     """
     named = [r for r in scan(PACKAGE) if r.name]
     assert len(named) > 20, f"only {len(named)} literal reads found — the walk has stopped working"
-    assert {"VOICE_TUNNEL_TTS", "VOICE_TUNNEL_HOME"} <= {r.name for r in named}
+    assert {"COMMAND_BRIDGE_TTS", "COMMAND_BRIDGE_HOME"} <= {r.name for r in named}
 
 
 def test_the_failure_message_names_the_variable_the_file_and_the_line():
     """AC10, on a real finding rather than a hand-built one."""
     findings = unclassified_reads(FIXTURES / "unregistered_read")
     message = failure_report(findings)
-    assert "VOICE_TUNNEL_NOT_A_REAL_SETTING" in message
+    assert "COMMAND_BRIDGE_NOT_A_REAL_SETTING" in message
     assert "tests/fixtures/unregistered_read/reads_unregistered.py" in message
     assert f":{findings[0].lineno}" in message
     # The remedy, not just the complaint.
@@ -243,8 +243,8 @@ def test_the_failure_message_names_the_variable_the_file_and_the_line():
 
 def test_the_retired_length_scale_key_is_excluded_with_a_reason():
     """AC11, TC1. Asserted by name, so deleting the reason is a failure and not a quiet pass."""
-    assert classify("VOICE_TUNNEL_PIPER_LENGTH_SCALE") == "excluded"
-    reason = EXCLUDED["VOICE_TUNNEL_PIPER_LENGTH_SCALE"]
+    assert classify("COMMAND_BRIDGE_PIPER_LENGTH_SCALE") == "excluded"
+    reason = EXCLUDED["COMMAND_BRIDGE_PIPER_LENGTH_SCALE"]
     assert len(reason) > 40, "an exclusion without a real reason reads as an oversight"
 
 
@@ -254,8 +254,8 @@ def test_the_home_variable_is_process_only():
     Read from the `describe` payload, which is the declaration — this asserts the payload still
     carries it, not that a copy of the list here still does.
     """
-    assert classify("VOICE_TUNNEL_HOME") == "process_only"
-    assert "VOICE_TUNNEL_HOME" in cli.DESCRIBE["env_process_only"]
+    assert classify("COMMAND_BRIDGE_HOME") == "process_only"
+    assert "COMMAND_BRIDGE_HOME" in cli.DESCRIBE["env_process_only"]
 
 
 def test_every_exclusion_names_a_variable_the_code_still_reads():
@@ -275,10 +275,10 @@ def test_no_name_falls_into_two_buckets():
     ("LOCALAPPDATA", "foreign"),
     ("XDG_CONFIG_HOME", "foreign"),
     ("XDG_DATA_HOME", "foreign"),
-    ("VOICE_TUNNEL_TTS", "registered"),
-    ("VOICE_TUNNEL_HOME", "process_only"),
-    ("VOICE_TUNNEL_PIPER_LENGTH_SCALE", "excluded"),
-    ("VOICE_TUNNEL_NOT_A_REAL_SETTING", "unclassified"),
+    ("COMMAND_BRIDGE_TTS", "registered"),
+    ("COMMAND_BRIDGE_HOME", "process_only"),
+    ("COMMAND_BRIDGE_PIPER_LENGTH_SCALE", "excluded"),
+    ("COMMAND_BRIDGE_NOT_A_REAL_SETTING", "unclassified"),
 ])
 def test_each_bucket_is_reachable(name, bucket):
     """FR5: four buckets plus the failure. A classifier nothing ever falls through is a constant."""
@@ -298,7 +298,7 @@ def test_the_guard_fires_on_an_unregistered_read():
     fixture = FIXTURES / "unregistered_read" / "reads_unregistered.py"
     findings = unclassified_reads(fixture.parent)
 
-    assert [r.name for r in findings] == ["VOICE_TUNNEL_NOT_A_REAL_SETTING"]
+    assert [r.name for r in findings] == ["COMMAND_BRIDGE_NOT_A_REAL_SETTING"]
     finding = findings[0]
     assert finding.path.resolve() == fixture.resolve()
 
@@ -306,7 +306,7 @@ def test_the_guard_fires_on_an_unregistered_read():
     # leave this asserting a number that used to be right.
     source = fixture.read_text(encoding="utf-8").splitlines()
     expected = next(i for i, line in enumerate(source, 1)
-                    if "VOICE_TUNNEL_NOT_A_REAL_SETTING" in line and "getenv" in line)
+                    if "COMMAND_BRIDGE_NOT_A_REAL_SETTING" in line and "getenv" in line)
     assert finding.lineno == expected
     assert finding.where.endswith(f"reads_unregistered.py:{expected}")
 
@@ -322,8 +322,8 @@ def test_a_name_in_a_docstring_a_comment_or_a_dict_key_is_not_a_read():
     # And prove the file was parsed at all — the registered read in it must have been seen, or
     # this test would pass just as well against an empty directory.
     names = {r.name for r in scan(fixture_dir) if r.name}
-    assert names == {"VOICE_TUNNEL_TTS"}, names
-    assert "VOICE_TUNNEL_MENTIONED_NEVER_READ" not in names
+    assert names == {"COMMAND_BRIDGE_TTS"}, names
+    assert "COMMAND_BRIDGE_MENTIONED_NEVER_READ" not in names
 
 
 def test_the_two_prose_mentions_in_the_real_tree_are_not_reads():
@@ -336,12 +336,12 @@ def test_the_two_prose_mentions_in_the_real_tree_are_not_reads():
     # `config.py` records in a docstring that the per-name bare-wake opt-in was DELETED. Reading
     # that as a live setting would publish a knob that cannot be honoured — worse than an
     # undocumented one, because a documented no-op is not discoverable as broken.
-    assert "VOICE_TUNNEL_WAKE_BARE" not in {r.name for r in reads}
+    assert "COMMAND_BRIDGE_WAKE_BARE" not in {r.name for r in reads}
 
-    # `cli.py` names VOICE_TUNNEL_HOME as a dict KEY in the `describe` payload. A dict key is
+    # `cli.py` names COMMAND_BRIDGE_HOME as a dict KEY in the `describe` payload. A dict key is
     # documentation; the only place the value is read is `config.home_dir()`.
-    home = sorted({r.path.name for r in reads if r.name == "VOICE_TUNNEL_HOME"})
-    assert home == ["config.py"], f"VOICE_TUNNEL_HOME counted as read in {home}"
+    home = sorted({r.path.name for r in reads if r.name == "COMMAND_BRIDGE_HOME"})
+    assert home == ["config.py"], f"COMMAND_BRIDGE_HOME counted as read in {home}"
 
 
 def test_a_read_whose_name_is_computed_is_not_a_failure():

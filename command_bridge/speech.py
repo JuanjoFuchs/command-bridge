@@ -214,7 +214,7 @@ is supposed to sit inside. 0.35 puts it at ~300 ms against his 0.85 s sentence p
 where an unhurried speaker's comma actually lands and is far above the 60 ms floor the silence
 measurement can resolve.
 
-**Not a setting.** It introduces no `VOICE_TUNNEL_*` variable to register, because spec 008
+**Not a setting.** It introduces no `COMMAND_BRIDGE_*` variable to register, because spec 008
 closes a gap rather than widening the surface — and the thing worth tuning by ear, the sentence
 pause, is already tunable.
 """

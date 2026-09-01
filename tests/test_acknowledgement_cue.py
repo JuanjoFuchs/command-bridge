@@ -45,7 +45,7 @@ class _Client:
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     st = server.TunnelState("t", token=None, gate_enabled=False)
     st.consumed_cursor = -1
     st.clients.add(_Client())

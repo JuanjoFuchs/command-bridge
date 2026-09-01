@@ -59,7 +59,7 @@ def main() -> int:
          f"import sys; sys.path.insert(0, r'{ROOT}'); from command_bridge.cli import main; "
          f"raise SystemExit(main(['serve','--session','probe','--port','{port}']))"],
         cwd=ROOT,
-        env=dict(os.environ, VOICE_TUNNEL_DIR=tempfile.mkdtemp(), VOICE_TUNNEL_TOKEN=token),
+        env=dict(os.environ, COMMAND_BRIDGE_DIR=tempfile.mkdtemp(), COMMAND_BRIDGE_TOKEN=token),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     time.sleep(4)

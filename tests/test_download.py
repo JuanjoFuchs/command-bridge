@@ -54,7 +54,7 @@ def test_an_error_page_is_not_mistaken_for_a_model(tmp_path):
 def test_a_voice_missing_its_sidecar_is_not_installed(tmp_path, monkeypatch):
     """Piper cannot load a voice without its .onnx.json, so 'the model file exists' is the wrong
     question — an interrupted run that got one of the two must re-download, not be skipped."""
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", str(tmp_path))
     (tmp_path / "en_GB-alan-medium.onnx").write_bytes(b"\0" * (2 << 20))
     assert dl.voice_installed("en_GB-alan-medium") is False
 
@@ -109,7 +109,7 @@ def test_kokoro_needs_both_halves_before_it_counts_as_installed(tmp_path, monkey
     """The model alone synthesizes nothing — a voice is a style vector looked up in the pack. An
     interrupted run that got the 325 MB .onnx and not the 28 MB .bin must fetch the .bin, and
     would otherwise be skipped as done and fail much later, at load."""
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", str(tmp_path))
     (tmp_path / "kokoro-v1.0.onnx").write_bytes(b"\0" * (2 << 20))
     assert dl.kokoro_installed() is False
 
@@ -120,7 +120,7 @@ def test_kokoro_needs_both_halves_before_it_counts_as_installed(tmp_path, monkey
 def test_a_kokoro_half_that_is_an_error_page_is_not_counted(tmp_path, monkeypatch):
     """Same guard as every other target: a CDN answering with an HTML body writes a file that
     only fails inside onnxruntime, hours later."""
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", str(tmp_path))
     (tmp_path / "kokoro-v1.0.onnx").write_bytes(b"\0" * (2 << 20))
     (tmp_path / "voices-v1.0.bin").write_text("<!doctype html><title>404</title>", encoding="utf-8")
     assert dl.kokoro_installed() is False
@@ -128,7 +128,7 @@ def test_a_kokoro_half_that_is_an_error_page_is_not_counted(tmp_path, monkeypatc
 
 def test_an_already_complete_kokoro_fetches_nothing(tmp_path, monkeypatch):
     """Idempotent, like every other downloader — `setup` and a retry both re-run it."""
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", str(tmp_path))
     for name in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
         (tmp_path / name).write_bytes(b"\0" * (2 << 20))
 
@@ -144,7 +144,7 @@ def test_an_already_complete_kokoro_fetches_nothing(tmp_path, monkeypatch):
 
 def test_only_the_missing_kokoro_half_is_fetched(tmp_path, monkeypatch):
     """The reason the present-check is per file rather than one flag for the pair."""
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", str(tmp_path))
     (tmp_path / "kokoro-v1.0.onnx").write_bytes(b"\0" * (2 << 20))
     asked = []
 
@@ -185,7 +185,7 @@ def test_an_older_install_still_counts_as_installed(tmp_path, monkeypatch):
     """Someone who downloaded kokoro before spec 020 has `kokoro-v1.0.onnx`, and it works — it
     speaks identically and only lacks the durations. Reporting them as not-installed would send
     them to re-download 325 MB they already have."""
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", str(tmp_path))
     big = b"\x00" * (2 * 1024 * 1024)
     (tmp_path / "kokoro-v1.0.onnx").write_bytes(big)
     (tmp_path / "voices-v1.0.bin").write_bytes(big)
@@ -196,7 +196,7 @@ def test_an_older_install_still_counts_as_installed(tmp_path, monkeypatch):
 def test_the_catalog_answers_without_a_network(tmp_path, monkeypatch):
     """`--list` has to work offline: the most likely moment someone runs it is when a download
     just failed and they are trying to find out what the name should have been."""
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", str(tmp_path))
     cat = dl.catalog()
 
     assert {"voices", "kokoro", "asr", "voiceprint", "models_dir"} <= set(cat)
@@ -223,8 +223,8 @@ def test_a_parakeet_model_without_sherpa_falls_back_to_whisper(tmp_path, monkeyp
     spoken word rather than at the download."""
     from command_bridge import config
 
-    monkeypatch.setenv("VOICE_TUNNEL_PARAKEET_DIR", str(tmp_path))
-    monkeypatch.delenv("VOICE_TUNNEL_ASR", raising=False)
+    monkeypatch.setenv("COMMAND_BRIDGE_PARAKEET_DIR", str(tmp_path))
+    monkeypatch.delenv("COMMAND_BRIDGE_ASR", raising=False)
     monkeypatch.setattr(config, "have_module", lambda name: name != "sherpa_onnx")
 
     assert config.asr_engine() == "whisper"
@@ -235,7 +235,7 @@ def test_an_explicit_engine_is_still_obeyed(tmp_path, monkeypatch):
     is where the mismatch gets explained."""
     from command_bridge import config
 
-    monkeypatch.setenv("VOICE_TUNNEL_ASR", "parakeet")
+    monkeypatch.setenv("COMMAND_BRIDGE_ASR", "parakeet")
     monkeypatch.setattr(config, "have_module", lambda name: name != "sherpa_onnx")
 
     assert config.asr_engine() == "parakeet"
@@ -244,8 +244,8 @@ def test_an_explicit_engine_is_still_obeyed(tmp_path, monkeypatch):
 def test_both_halves_present_selects_parakeet(tmp_path, monkeypatch):
     from command_bridge import config
 
-    monkeypatch.setenv("VOICE_TUNNEL_PARAKEET_DIR", str(tmp_path))
-    monkeypatch.delenv("VOICE_TUNNEL_ASR", raising=False)
+    monkeypatch.setenv("COMMAND_BRIDGE_PARAKEET_DIR", str(tmp_path))
+    monkeypatch.delenv("COMMAND_BRIDGE_ASR", raising=False)
     monkeypatch.setattr(config, "have_module", lambda name: True)
 
     assert config.asr_engine() == "parakeet"
@@ -265,8 +265,8 @@ def test_doctor_accepts_piper_without_an_executable(monkeypatch, tmp_path, capsy
     voice.write_bytes(b"\0" * (2 << 20))
     (tmp_path / "en_GB-alan-medium.onnx.json").write_text("{}", encoding="utf-8")
 
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_TTS", "piper")
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_TTS", "piper")
     monkeypatch.setattr(config, "piper_bin", lambda: None)          # no executable anywhere
     monkeypatch.setattr(config, "have_module", lambda name: name == "piper")
 

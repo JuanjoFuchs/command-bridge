@@ -168,7 +168,7 @@ def run(headed: bool, keep: bool) -> int:
     session = "e2e"
     token = security.generate_token()
     port = free_port()
-    env = dict(os.environ, VOICE_TUNNEL_DIR=workdir, VOICE_TUNNEL_TOKEN=token, VOICE_TUNNEL_TTS="sapi")
+    env = dict(os.environ, COMMAND_BRIDGE_DIR=workdir, COMMAND_BRIDGE_TOKEN=token, COMMAND_BRIDGE_TTS="sapi")
 
     wav = os.path.join(workdir, "mic.wav")
     print("\n== build the fake microphone ==")
@@ -537,7 +537,7 @@ def run(headed: bool, keep: bool) -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
             out, _ = proc.communicate()
-        if os.environ.get("VOICE_TUNNEL_E2E_SERVER_LOG"):
+        if os.environ.get("COMMAND_BRIDGE_E2E_SERVER_LOG"):
             print("\n--- server output ---\n" + (out or ""))
         if keep:
             print(f"\nworkdir kept: {workdir}")

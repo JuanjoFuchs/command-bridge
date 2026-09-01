@@ -22,14 +22,14 @@ def installed(monkeypatch):
     """Pretend this is an installed package rather than a checkout."""
     monkeypatch.setattr(config, "_in_source_checkout", lambda: False)
     # The real ones must not leak in and make an assertion pass for the wrong reason.
-    for var in ("VOICE_TUNNEL_DIR", "VOICE_TUNNEL_MODELS_DIR", "VOICE_TUNNEL_ENV_FILE"):
+    for var in ("COMMAND_BRIDGE_DIR", "COMMAND_BRIDGE_MODELS_DIR", "COMMAND_BRIDGE_ENV_FILE"):
         monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture
 def checkout(monkeypatch):
     monkeypatch.setattr(config, "_in_source_checkout", lambda: True)
-    for var in ("VOICE_TUNNEL_DIR", "VOICE_TUNNEL_MODELS_DIR", "VOICE_TUNNEL_ENV_FILE"):
+    for var in ("COMMAND_BRIDGE_DIR", "COMMAND_BRIDGE_MODELS_DIR", "COMMAND_BRIDGE_ENV_FILE"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -62,9 +62,9 @@ def test_installed_paths_are_under_one_user_directory(installed):
 def test_the_env_var_overrides_win_in_both_modes(installed, monkeypatch):
     """An explicit setting is always the last word — that is what makes the suite able to run
     against disposable directories, and what lets a user relocate a 600 MB model cache."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", os.path.join("X:", "turns"))
-    monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", os.path.join("X:", "models"))
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", os.path.join("X:", "settings.env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", os.path.join("X:", "turns"))
+    monkeypatch.setenv("COMMAND_BRIDGE_MODELS_DIR", os.path.join("X:", "models"))
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", os.path.join("X:", "settings.env"))
 
     assert config.session_dir() == os.path.join("X:", "turns")
     assert config.models_dir() == os.path.join("X:", "models")

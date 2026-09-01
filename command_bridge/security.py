@@ -43,7 +43,7 @@ def ip_in_cidrs(ip_str: str, cidrs: Iterable[str]) -> bool:
 
 
 def allowed_cidrs() -> tuple[str, ...]:
-    """Loopback always; Tailscale and anything else strictly opt-in via VOICE_TUNNEL_ALLOW_CIDRS."""
+    """Loopback always; Tailscale and anything else strictly opt-in via COMMAND_BRIDGE_ALLOW_CIDRS."""
     return tuple(config.LOOPBACK_CIDRS) + tuple(config.extra_allow_cidrs())
 
 

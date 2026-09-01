@@ -147,7 +147,7 @@ async def main() -> int:
     else:
         print("NOTE: no voiceprint gallery — barge-in cannot identify anyone. "
               "Run a live session first, or `voice-tunnel voiceprint --learn-from <dir>`.")
-    env = dict(os.environ, VOICE_TUNNEL_DIR=scratch, VOICE_TUNNEL_TTS="piper")
+    env = dict(os.environ, COMMAND_BRIDGE_DIR=scratch, COMMAND_BRIDGE_TTS="piper")
     server = subprocess.Popen(
         [sys.executable, os.path.join(ROOT, "bin", "voice-tunnel-run.py"), "serve",
          "--session", SESSION, "--port", str(PORT), "--token", TOKEN],

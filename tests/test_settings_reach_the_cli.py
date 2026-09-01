@@ -1,10 +1,10 @@
 """The five variables the code read and the CLI had never heard of (spec 010, AC1-AC8).
 
-`VOICE_TUNNEL_BARGE_IN`, `..._BARGE_IN_THRESHOLD`, `..._CONSONANT_BOOST`, `..._WATCH_MAX_S` and
+`COMMAND_BRIDGE_BARGE_IN`, `..._BARGE_IN_THRESHOLD`, `..._CONSONANT_BOOST`, `..._WATCH_MAX_S` and
 `..._WATCH_DISCONNECTED_MAX_S` were live, honoured, and absent from `config.SETTINGS` — so
 `config get` called each of them an unknown setting, `describe` listed none of them, and
 `.env.example` documented none of them. The proof that this is a cost and not a tidiness
-complaint is sitting in the owner's own `.env`: `VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S=540`,
+complaint is sitting in the owner's own `.env`: `COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S=540`,
 hand-written with a paragraph of explanation, because editing the file was the only way to set a
 value the tool refused to write.
 
@@ -15,8 +15,8 @@ code does not use is worse than the silence it replaced — it is a confident wr
 document people open precisely when they already suspect the code. So the assertions below compare
 the registry's number to the RUNNING one rather than each to a literal.
 
-Registration is deliberately not universal. `VOICE_TUNNEL_WAKE_BARE` stays out because nothing
-reads it (see `test_wake.py`), and `VOICE_TUNNEL_HOME` stays out because it decides where the
+Registration is deliberately not universal. `COMMAND_BRIDGE_WAKE_BARE` stays out because nothing
+reads it (see `test_wake.py`), and `COMMAND_BRIDGE_HOME` stays out because it decides where the
 settings file lives and so could never be read from inside it — `test_cli_surface.py` pins that
 one's behaviour.
 """
@@ -28,11 +28,11 @@ import pytest
 from command_bridge import cli, config
 
 FIVE = (
-    "VOICE_TUNNEL_BARGE_IN",
-    "VOICE_TUNNEL_BARGE_IN_THRESHOLD",
-    "VOICE_TUNNEL_CONSONANT_BOOST",
-    "VOICE_TUNNEL_WATCH_MAX_S",
-    "VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S",
+    "COMMAND_BRIDGE_BARGE_IN",
+    "COMMAND_BRIDGE_BARGE_IN_THRESHOLD",
+    "COMMAND_BRIDGE_CONSONANT_BOOST",
+    "COMMAND_BRIDGE_WATCH_MAX_S",
+    "COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S",
 )
 
 
@@ -55,7 +55,7 @@ def hermetic(tmp_path, monkeypatch):
     assertion that passes only when nobody is mid-conversation is not an assertion.
     """
     path = tmp_path / ".env"
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(path))
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(path))
     for key in FIVE:
         monkeypatch.delenv(key, raising=False)
     return path
@@ -77,14 +77,14 @@ def test_config_get_answers_for_each_of_the_five(key, hermetic, capsys):
 
 
 def test_a_key_the_code_does_not_read_stays_unknown(hermetic, capsys):
-    """The inverse of AC1, and the reason `VOICE_TUNNEL_WAKE_BARE` was left out of the five.
+    """The inverse of AC1, and the reason `COMMAND_BRIDGE_WAKE_BARE` was left out of the five.
 
     The per-name bare-wake opt-in was DELETED; the name survives in a docstring recording that and
     in a test that sets it to prove it inert. Registering it would publish a knob that cannot be
     honoured — strictly worse than an unregistered one, because a documented setting that silently
     does nothing is harder to recognise as broken than an undocumented one.
     """
-    code, payload, _ = run(["config", "get", "VOICE_TUNNEL_WAKE_BARE"], capsys)
+    code, payload, _ = run(["config", "get", "COMMAND_BRIDGE_WAKE_BARE"], capsys)
 
     assert code == cli.EXIT_USAGE
     assert payload["code"] == "invalid_input"
@@ -126,11 +126,11 @@ def test_env_example_documents_all_five():
 # ------------------------------------------------------------------ AC5: round trip
 
 ROUND_TRIP = [
-    ("VOICE_TUNNEL_BARGE_IN", "0", "0"),
-    ("VOICE_TUNNEL_BARGE_IN_THRESHOLD", "0.25", 0.25),
-    ("VOICE_TUNNEL_CONSONANT_BOOST", "0.4", 0.4),
-    ("VOICE_TUNNEL_WATCH_MAX_S", "300", 300.0),
-    ("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", "540", 540.0),
+    ("COMMAND_BRIDGE_BARGE_IN", "0", "0"),
+    ("COMMAND_BRIDGE_BARGE_IN_THRESHOLD", "0.25", 0.25),
+    ("COMMAND_BRIDGE_CONSONANT_BOOST", "0.4", 0.4),
+    ("COMMAND_BRIDGE_WATCH_MAX_S", "300", 300.0),
+    ("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", "540", 540.0),
 ]
 
 
@@ -178,11 +178,11 @@ def test_the_defaults_the_registry_publishes_are_the_ones_the_code_ships(hermeti
     _, payload, _ = run(["config", "show"], capsys)
     by_key = {row["key"]: row["value"] for row in payload["settings"]}
 
-    assert by_key["VOICE_TUNNEL_BARGE_IN"] == ("1" if config.BARGE_IN else "0")
-    assert float(by_key["VOICE_TUNNEL_BARGE_IN_THRESHOLD"]) == config.BARGE_IN_THRESHOLD
-    assert float(by_key["VOICE_TUNNEL_CONSONANT_BOOST"]) == config.CONSONANT_BOOST
-    assert float(by_key["VOICE_TUNNEL_WATCH_MAX_S"]) == cli.WATCH_BACKOFF_MAX_S
-    assert float(by_key["VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S"]) == cli.WATCH_DISCONNECTED_MAX_S
+    assert by_key["COMMAND_BRIDGE_BARGE_IN"] == ("1" if config.BARGE_IN else "0")
+    assert float(by_key["COMMAND_BRIDGE_BARGE_IN_THRESHOLD"]) == config.BARGE_IN_THRESHOLD
+    assert float(by_key["COMMAND_BRIDGE_CONSONANT_BOOST"]) == config.CONSONANT_BOOST
+    assert float(by_key["COMMAND_BRIDGE_WATCH_MAX_S"]) == cli.WATCH_BACKOFF_MAX_S
+    assert float(by_key["COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S"]) == cli.WATCH_DISCONNECTED_MAX_S
 
 
 # ------------------------------- AC7: one number, two readers, and they must not diverge
@@ -196,7 +196,7 @@ def test_the_registry_reports_the_disconnected_ceiling_the_watch_actually_waits(
     two sides are asserted EQUAL TO EACH OTHER before either is compared to 540 — a pair of
     literals would pass just as happily with a resolver that reads nothing at all.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", "540")
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", "540")
 
     published = config.watch_disconnected_max_s()
     actual = cli._disconnected_ceiling()
@@ -215,7 +215,7 @@ def test_the_registry_reports_the_backoff_cap_the_ladder_actually_tops_out_at(he
     `_backoff_ceiling` is what `cmd_watch` calls; if the registry's number and the ladder's last
     rung ever differ, `config show` is describing a wait that does not happen.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_MAX_S", "300")
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_MAX_S", "300")
 
     published = config.watch_backoff_max_s()
     ladder_top = cli._backoff_ceiling(cli.WATCH_BASE_S, 99, reachable=True)
@@ -230,9 +230,9 @@ def test_an_override_moves_the_whole_published_ladder(hermetic, monkeypatch, cap
     returns and the last rung `describe` publishes move together. This is the failure the
     delegation exists to prevent — `_human_seconds` exists because three hand-written copies of
     this one cap drifted three different ways."""
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_MAX_S", "120")
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_MAX_S", "120")
 
-    _, got, _ = run(["config", "get", "VOICE_TUNNEL_WATCH_MAX_S"], capsys)
+    _, got, _ = run(["config", "get", "COMMAND_BRIDGE_WATCH_MAX_S"], capsys)
 
     assert float(got["value"]) == 120.0
     assert cli._backoff_ladder(cli.WATCH_BASE_S)[-1] == 120.0
@@ -249,8 +249,8 @@ def test_an_override_moves_the_whole_published_ladder(hermetic, monkeypatch, cap
 @pytest.mark.parametrize("garbage", ["not a number", "9min", " "])
 def test_a_hand_edited_ceiling_falls_back_instead_of_raising(garbage, hermetic, monkeypatch):
     """A settings file is hand-edited, so every resolver has to survive nonsense in it."""
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_MAX_S", garbage)
-    monkeypatch.setenv("VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S", garbage)
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_MAX_S", garbage)
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", garbage)
 
     assert config.watch_backoff_max_s() == cli.WATCH_BACKOFF_MAX_S
     assert config.watch_disconnected_max_s() == cli.WATCH_DISCONNECTED_MAX_S
@@ -261,11 +261,11 @@ def test_every_resolver_survives_a_settings_file_full_of_nonsense(hermetic, caps
     """`config show` is the command you run when something is already wrong. It calls all five new
     resolvers in one pass, so it must not be the thing that breaks."""
     hermetic.write_text(
-        "VOICE_TUNNEL_BARGE_IN=maybe\n"
-        "VOICE_TUNNEL_BARGE_IN_THRESHOLD=loud\n"
-        "VOICE_TUNNEL_CONSONANT_BOOST=lots\n"
-        "VOICE_TUNNEL_WATCH_MAX_S=nine minutes\n"
-        "VOICE_TUNNEL_WATCH_DISCONNECTED_MAX_S=overnight\n",
+        "COMMAND_BRIDGE_BARGE_IN=maybe\n"
+        "COMMAND_BRIDGE_BARGE_IN_THRESHOLD=loud\n"
+        "COMMAND_BRIDGE_CONSONANT_BOOST=lots\n"
+        "COMMAND_BRIDGE_WATCH_MAX_S=nine minutes\n"
+        "COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S=overnight\n",
         encoding="utf-8",
     )
 

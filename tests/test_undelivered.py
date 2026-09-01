@@ -21,7 +21,7 @@ from command_bridge import config, server
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     return server.TunnelState("t", token=None)
 
 

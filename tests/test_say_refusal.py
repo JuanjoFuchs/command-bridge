@@ -50,7 +50,7 @@ class _Req:
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     # No token, so `security.Gate` passes on a loopback peer. The auth path has its own suite;
     # threading a token through here would test that one twice and this one not at all.
     st = server.TunnelState("t", token=None)

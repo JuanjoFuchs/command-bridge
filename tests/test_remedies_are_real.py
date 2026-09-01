@@ -64,7 +64,7 @@ def test_every_extra_the_cli_recommends_actually_exists():
     ("piper", "piper"),
     # kokoro_onnx shipped with NO extra behind it at all — the turn bug repeated verbatim, one
     # backend later. `tts._ResidentKokoro._load` has imported it since the backend landed, so
-    # `VOICE_TUNNEL_TTS=kokoro` could only ever work in a checkout whose venv already carried the
+    # `COMMAND_BRIDGE_TTS=kokoro` could only ever work in a checkout whose venv already carried the
     # package for some other reason. That is precisely the environment this test suite runs in,
     # which is why the gap had to be closed by declaring the pair rather than by noticing it.
     ("kokoro_onnx", "kokoro"),

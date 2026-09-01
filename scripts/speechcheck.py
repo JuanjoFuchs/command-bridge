@@ -183,10 +183,10 @@ def engine_settings() -> dict:
         "settings_shadowed": report.get("shadowed", []),
         # What the FILE says for the two settings AC7 is about, so the criterion can be asserted
         # rather than asserted-in-prose. Only these two keys are carried: the settings file also
-        # holds VOICE_TUNNEL_TOKEN, and a harness that prints its whole environment into a report
+        # holds COMMAND_BRIDGE_TOKEN, and a harness that prints its whole environment into a report
         # is a credential leak wearing a diagnostic's clothes.
         "file_values": {k: v for k, v in config.read_env_file().items()
-                        if k in ("VOICE_TUNNEL_TTS", "VOICE_TUNNEL_SPEECH_SPEED")},
+                        if k in ("COMMAND_BRIDGE_TTS", "COMMAND_BRIDGE_SPEECH_SPEED")},
         "module_default_speed": config.SPEECH_SPEED,
         "tts_backend": backend,
         "voice": voice,
@@ -514,14 +514,14 @@ def run_checks(clips: dict, normalize, env: dict) -> list:
     # while the listener is on kokoro at 1.2 — and prints entirely plausible numbers. Asserted,
     # not narrated: the value in use must be the value IN THE FILE.
     fv = env["file_values"]
-    want_speed = fv.get("VOICE_TUNNEL_SPEECH_SPEED")
-    want_tts = fv.get("VOICE_TUNNEL_TTS")
+    want_speed = fv.get("COMMAND_BRIDGE_SPEECH_SPEED")
+    want_tts = fv.get("COMMAND_BRIDGE_TTS")
     ac7 = (want_speed is not None and abs(float(want_speed) - env["speech_speed"]) < 1e-9
            and want_tts is not None and want_tts.lower() == env["tts_backend"])
     checks.append(check(
         verdict(ac7), "AC7",
         "the run used the LIVE settings file, not the module defaults (TC3)",
-        f"file says VOICE_TUNNEL_TTS={want_tts} VOICE_TUNNEL_SPEECH_SPEED={want_speed}; "
+        f"file says COMMAND_BRIDGE_TTS={want_tts} COMMAND_BRIDGE_SPEECH_SPEED={want_speed}; "
         f"in use backend={env['tts_backend']} speed={env['speech_speed']} "
         f"(module default would have been piper-era {env['module_default_speed']}); "
         f"voice={env['voice']} sentence_pause={env['sentence_pause']}s"))
@@ -793,9 +793,9 @@ def main(argv: list[str] | None = None) -> int:
         env = engine_settings()
         if env["tts_backend"] == "none":
             raise SpeechCheckError(
-                "VOICE_TUNNEL_TTS is 'none' — every clip would be silence and every transcript "
+                "COMMAND_BRIDGE_TTS is 'none' — every clip would be silence and every transcript "
                 "empty, and the run would look plausible. Remedy:\n"
-                "    voice-tunnel config set VOICE_TUNNEL_TTS kokoro")
+                "    voice-tunnel config set COMMAND_BRIDGE_TTS kokoro")
         normalize, why_missing = load_transform()
         use_cache = not args.no_cache
 

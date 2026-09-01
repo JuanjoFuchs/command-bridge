@@ -66,13 +66,13 @@ def test_describe_documents_every_setting_the_code_reads():
 
 
 def test_the_variables_that_cannot_be_settings_are_still_documented():
-    """VOICE_TUNNEL_HOME scopes the settings file, the models and the sessions, so it cannot live
+    """COMMAND_BRIDGE_HOME scopes the settings file, the models and the sessions, so it cannot live
     in the file it locates — and it was therefore in no list at all. An audit ran a whole session
     inside it, found `config get` calling it an "unknown setting", and had to reconstruct what it
     did from one line of `doctor.runtime.isolate_with`.
     """
     process_only = cli.DESCRIBE["env_process_only"]
-    assert "VOICE_TUNNEL_HOME" in process_only
+    assert "COMMAND_BRIDGE_HOME" in process_only
     assert set(process_only).isdisjoint({s["key"] for s in config.SETTINGS}), (
         "a variable cannot be both persistable and process-only"
     )
@@ -154,62 +154,62 @@ def test_describe_exits_zero_and_is_json(capsys):
 
 def test_config_show_reports_the_source_of_every_value(capsys, tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
-    env_file.write_text("VOICE_TUNNEL_OWNER=from-file\n", encoding="utf-8")
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(env_file))
-    monkeypatch.delenv("VOICE_TUNNEL_OWNER", raising=False)
-    monkeypatch.setenv("VOICE_TUNNEL_TTS", "none")
+    env_file.write_text("COMMAND_BRIDGE_OWNER=from-file\n", encoding="utf-8")
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(env_file))
+    monkeypatch.delenv("COMMAND_BRIDGE_OWNER", raising=False)
+    monkeypatch.setenv("COMMAND_BRIDGE_TTS", "none")
 
     code, payload, _ = run(["config", "show"], capsys)
 
     assert code == cli.EXIT_OK
     by_key = {row["key"]: row for row in payload["settings"]}
-    assert by_key["VOICE_TUNNEL_OWNER"]["source"] == "file"
-    assert by_key["VOICE_TUNNEL_TTS"]["source"] == "env"
-    assert by_key["VOICE_TUNNEL_ASR_THREADS"]["source"] == "default"
+    assert by_key["COMMAND_BRIDGE_OWNER"]["source"] == "file"
+    assert by_key["COMMAND_BRIDGE_TTS"]["source"] == "env"
+    assert by_key["COMMAND_BRIDGE_ASR_THREADS"]["source"] == "default"
 
 
 def test_config_show_redacts_a_secret_but_get_reveals_it(capsys, monkeypatch, tmp_path):
     """A bulk dump lands in a transcript and an agent's context; an explicit single-key read is
     somebody actually asking for that value."""
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / "absent.env"))
-    monkeypatch.setenv("VOICE_TUNNEL_TOKEN", "s3cret-token")
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / "absent.env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_TOKEN", "s3cret-token")
 
     _, shown, _ = run(["config", "show"], capsys)
-    token_row = [r for r in shown["settings"] if r["key"] == "VOICE_TUNNEL_TOKEN"][0]
+    token_row = [r for r in shown["settings"] if r["key"] == "COMMAND_BRIDGE_TOKEN"][0]
     assert token_row["value"] == config.REDACTED
 
-    _, got, _ = run(["config", "get", "VOICE_TUNNEL_TOKEN"], capsys)
+    _, got, _ = run(["config", "get", "COMMAND_BRIDGE_TOKEN"], capsys)
     assert got["value"] == "s3cret-token"
 
 
 def test_config_set_then_get_round_trips(capsys, tmp_path, monkeypatch):
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
-    monkeypatch.delenv("VOICE_TUNNEL_TTS", raising=False)
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.delenv("COMMAND_BRIDGE_TTS", raising=False)
 
-    code, written, _ = run(["config", "set", "VOICE_TUNNEL_TTS", "none"], capsys)
+    code, written, _ = run(["config", "set", "COMMAND_BRIDGE_TTS", "none"], capsys)
     assert code == cli.EXIT_OK and written["created"] is True
 
-    monkeypatch.delenv("VOICE_TUNNEL_TTS", raising=False)
-    _, got, _ = run(["config", "get", "VOICE_TUNNEL_TTS"], capsys)
-    assert got == {"key": "VOICE_TUNNEL_TTS", "value": "none", "source": "file",
+    monkeypatch.delenv("COMMAND_BRIDGE_TTS", raising=False)
+    _, got, _ = run(["config", "get", "COMMAND_BRIDGE_TTS"], capsys)
+    assert got == {"key": "COMMAND_BRIDGE_TTS", "value": "none", "source": "file",
                    "what": got["what"]}
 
 
 def test_config_set_warns_when_the_environment_will_shadow_the_write(capsys, tmp_path, monkeypatch):
     """Otherwise you set a value, watch the old one keep applying, and go looking in the code."""
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
-    monkeypatch.setenv("VOICE_TUNNEL_TTS", "sapi")
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_TTS", "sapi")
 
-    _, payload, _ = run(["config", "set", "VOICE_TUNNEL_TTS", "piper"], capsys)
+    _, payload, _ = run(["config", "set", "COMMAND_BRIDGE_TTS", "piper"], capsys)
 
     assert payload["shadowed_by_env"] is True
     assert "wins over the file" in payload["note"]
 
 
 def test_config_get_on_an_unknown_key_names_the_remedy(capsys, tmp_path, monkeypatch):
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / "absent.env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / "absent.env"))
 
-    code, payload, _ = run(["config", "get", "VOICE_TUNNEL_NOPE"], capsys)
+    code, payload, _ = run(["config", "get", "COMMAND_BRIDGE_NOPE"], capsys)
 
     # EXIT_USAGE, not EXIT_ERROR. The next test asserts `config set` of a foreign key exits 2 with
     # this same `invalid_input` code; these two exited 1 and 2 for the identical class of mistake,
@@ -223,9 +223,9 @@ def test_config_get_on_an_unknown_key_names_the_remedy(capsys, tmp_path, monkeyp
 def test_the_same_code_always_means_the_same_exit_status(capsys, tmp_path, monkeypatch):
     """Raised and returned rejections must not disagree — a caller branches on one or the other,
     never both."""
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / ".env"))
 
-    returned, payload, _ = run(["config", "get", "VOICE_TUNNEL_NOPE"], capsys)
+    returned, payload, _ = run(["config", "get", "COMMAND_BRIDGE_NOPE"], capsys)
     raised, _, err = run(["wake", "--name", "two words", "--no-save"], capsys)
 
     assert payload["code"] == "invalid_input"
@@ -234,11 +234,11 @@ def test_the_same_code_always_means_the_same_exit_status(capsys, tmp_path, monke
 
 
 def test_a_process_only_variable_is_explained_rather_than_disowned(capsys, tmp_path, monkeypatch):
-    """`config get VOICE_TUNNEL_HOME` answered "unknown setting" about the variable that decides
+    """`config get COMMAND_BRIDGE_HOME` answered "unknown setting" about the variable that decides
     where the settings file `config` reads actually lives."""
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / ".env"))
 
-    code, payload, _ = run(["config", "get", "VOICE_TUNNEL_HOME"], capsys)
+    code, payload, _ = run(["config", "get", "COMMAND_BRIDGE_HOME"], capsys)
 
     assert code == cli.EXIT_OK
     assert "error" not in payload
@@ -246,14 +246,14 @@ def test_a_process_only_variable_is_explained_rather_than_disowned(capsys, tmp_p
 
 
 def test_config_set_of_a_foreign_key_exits_usage_with_a_remedy(capsys, tmp_path, monkeypatch):
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / ".env"))
 
     code, _, err = run(["config", "set", "PATH", "/tmp"], capsys)
 
     assert code == cli.EXIT_USAGE
     payload = json.loads(err)
     assert payload["code"] == "invalid_input"
-    assert "VOICE_TUNNEL_" in payload["error"]
+    assert "COMMAND_BRIDGE_" in payload["error"]
 
 
 # --------------------------------------------------------------- exit codes
@@ -347,8 +347,8 @@ def test_a_degraded_runtime_is_not_reported_as_simply_fine(capsys, tmp_sessions,
     as being the setup someone configured, and the gap between those two is where the incident
     lived.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_TTS", "sapi")
-    monkeypatch.setenv("VOICE_TUNNEL_ASR", "whisper")
+    monkeypatch.setenv("COMMAND_BRIDGE_TTS", "sapi")
+    monkeypatch.setenv("COMMAND_BRIDGE_ASR", "whisper")
     _, payload, _ = run(["doctor"], capsys)
 
     assert "asr" in payload["degraded"], "whisper is a fallback and should say so"
@@ -358,7 +358,7 @@ def test_a_degraded_runtime_is_not_reported_as_simply_fine(capsys, tmp_sessions,
 
 
 def test_doctor_fails_when_a_check_fails(capsys, tmp_sessions, monkeypatch):
-    monkeypatch.setenv("VOICE_TUNNEL_TTS", "gibberish")
+    monkeypatch.setenv("COMMAND_BRIDGE_TTS", "gibberish")
     code, payload, _ = run(["doctor"], capsys)
     assert code == cli.EXIT_ERROR
     assert "tts" in payload["failed"]

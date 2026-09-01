@@ -91,8 +91,8 @@ AGENT_STATES = ["idle", "transcribing", "thinking", "synthesizing", "waiting", "
 PHASES = ["idle", "starting", "warming", "live", "denied"]
 TIMED = {"transcribing", "thinking", "synthesizing", "waiting"}
 
-env = dict(os.environ, VOICE_TUNNEL_DIR=tempfile.mkdtemp(prefix="voice-tunnel-orb-"),
-           VOICE_TUNNEL_TTS="sapi")
+env = dict(os.environ, COMMAND_BRIDGE_DIR=tempfile.mkdtemp(prefix="voice-tunnel-orb-"),
+           COMMAND_BRIDGE_TTS="sapi")
 server = subprocess.Popen(
     [sys.executable, f"{ROOT}/bin/voice-tunnel-run.py", "serve",
      "--session", SESSION, "--port", str(PORT), "--token", TOKEN],

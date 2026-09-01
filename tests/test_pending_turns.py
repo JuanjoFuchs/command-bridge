@@ -23,7 +23,7 @@ from command_bridge import server, store
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     return server.TunnelState("t", token=None)
 
 
@@ -82,7 +82,7 @@ def test_a_restart_does_not_forget_how_far_the_agent_had_read(monkeypatch, tmp_p
 
     The log and the read position are the same kind of fact. Persisting one without the other
     is what made `pending_turns` honest on paper and a liar after every restart."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     say("t", 306)                                  # ids 0..305, all read...
     store.write_consumed_cursor("t", 305)          # ...and the agent said so
 
@@ -106,7 +106,7 @@ def test_a_genuinely_fresh_session_still_starts_at_minus_one(state):
 def test_a_corrupt_consumed_file_degrades_to_fresh_not_to_a_crash(monkeypatch, tmp_path):
     """Best-effort persistence cuts both ways: a truncated or hand-mangled file must cost at
     most an over-reported backlog — the bug this softens — never a server that will not start."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     with open(store._consumed_path("t"), "w", encoding="utf-8") as fh:
         fh.write("{not json")
     assert store.read_consumed_cursor("t") == -1

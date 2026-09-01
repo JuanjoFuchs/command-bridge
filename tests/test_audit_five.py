@@ -20,8 +20,8 @@ def test_setup_is_named_by_every_remedy_it_actually_fixes(capsys, tmp_sessions, 
     installs `[all]` and fixed all four. Following that advice literally is three redundant
     commands, and one of them was actively wrong (see below).
     """
-    monkeypatch.setenv("VOICE_TUNNEL_TTS", "piper")
-    monkeypatch.setenv("VOICE_TUNNEL_PIPER_VOICE", "")
+    monkeypatch.setenv("COMMAND_BRIDGE_TTS", "piper")
+    monkeypatch.setenv("COMMAND_BRIDGE_PIPER_VOICE", "")
     _, payload, _ = run(["doctor"], capsys)
 
     for check in payload["checks"]:
@@ -35,17 +35,17 @@ def test_setup_is_named_by_every_remedy_it_actually_fixes(capsys, tmp_sessions, 
 
 def test_the_asr_remedy_does_not_tell_you_to_pin_what_auto_selects(capsys, tmp_sessions,
                                                                    monkeypatch):
-    """THE FOOTGUN. It ended with `config set VOICE_TUNNEL_ASR parakeet`, while `describe` warns
+    """THE FOOTGUN. It ended with `config set COMMAND_BRIDGE_ASR parakeet`, while `describe` warns
     in the same payload that an explicit value WINS over what is installed. Parakeet is selected
     automatically once its runtime is present, so the remedy pinned a choice that had already been
     made and took away the tool's ability to move you off it later.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_ASR", "whisper")
+    monkeypatch.setenv("COMMAND_BRIDGE_ASR", "whisper")
     _, payload, _ = run(["doctor"], capsys)
     asr = next(c for c in payload["checks"] if c["name"] == "asr")
     remedy = asr["remedy"] or ""
     if "sherpa" in (asr["detail"] or "") or "parakeet" in remedy:
-        assert "config set VOICE_TUNNEL_ASR parakeet" not in remedy, (
+        assert "config set COMMAND_BRIDGE_ASR parakeet" not in remedy, (
             "installing the runtime is enough; pinning contradicts the tool's own warning"
         )
 

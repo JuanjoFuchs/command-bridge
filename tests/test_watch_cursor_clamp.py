@@ -56,7 +56,7 @@ def _isolated(tmp_path, monkeypatch):
     where a LIVE conversation's log lives — and one test's leftover backoff streak silently changes
     the next test's ceiling.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
 
 
 def _args(session=SESSION, since=0, **kw):

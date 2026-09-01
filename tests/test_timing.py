@@ -15,7 +15,7 @@ from command_bridge import timing
 
 @pytest.fixture
 def session(tmp_path, monkeypatch):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     return "t"
 
 
@@ -28,7 +28,7 @@ def _write(session, rows):
             rec = {"stage": stage, "mono": mono, "wall": "2026-07-31T19:00:00.000-04:00"}
             rec.update(extra or {})
             fh.write(json.dumps(rec) + "\n")
-    assert config  # the fixture's VOICE_TUNNEL_DIR is what put the file here
+    assert config  # the fixture's COMMAND_BRIDGE_DIR is what put the file here
 
 
 # ------------------------------------------------------------------- writing
@@ -48,7 +48,7 @@ def test_stamp_writes_both_clocks(session):
 
 def test_stamping_never_raises_even_when_the_directory_is_impossible(monkeypatch, tmp_path):
     """An instrument that can take down the thing it measures is worse than no instrument."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path / "file-not-a-dir"))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path / "file-not-a-dir"))
     (tmp_path / "file-not-a-dir").write_text("in the way", encoding="utf-8")
 
     timing.stamp("t", "utterance_end")   # must not raise

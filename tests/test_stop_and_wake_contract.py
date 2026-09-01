@@ -21,8 +21,8 @@ from command_bridge import cli
 
 @pytest.fixture()
 def no_settings(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / "settings.env"))
-    monkeypatch.delenv("VOICE_TUNNEL_WAKE_NAME", raising=False)
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / "settings.env"))
+    monkeypatch.delenv("COMMAND_BRIDGE_WAKE_NAME", raising=False)
     return monkeypatch
 
 

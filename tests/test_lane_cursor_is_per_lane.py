@@ -24,8 +24,8 @@ from command_bridge import server, store
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "magnus")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "magnus")
     st = server.TunnelState("t", token=None)
     st.consumed_cursor = -1
     st.lanes = server.lanes_mod.LaneRegistry("magnus")
@@ -105,8 +105,8 @@ def test_the_refusal_resumes_from_the_cursor_it_complained_about(state):
 def test_a_single_lane_session_answers_exactly_as_before(monkeypatch, tmp_path):
     """AC-4 — NFR1. With one lane the two numbers are the same number, so every answer here
     collapses to the session cursor and nothing about a solo session changes."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
-    monkeypatch.setenv("VOICE_TUNNEL_WAKE_NAME", "magnus")
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_WAKE_NAME", "magnus")
     st = server.TunnelState("t", token=None)
     st.lanes = server.lanes_mod.LaneRegistry("magnus")
     st.consumed_cursor = 7

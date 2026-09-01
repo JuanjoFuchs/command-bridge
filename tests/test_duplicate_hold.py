@@ -53,7 +53,7 @@ class _Req:
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     st = server.TunnelState("t", token=None)
     st.lanes = server.lanes_mod.LaneRegistry("magnus")
     st.lanes.add("kepler")

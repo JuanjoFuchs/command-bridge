@@ -28,7 +28,7 @@ class _Req:
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     st = server.TunnelState("t", token=None)
     st.lanes = server.lanes_mod.LaneRegistry("claude")
     st.lanes.add("codex")
@@ -39,7 +39,7 @@ def test_the_lane_route_is_registered(monkeypatch, tmp_path):
     """The handler being right is worth nothing if nothing reaches it. Asserted on the route
     table, because every other test here calls the handler directly and would pass just as well
     with the endpoint never wired up."""
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
     app = server.build_app("t", token=None)
     paths = {r.resource.canonical for r in app.router.routes() if r.resource}
 

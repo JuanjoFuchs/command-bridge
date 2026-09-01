@@ -17,11 +17,11 @@ def hermetic_settings(tmp_path, monkeypatch):
     is running the suite:
 
     * `command_bridge/config.py` now loads `<repo>/.env` into os.environ. A suite that reads it would pass or
-      fail according to whatever the developer last persisted, so VOICE_TUNNEL_ENV_FILE is pointed at a
+      fail according to whatever the developer last persisted, so COMMAND_BRIDGE_ENV_FILE is pointed at a
       path that does not exist.
-    * `load_env_file` mutates os.environ directly, so a test that triggers a load leaves VOICE_TUNNEL_*
+    * `load_env_file` mutates os.environ directly, so a test that triggers a load leaves COMMAND_BRIDGE_*
       variables set for every test that follows. Snapshot and restore them.
-    * **VOICE_TUNNEL_DIR, since spec 011 FR3.** Session isolation used to be OPT-IN (`tmp_sessions`
+    * **COMMAND_BRIDGE_DIR, since spec 011 FR3.** Session isolation used to be OPT-IN (`tmp_sessions`
       below) and that was survivable only because `cmd_say` persisted NOTHING — a test could call it
       with `--session dev` and touch no disk. FR3 gave `cmd_say` and `cmd_watch` a per-session state
       file at `<session_dir>/<session>.watch.json`, so every unisolated test now READS AND WRITES the
@@ -41,12 +41,12 @@ def hermetic_settings(tmp_path, monkeypatch):
       to remember to ask for. `tmp_sessions` keeps working unchanged: it points at the same
       `tmp_path / "sessions"`, so opting in now only adds the mkdir.
     """
-    monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / "no-such.env"))
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(tmp_path / "sessions"))
-    before = {k: v for k, v in os.environ.items() if k.startswith("VOICE_TUNNEL_")}
+    monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / "no-such.env"))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path / "sessions"))
+    before = {k: v for k, v in os.environ.items() if k.startswith("COMMAND_BRIDGE_")}
     config._LOAD_REPORT = {}
     yield
-    for key in [k for k in os.environ if k.startswith("VOICE_TUNNEL_")]:
+    for key in [k for k in os.environ if k.startswith("COMMAND_BRIDGE_")]:
         if key not in before:
             del os.environ[key]
     os.environ.update(before)
@@ -66,23 +66,23 @@ def no_live_tunnel(monkeypatch):
     happens to be mid-conversation is not a test.
 
     Off by default, so "no tunnel" is what every test gets unless it says otherwise; the ones
-    about detection patch `_ngrok_fronts` or set VOICE_TUNNEL_PUBLIC_URL themselves.
+    about detection patch `_ngrok_fronts` or set COMMAND_BRIDGE_PUBLIC_URL themselves.
     """
     from command_bridge import cli
 
     monkeypatch.setattr(cli, "_ngrok_fronts", lambda port: None)
-    monkeypatch.delenv("VOICE_TUNNEL_PUBLIC_URL", raising=False)
+    monkeypatch.delenv("COMMAND_BRIDGE_PUBLIC_URL", raising=False)
 
 
 @pytest.fixture()
 def tmp_sessions(tmp_path, monkeypatch):
     """Isolate turn logs per test so nothing leaks between them or into the repo.
 
-    Now a formality rather than a defence: `hermetic_settings` above points VOICE_TUNNEL_DIR at this
+    Now a formality rather than a defence: `hermetic_settings` above points COMMAND_BRIDGE_DIR at this
     same path for EVERY test, so what this adds is the mkdir and the returned path for tests that
     want to write fixture files into the directory themselves.
     """
     d = tmp_path / "sessions"
     d.mkdir()
-    monkeypatch.setenv("VOICE_TUNNEL_DIR", str(d))
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(d))
     return str(d)

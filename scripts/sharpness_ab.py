@@ -225,16 +225,16 @@ def attempt3_shipped(pcm: bytes, rate: int, strength: float = 0.6) -> bytes:
     file changes underneath.
     """
     from command_bridge import config, tts
-    old = os.environ.get("VOICE_TUNNEL_DEESS")
-    os.environ["VOICE_TUNNEL_DEESS"] = str(strength)
+    old = os.environ.get("COMMAND_BRIDGE_DEESS")
+    os.environ["COMMAND_BRIDGE_DEESS"] = str(strength)
     try:
         config._ENV_CACHE = {} if hasattr(config, "_ENV_CACHE") else None
         return tts._deess(pcm, rate)
     finally:
         if old is None:
-            os.environ.pop("VOICE_TUNNEL_DEESS", None)
+            os.environ.pop("COMMAND_BRIDGE_DEESS", None)
         else:
-            os.environ["VOICE_TUNNEL_DEESS"] = old
+            os.environ["COMMAND_BRIDGE_DEESS"] = old
 
 
 def _spectral(pcm: bytes, rate: int, strength: float, floor_frac: float) -> bytes:
@@ -339,8 +339,8 @@ def band_energy_above(pcm: bytes, rate: int, hz: float) -> float:
 
 def render(text: str, voice: str, name: str, backend: str = "piper") -> tuple[str, bytes, int]:
     """Render with the de-esser OFF, so every variant below starts from identical raw audio."""
-    os.environ["VOICE_TUNNEL_TTS"] = backend
-    os.environ["VOICE_TUNNEL_DEESS"] = "0"
+    os.environ["COMMAND_BRIDGE_TTS"] = backend
+    os.environ["COMMAND_BRIDGE_DEESS"] = "0"
     from command_bridge import tts
     pcm, rate = tts.synthesize(text, backend=backend, voice=voice)
     return write_wav(_out(f"{name}.wav"), pcm, rate), pcm, rate

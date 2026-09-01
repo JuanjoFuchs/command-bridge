@@ -117,13 +117,13 @@ class _ContactedAServer(AssertionError):
 def isolated():
     """A temp session directory, no inherited settings, and three tripwires. Yields the directory.
 
-    Every `VOICE_TUNNEL_*` variable is cleared rather than merely overridden, because the
+    Every `COMMAND_BRIDGE_*` variable is cleared rather than merely overridden, because the
     measurement has to produce the same number on CI and on the machine of somebody who has
-    persisted `VOICE_TUNNEL_VERBOSE=1` — and the verbose toggle selects a different `next` branch.
-    `VOICE_TUNNEL_ENV_FILE` is pointed at a path that does not exist for the same reason: the repo
+    persisted `COMMAND_BRIDGE_VERBOSE=1` — and the verbose toggle selects a different `next` branch.
+    `COMMAND_BRIDGE_ENV_FILE` is pointed at a path that does not exist for the same reason: the repo
     `.env` is a developer's, not a fixture.
     """
-    saved_env = {k: v for k, v in os.environ.items() if k.startswith("VOICE_TUNNEL_")}
+    saved_env = {k: v for k, v in os.environ.items() if k.startswith("COMMAND_BRIDGE_")}
     saved_open, saved_urlopen = builtins.open, urllib.request.urlopen
     saved_connect = socket.create_connection
     tmp = tempfile.mkdtemp(prefix="contextcost-")
@@ -144,12 +144,12 @@ def isolated():
         )
 
     try:
-        for key in [k for k in os.environ if k.startswith("VOICE_TUNNEL_")]:
+        for key in [k for k in os.environ if k.startswith("COMMAND_BRIDGE_")]:
             del os.environ[key]
-        os.environ["VOICE_TUNNEL_DIR"] = tmp
-        os.environ["VOICE_TUNNEL_ENV_FILE"] = os.path.join(tmp, "no-such.env")
+        os.environ["COMMAND_BRIDGE_DIR"] = tmp
+        os.environ["COMMAND_BRIDGE_ENV_FILE"] = os.path.join(tmp, "no-such.env")
         assert os.path.abspath(config.session_dir()) == os.path.abspath(tmp), (
-            "the session directory did not follow VOICE_TUNNEL_DIR; refusing to measure"
+            "the session directory did not follow COMMAND_BRIDGE_DIR; refusing to measure"
         )
         builtins.open = guarded_open
         urllib.request.urlopen = tripwire
@@ -159,7 +159,7 @@ def isolated():
         builtins.open = saved_open
         urllib.request.urlopen = saved_urlopen
         socket.create_connection = saved_connect
-        for key in [k for k in os.environ if k.startswith("VOICE_TUNNEL_")]:
+        for key in [k for k in os.environ if k.startswith("COMMAND_BRIDGE_")]:
             del os.environ[key]
         os.environ.update(saved_env)
         shutil.rmtree(tmp, ignore_errors=True)

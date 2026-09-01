@@ -50,8 +50,8 @@ def api(path, payload=None):
 
 # A scratch session dir and the zero-install voice: this checks CONTROL FLOW, not audio
 # quality, and it must run on a machine with no models downloaded.
-env = dict(os.environ, VOICE_TUNNEL_DIR=tempfile.mkdtemp(prefix="voice-tunnel-chan-"),
-           VOICE_TUNNEL_TTS="sapi")
+env = dict(os.environ, COMMAND_BRIDGE_DIR=tempfile.mkdtemp(prefix="voice-tunnel-chan-"),
+           COMMAND_BRIDGE_TTS="sapi")
 server = subprocess.Popen(
     [sys.executable, f"{ROOT}/bin/voice-tunnel-run.py", "serve",
      "--session", SESSION, "--port", str(PORT), "--token", TOKEN],
