@@ -24,13 +24,16 @@ from pathlib import Path
 
 def capture(url: str, out: str | Path, viewport: tuple[int, int] = (390, 844),
             lane: str = "", settle_ms: int = 4000,
-            wait_selector: str = "") -> dict:
+            wait_selector: str = "", color_scheme: str = "") -> dict:
     """Render `url` in a private headless browser and write a full-page PNG to `out`.
 
     `viewport` is a real device size (a phone by default), not a crop — the whole document is
     captured, so a layout taller than the viewport is not clipped. `lane` shoots a specific
-    lane's view by passing `?lane=` (the page decides what that means). Returns a dict; the
-    caller reads `ok` or `error`.
+    lane's view by passing `?lane=` (the page decides what that means). `color_scheme`
+    ('dark'/'light') emulates `prefers-color-scheme`, so a page whose theme (or an embedded frame's)
+    follows the system setting can be shot in the theme it will actually be seen in — the meeting
+    page is dark, so its embedded canvas must be shot dark too. Returns a dict; the caller reads
+    `ok` or `error`.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -56,7 +59,10 @@ def capture(url: str, out: str | Path, viewport: tuple[int, int] = (390, 844),
             # A fresh context is the throwaway profile: no cookies, no shared lock, nothing
             # another browser instance is holding open. device_scale_factor 2 matches the repo's
             # other harnesses so a shot reads at the density he sees.
-            ctx = browser.new_context(viewport={"width": w, "height": h}, device_scale_factor=2)
+            ctx_kwargs: dict = {"viewport": {"width": w, "height": h}, "device_scale_factor": 2}
+            if color_scheme:
+                ctx_kwargs["color_scheme"] = color_scheme
+            ctx = browser.new_context(**ctx_kwargs)
             page = ctx.new_page()
             try:
                 page.goto(full_url, wait_until="load", timeout=8000)

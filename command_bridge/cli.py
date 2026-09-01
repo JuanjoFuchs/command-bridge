@@ -1127,6 +1127,8 @@ DESCRIBE: dict[str, Any] = {
                 "--lane": "shoot a specific lane's view rather than whatever is live",
                 "--url": "override the target URL (default: the live server's client URL)",
                 "--settle": "ms to let the page render before the shutter",
+                "--color-scheme": "emulate prefers-color-scheme ('dark'/'light') — the meeting page "
+                                  "is dark, so shoot it (and its embedded canvas) dark",
             },
             "returns": {
                 "path": "the PNG — OPEN IT. A screenshot you did not look at verified nothing",
@@ -3777,7 +3779,8 @@ def cmd_shot(args) -> dict[str, Any]:
                 "remedy": f"start one with `command-bridge serve --session {args.session}`, "
                           "or pass --url"}
     viewport = _shot.parse_viewport(args.viewport)
-    return _shot.capture(url, args.out, viewport=viewport, lane=args.lane, settle_ms=args.settle)
+    return _shot.capture(url, args.out, viewport=viewport, lane=args.lane, settle_ms=args.settle,
+                         color_scheme=getattr(args, "color_scheme", ""))
 
 
 def cmd_stop(args) -> dict[str, Any]:
@@ -4887,6 +4890,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="override the target URL; default is the live server's client URL")
     ps.add_argument("--settle", type=int, default=4000, metavar="MS",
                     help="how long to let the page render before the shutter")
+    ps.add_argument("--color-scheme", default="", choices=["", "dark", "light"], dest="color_scheme",
+                    help="emulate prefers-color-scheme (the meeting page is dark, so shoot it dark)")
 
     x = sub.add_parser("stop", help="stop a detached server")
     x.add_argument("--session", default="dev")

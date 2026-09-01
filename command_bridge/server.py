@@ -996,6 +996,20 @@ async def handle_index(request: web.Request) -> web.StreamResponse:
     )
 
 
+async def handle_meeting(request: web.Request) -> web.Response:
+    """The meeting page (spec 006) — the adaptive combined view: participant orbs, the shared canvas,
+    and the transcript on ONE page, arranged by (agent count) × (canvas shared?) × (wants to see?).
+    Unauthenticated like the index — the token gates the socket, not the page — and never cached, so
+    an edit during development is never chased through a stale copy."""
+    from . import meeting
+    state: TunnelState = request.app["state"]
+    return web.Response(
+        text=meeting.render(state),
+        content_type="text/html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
+    )
+
+
 async def handle_health(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
@@ -2938,6 +2952,7 @@ def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web
     app.add_routes(
         [
             web.get("/", handle_index),
+            web.get("/meeting", handle_meeting),
             web.get("/health", handle_health),
             web.get("/status", handle_status),
             web.post("/say", handle_say),
@@ -3048,5 +3063,11 @@ def run(
     # server drives it in-process from `_set_lane`, so the cross-process Follower would be a second,
     # laggier writer of the same value. Its code stays for the standalone canvas.
     restored = canvas_aio.init_canvas(session, follow=False)
+    # Reconcile the default lane (spec 004): a fresh canvas starts on its own default ('main') while a
+    # fresh voice session starts on the wake/default lane. Left alone they disagree until the first
+    # switch, so an agent that draws to the live lane before anyone switches draws onto a lane the
+    # canvas is not showing. Sync the canvas to the voice live lane once, here, where both are known.
+    from .canvas import server as _canvas
+    _canvas.set_live(app["state"].lanes.current)
     print(f"  canvas             {restored} frame(s) restored, on this same server", flush=True)
     web.run_app(app, host=host, port=port, print=None)
