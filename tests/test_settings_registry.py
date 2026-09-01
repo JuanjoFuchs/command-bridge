@@ -29,7 +29,7 @@ a regex, neither is a read, and a guard that fails on correct code is a guard so
 
 WHY THE FIXTURES. `test_the_guard_fires_on_an_unregistered_read` points this exact code path at a
 constructed module that reads a fictional variable, and asserts it is reported by name, file and
-line. Without it, the zero on `voice_tunnel/` is indistinguishable from a walker that parses
+line. Without it, the zero on `command_bridge/` is indistinguishable from a walker that parses
 nothing — and this repo has shipped a denylist that refused nothing and three diagnostics that
 never populated. The two false-positive fixtures cover the other direction.
 """
@@ -39,7 +39,7 @@ from typing import NamedTuple
 
 import pytest
 
-from voice_tunnel import cli, config
+from command_bridge import cli, config
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
@@ -47,7 +47,7 @@ FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 # TC5: the running tool only. `tests/` sets variables the code does not read — that is how the
 # retired bare-wake opt-in is proven inert — and `scripts/` are developer harnesses. Widening the
 # walk to either makes this guard fail on correct code.
-PACKAGE = ROOT / "voice_tunnel"
+PACKAGE = ROOT / "command_bridge"
 
 NAMESPACE = "VOICE_TUNNEL_"
 
@@ -212,7 +212,7 @@ def failure_report(findings: list[Read]) -> str:
 
 
 def test_the_package_declares_every_setting_it_reads():
-    """AC9. Zero unclassified reads under `voice_tunnel/`."""
+    """AC9. Zero unclassified reads under `command_bridge/`."""
     findings = unclassified_reads(PACKAGE)
     assert not findings, failure_report(findings)
 
@@ -292,7 +292,7 @@ def test_the_guard_fires_on_an_unregistered_read():
     """AC12, FR4. THE MOST IMPORTANT TEST IN THIS FILE, and it runs on every suite run.
 
     Pointed at a constructed module that reads a fictional variable, the same `scan` +
-    `classify` path used against `voice_tunnel/` must report exactly that name, with the file it
+    `classify` path used against `command_bridge/` must report exactly that name, with the file it
     is read in and the line it is read on. Delete this and AC9's zero becomes unfalsifiable.
     """
     fixture = FIXTURES / "unregistered_read" / "reads_unregistered.py"

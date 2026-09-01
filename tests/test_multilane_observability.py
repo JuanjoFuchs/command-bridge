@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from voice_tunnel import cli, server
+from command_bridge import cli, server
 
 
 class _Req:
@@ -170,7 +170,7 @@ def test_the_timing_log_can_tell_two_agents_apart(state, tmp_path):
     """AC-5 — FR5. `consumed` opens the agent's thinking time and carried only a cursor, so with
     three lanes the log could show how long an answer took and never whose. The wait was not
     stamped at all, which is why the pause he timed had to be found by reading source."""
-    from voice_tunnel import timing
+    from command_bridge import timing
 
     consumed(state, 10, "kepler")
     watching(state, "kepler", on=True)

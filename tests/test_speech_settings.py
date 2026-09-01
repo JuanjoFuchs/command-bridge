@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from voice_tunnel import cli, config
+from command_bridge import cli, config
 
 
 def run(argv, capsys):

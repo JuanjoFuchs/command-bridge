@@ -1,4 +1,4 @@
-"""voice_tunnel.download — fetch the models the tool needs but must never ship.
+"""command_bridge.download — fetch the models the tool needs but must never ship.
 
 **Why this exists.** Nothing else in the codebase downloads anything. `voices` LISTS what is
 already on disk, and every model here arrived by hand, which was invisible while the only

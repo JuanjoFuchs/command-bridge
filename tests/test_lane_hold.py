@@ -18,8 +18,8 @@ import asyncio
 
 import pytest
 
-from voice_tunnel import server
-from voice_tunnel.lanes import BROADCAST
+from command_bridge import server
+from command_bridge.lanes import BROADCAST
 
 
 class _Sock:
@@ -290,7 +290,7 @@ def test_the_off_lane_hint_tells_the_agent_to_SPEAK_not_to_wait():
     🎯 **A capability nobody is told about is not a capability.** The hold has been shipped and
     tested since spec 012; the agents using it were told, in the only place they read, to wait.
     """
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     hint = cli.DESCRIBE["commands"]["watch"]["returns"]["on_lane"]
     assert "say" in hint.lower(), "the off-lane branch must name the action, not only the wait"

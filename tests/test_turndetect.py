@@ -7,7 +7,7 @@ tests keep running with no detector at all.
 import numpy as np
 import pytest
 
-from voice_tunnel import asr, config
+from command_bridge import asr, config
 
 SR = config.TARGET_SR
 
@@ -172,7 +172,7 @@ def test_the_barge_threshold_sits_between_him_and_every_impostor():
     Measured against real recorded speech at a 1 s window: his worst score was 0.20, the agent's
     own voice through the speakers scored 0.000, and other humans scored 0.035-0.096 over full
     utterances. The threshold has to sit strictly between."""
-    from voice_tunnel import config
+    from command_bridge import config
 
     worst_him = 0.20
     best_impostor = 0.132          # highest non-owner ever recorded, see voiceprint.AUTO_THRESHOLD
@@ -189,7 +189,7 @@ def test_barge_in_is_far_below_the_attention_threshold():
     AUTO_THRESHOLD decides whether to GRANT attention — a false positive costs one wasted reply.
     BARGE_IN_THRESHOLD decides whether to STOP TALKING — a false negative means talking over him.
     A barge threshold as strict as the attention one would mean the agent almost never stops."""
-    from voice_tunnel import config, voiceprint
+    from command_bridge import config, voiceprint
 
     assert config.BARGE_IN_THRESHOLD < voiceprint.AUTO_THRESHOLD / 2
 
@@ -197,7 +197,7 @@ def test_barge_in_is_far_below_the_attention_threshold():
 def test_the_window_is_long_enough_for_the_embedder_to_answer():
     """Below ENROLL_MIN_SECONDS the embedder returns None outright, so a shorter window would make
     barge-in silently never fire — the worst kind of broken, because it looks disabled."""
-    from voice_tunnel import config, voiceprint
+    from command_bridge import config, voiceprint
 
     assert config.BARGE_IN_MIN_MS / 1000 >= voiceprint.ENROLL_MIN_SECONDS
 

@@ -1,4 +1,4 @@
-"""voice_tunnel.wake — the wake-phrase gate.
+"""command_bridge.wake — the wake-phrase gate.
 
 Decides one narrow thing: **was this turn directed at the agent?** It never decides what to do
 about it — that is the agent's job (AGENTS.md rule 1).

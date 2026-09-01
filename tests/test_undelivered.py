@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from voice_tunnel import config, server
+from command_bridge import config, server
 
 
 @pytest.fixture

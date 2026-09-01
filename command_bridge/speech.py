@@ -1,4 +1,4 @@
-"""voice_tunnel.speech — the string an agent WROTE against the string a listener NEEDS.
+"""command_bridge.speech — the string an agent WROTE against the string a listener NEEDS.
 
 Two different jobs live here, both of them string work sitting between the caller's text and
 whichever engine answers, and neither of them a property of the voice model:
@@ -139,7 +139,7 @@ allowed to follow.
 
 _DOTTED_WORD = re.compile(r"(?<![\w.])([A-Za-z_][\w-]*(?:\.[a-z][a-z0-9_-]+)+)(?!\w)")
 """An identifier, a file extension or a domain: `config.py`, `example.com`,
-`voice_tunnel.config.speech_speed`.
+`command_bridge.config.speech_speed`.
 
 **Every component after a dot must start LOWERCASE and be at least two characters**, and that
 one clause is what keeps this rule off the things AC2 forbids:
@@ -166,7 +166,7 @@ numbered list and the `.` closing a sentence are both out of reach.
 
 
 def _say_dotted_word(match: re.Match) -> str:
-    """`voice_tunnel.config.speech_speed` -> "voice tunnel dot config dot speech speed".
+    """`command_bridge.config.speech_speed` -> "voice tunnel dot config dot speech speed".
 
     The underscore goes too, and only inside a token this rule already matched. An underscore is
     not a sound — it is either read out as the word "underscore" or dropped, and neither is what

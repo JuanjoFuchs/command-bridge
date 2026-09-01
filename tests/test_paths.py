@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from voice_tunnel import config
+from command_bridge import config
 
 
 @pytest.fixture

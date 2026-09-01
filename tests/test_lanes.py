@@ -9,8 +9,8 @@ import socket
 
 import pytest
 
-from voice_tunnel import lanes
-from voice_tunnel.lanes import BROADCAST, LaneError, LaneRegistry, resolve
+from command_bridge import lanes
+from command_bridge.lanes import BROADCAST, LaneError, LaneRegistry, resolve
 
 TWO = ["claude", "codex"]
 

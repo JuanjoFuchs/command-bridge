@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from voice_tunnel import config
+from command_bridge import config
 
 # ------------------------------------------------------------------- parsing
 
@@ -187,7 +187,7 @@ def test_unset_removes_the_key(tmp_path, monkeypatch):
 # confused caller, not a hostile one, which is why every rejection names the remedy.
 
 
-@pytest.mark.parametrize("key", ["PATH", "voice_tunnel_tts", "TTS", "", "VOICE_TUNNEL tts", "VOICE_TUNNEL_TTS=x"])
+@pytest.mark.parametrize("key", ["PATH", "command_bridge_tts", "TTS", "", "VOICE_TUNNEL tts", "VOICE_TUNNEL_TTS=x"])
 def test_only_this_tools_namespace_can_be_written(key, tmp_path, monkeypatch):
     monkeypatch.setenv("VOICE_TUNNEL_ENV_FILE", str(tmp_path / ".env"))
     with pytest.raises(ValueError, match="settable key"):

@@ -39,7 +39,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PAGE = ROOT / "voice_tunnel" / "web" / "index.html"
+PAGE = ROOT / "command_bridge" / "web" / "index.html"
 TUNNEL_PORT = 8765
 
 # 🔴 COLOUR IS IDENTITY, NEVER STATUS — his ruling, 2026-08-24: *"we shouldn't make the colors

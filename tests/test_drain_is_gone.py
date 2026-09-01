@@ -21,7 +21,7 @@ import sys
 
 import pytest
 
-from voice_tunnel import cli, config
+from command_bridge import cli, config
 
 REPO = config.ROOT
 RUNNER = os.path.join(REPO, "bin", "voice-tunnel-run.py")
@@ -369,10 +369,10 @@ ALLOWED = [
     ("AGENTS.md", "This is what `drain` used to do before the wait learned to do it."),
     ("AGENTS.md", "`watch` and `drain` ran the same code under two spellings."),
     ("scripts/channel.py", "# Open the channel the way the orb does. The queue must drain on its own."),
-    ("voice_tunnel/server.py", "# WORSE than the drain it replaced — 30 s against 10.5 s."),
-    ("voice_tunnel/server.py", "# That is exactly the drain loop: while turns keep arriving,"),
-    ("voice_tunnel/web/index.html", "// clip would start its own drain loop and we would overlap."),
-    ("voice_tunnel/cli.py", "# `watch` and `drain` are aliases  <- source comment, AC17's job"),
+    ("command_bridge/server.py", "# WORSE than the drain it replaced — 30 s against 10.5 s."),
+    ("command_bridge/server.py", "# That is exactly the drain loop: while turns keep arriving,"),
+    ("command_bridge/web/index.html", "// clip would start its own drain loop and we would overlap."),
+    ("command_bridge/cli.py", "# `watch` and `drain` are aliases  <- source comment, AC17's job"),
 ]
 FORBIDDEN = [
     ("AGENTS.md", "run `voice-tunnel drain --session <s> --since <cursor>` before you reply"),
@@ -431,8 +431,8 @@ def test_the_ac18_scan_is_actually_reading_the_repo():
     Both have shipped here before, so the scope is asserted before the verdict is trusted."""
     files = _repo_files()
     assert len(files) > 50, f"the file list collapsed: {len(files)} files"
-    for expected in ("AGENTS.md", "README.md", "CHANGELOG.md", "voice_tunnel/cli.py",
-                     "scripts/orbstate.py", "voice_tunnel/web/index.html"):
+    for expected in ("AGENTS.md", "README.md", "CHANGELOG.md", "command_bridge/cli.py",
+                     "scripts/orbstate.py", "command_bridge/web/index.html"):
         assert expected in files, f"{expected} is not being scanned"
     assert not [f for f in files if f.startswith(SKIP_DIRS)], "a skipped directory leaked in"
 

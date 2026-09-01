@@ -29,7 +29,7 @@ import json
 
 import pytest
 
-from voice_tunnel import config, server, store
+from command_bridge import config, server, store
 
 # The population these payloads carry, measured against the live `dev` log on 2026-08-19 and
 # recorded in spec 011. AC7 requires the saving at MEDIAN length, not at the flattering one — a
@@ -475,7 +475,7 @@ def test_the_new_fields_are_documented_in_describe():
     A field it is never told about is a field it will not branch on — and `unread_text_omitted` is
     exactly the kind of field that has to be branched on, because ignoring it means reading a turn
     object with no `text` as a turn that was said in silence."""
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     say = cli.DESCRIBE["commands"]["say"]
 

@@ -31,7 +31,7 @@ sys.path.insert(0, ROOT)
 import numpy as np  # noqa: E402
 import sounddevice as sd  # noqa: E402
 
-from voice_tunnel import asr, security, store, tts  # noqa: E402
+from command_bridge import asr, security, store, tts  # noqa: E402
 
 OUT_MATCH = "CABLE Input"     # we play into this
 IN_MATCH = "CABLE Output"     # Chrome records from this
@@ -189,7 +189,7 @@ def main() -> int:
     )
     proc = subprocess.Popen(
         [PY, "-c",
-         f"import sys; sys.path.insert(0, r'{ROOT}'); from voice_tunnel.cli import main; "
+         f"import sys; sys.path.insert(0, r'{ROOT}'); from command_bridge.cli import main; "
          f"raise SystemExit(main(['serve','--session','{session}','--port','{port}']))"],
         cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
@@ -399,7 +399,7 @@ def _analyze_capture(wav: str, turns: list) -> None:
 
 
 def config_end_wait() -> float:
-    from voice_tunnel import config
+    from command_bridge import config
 
     return config.END_OF_UTTERANCE_MS / 1000.0 + 2.5
 

@@ -16,7 +16,7 @@ import os
 import pytest
 
 from tests.test_cli_surface import run
-from voice_tunnel import cli
+from command_bridge import cli
 
 
 @pytest.fixture()

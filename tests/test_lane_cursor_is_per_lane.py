@@ -19,7 +19,7 @@ import asyncio
 
 import pytest
 
-from voice_tunnel import server, store
+from command_bridge import server, store
 
 
 @pytest.fixture
@@ -123,7 +123,7 @@ def test_the_watchdog_prompt_names_the_per_lane_cursor():
     it saying `consumed_cursor` ships the bug to every agent that follows it. `describe` outranks
     every prose copy of this instruction, which is exactly why it has to be the one that is right.
     """
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     prompt = cli.WATCHDOG_PROMPT if hasattr(cli, "WATCHDOG_PROMPT") else cli.describe()[
         "watchdog"]["prompt"]

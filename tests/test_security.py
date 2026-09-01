@@ -5,7 +5,7 @@ GHSA-2qvv-vjq9-g5r4 (CVSS 8.6), where a spoofed header reached microphone record
 """
 import pytest
 
-from voice_tunnel import security
+from command_bridge import security
 
 
 def test_loopback_is_allowed_by_default():

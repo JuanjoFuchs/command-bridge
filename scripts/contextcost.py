@@ -11,7 +11,7 @@ historical constant.
 reset between calls, which is exactly what the tool did before this spec:
 
 * FR1's memo is `TunnelState.last_refusal`; clearing it makes the next refusal a FIRST again, and
-  that reset is a documented seam (`voice_tunnel/server.py::_unread_refusal`).
+  that reset is a documented seam (`command_bridge/server.py::_unread_refusal`).
 * FR3's memo is the per-command `next_branch` map in `<session_dir>/<session>.watch.json`;
   emptying it makes the next call of every command a first call again.
 
@@ -66,7 +66,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIVE_SESSIONS = os.path.join(ROOT, "sessions")
 sys.path.insert(0, ROOT)
 
-from voice_tunnel import cli, config, server, store  # noqa: E402
+from command_bridge import cli, config, server, store  # noqa: E402
 
 # The session NAME is `dev` because it is the one the measurement was taken against and because the
 # name is interpolated into `remedy` and into every `next` — a three-character name and a

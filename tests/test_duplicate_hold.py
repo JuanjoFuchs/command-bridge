@@ -24,7 +24,7 @@ import asyncio
 
 import pytest
 
-from voice_tunnel import server
+from command_bridge import server
 
 
 class _Sock:

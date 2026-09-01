@@ -3,7 +3,7 @@
 These run the shims as real subprocesses from an unrelated cwd, because every bug they guard
 against is invisible in-process: an import that only works from the repo root, a batch file that
 executes fragments of its own source, a launcher that resolves the wrong directory. All three
-happened; none would be caught by importing voice_tunnel.cli and calling main().
+happened; none would be caught by importing command_bridge.cli and calling main().
 """
 import json
 import os
@@ -14,13 +14,13 @@ import tempfile
 
 import pytest
 
-from voice_tunnel import config
+from command_bridge import config
 
 BIN = os.path.join(config.ROOT, "bin")
 
 
 def test_the_launcher_runs_from_an_unrelated_cwd(tmp_path):
-    """The whole point. `cwd=tmp_path` is what breaks a naive `python -m voice_tunnel.cli`, and it is the
+    """The whole point. `cwd=tmp_path` is what breaks a naive `python -m command_bridge.cli`, and it is the
     situation an agent is always in — it invokes the tool from wherever its own turn is standing.
     """
     proc = subprocess.run(
@@ -140,16 +140,16 @@ def test_no_shim_invokes_python_dash_c():
 def test_the_module_entry_runs_as_a_bare_script():
     """Reproduces the condition PyInstaller creates, which `python -m` does not.
 
-    PyInstaller takes `voice_tunnel/__main__.py` as its entry SCRIPT and executes it as
+    PyInstaller takes `command_bridge/__main__.py` as its entry SCRIPT and executes it as
     `__main__` with NO parent package. A relative `from .cli import main` is legal there at build
     time and dies at first run with `ImportError: attempted relative import with no known parent
     package`. The v0.1.0 release build succeeded and the binary failed its own smoke test.
 
-    `python -m voice_tunnel` cannot catch this — it imports the package first, so the relative
+    `python -m command_bridge` cannot catch this — it imports the package first, so the relative
     form works. Running the file BY PATH is the cheap way to reproduce the frozen condition
     without a five-minute PyInstaller build in CI.
     """
-    entry = os.path.join(os.path.dirname(BIN), "voice_tunnel", "__main__.py")
+    entry = os.path.join(os.path.dirname(BIN), "command_bridge", "__main__.py")
     assert os.path.exists(entry), entry
 
     r = subprocess.run(

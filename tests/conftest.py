@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from voice_tunnel import config
+from command_bridge import config
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +16,7 @@ def hermetic_settings(tmp_path, monkeypatch):
     Three leaks to close, all of which produce the worst kind of failure — one that depends on who
     is running the suite:
 
-    * `voice_tunnel/config.py` now loads `<repo>/.env` into os.environ. A suite that reads it would pass or
+    * `command_bridge/config.py` now loads `<repo>/.env` into os.environ. A suite that reads it would pass or
       fail according to whatever the developer last persisted, so VOICE_TUNNEL_ENV_FILE is pointed at a
       path that does not exist.
     * `load_env_file` mutates os.environ directly, so a test that triggers a load leaves VOICE_TUNNEL_*
@@ -68,7 +68,7 @@ def no_live_tunnel(monkeypatch):
     Off by default, so "no tunnel" is what every test gets unless it says otherwise; the ones
     about detection patch `_ngrok_fronts` or set VOICE_TUNNEL_PUBLIC_URL themselves.
     """
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     monkeypatch.setattr(cli, "_ngrok_fronts", lambda port: None)
     monkeypatch.delenv("VOICE_TUNNEL_PUBLIC_URL", raising=False)

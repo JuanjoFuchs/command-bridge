@@ -37,7 +37,7 @@ def declared_extras() -> set[str]:
 
 
 def sources() -> list[pathlib.Path]:
-    return sorted((ROOT / "voice_tunnel").rglob("*.py"))
+    return sorted((ROOT / "command_bridge").rglob("*.py"))
 
 
 def test_pyproject_declares_the_extras_we_expect():
@@ -116,7 +116,7 @@ def test_every_optional_import_in_the_package_is_in_the_table_above():
         # Hard dependencies in [project.dependencies], deferred only to keep CLI startup cheap —
         # they need no extra because a floor install already has them.
         "numpy", "aiohttp", "faster_whisper",
-        "voice_tunnel",                            # first-party, lazy for cycle reasons
+        "command_bridge",                            # first-party, lazy for cycle reasons
     }
     offenders = []
     for path in sources():
@@ -151,7 +151,7 @@ def test_the_all_extra_is_the_union_of_the_others():
 
 def test_setup_installs_the_all_extra():
     """`setup` is the one command that must leave nothing on a fallback."""
-    src = (ROOT / "voice_tunnel" / "cli.py").read_text(encoding="utf-8")
+    src = (ROOT / "command_bridge" / "cli.py").read_text(encoding="utf-8")
     body = src.split("def cmd_setup", 1)[1].split("\ndef ", 1)[0]
     assert "voice-tunnel[all]" in body
     for module in ("piper", "sherpa_onnx", "onnxruntime", "transformers"):

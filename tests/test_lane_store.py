@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from voice_tunnel import store
-from voice_tunnel.lanes import BROADCAST
+from command_bridge import store
+from command_bridge.lanes import BROADCAST
 
 
 @pytest.fixture()

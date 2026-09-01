@@ -1,4 +1,4 @@
-"""voice_tunnel.lanes — WHICH agent a turn is for.
+"""command_bridge.lanes — WHICH agent a turn is for.
 
 Several agents share one microphone and one transcript. Exactly one of them is **live** at a
 time, and the wake name is a switch thrown once and then remembered. So this module answers one

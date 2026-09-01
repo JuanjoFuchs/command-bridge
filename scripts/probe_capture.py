@@ -56,7 +56,7 @@ def main() -> int:
 
     proc = subprocess.Popen(
         [sys.executable, "-c",
-         f"import sys; sys.path.insert(0, r'{ROOT}'); from voice_tunnel.cli import main; "
+         f"import sys; sys.path.insert(0, r'{ROOT}'); from command_bridge.cli import main; "
          f"raise SystemExit(main(['serve','--session','probe','--port','{port}']))"],
         cwd=ROOT,
         env=dict(os.environ, VOICE_TUNNEL_DIR=tempfile.mkdtemp(), VOICE_TUNNEL_TOKEN=token),

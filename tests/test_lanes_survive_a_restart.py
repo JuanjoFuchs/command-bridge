@@ -15,7 +15,7 @@ import asyncio
 
 import pytest
 
-from voice_tunnel import server, store
+from command_bridge import server, store
 
 
 class _Req:

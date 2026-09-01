@@ -13,7 +13,7 @@ hidden" and "the pill is off the screen" are two separate claims that must both 
 WHAT IT DOES NOT DO, and this constraint shaped everything below (TC4). **A live voice session is
 running on `dev`, port 8765.** No verification for this spec may start, restart or stop a
 `voice-tunnel` server, and `layout.py`, `channel.py`, `orbstate.py`, `bargein.py` and `e2e.py` each
-start one. So this harness serves `voice_tunnel/web/index.html` over a plain `http.server` on an
+start one. So this harness serves `command_bridge/web/index.html` over a plain `http.server` on an
 ephemeral loopback port — `http://127.0.0.1` is a secure context, so `getUserMedia`,
 `enumerateDevices` and `AudioContext` are all available — and never speaks to a tunnel at all. The
 page's WebSocket 404s, `openSocket` resolves on `onerror`, and the device path runs regardless;
@@ -45,7 +45,7 @@ import tempfile
 import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WEB = os.path.join(ROOT, "voice_tunnel", "web")
+WEB = os.path.join(ROOT, "command_bridge", "web")
 PAGE = os.path.join(WEB, "index.html")
 VERBOSE = "-v" in sys.argv or "--verbose" in sys.argv
 
@@ -56,11 +56,11 @@ sys.path.insert(0, ROOT)
 from tests.test_device_pills import CASES, dev, pill_model  # noqa: E402
 
 # Read out of the source rather than imported. This harness deliberately does not import any part
-# of `voice_tunnel` — the strongest available guarantee that it cannot start one is that it never
+# of `command_bridge` — the strongest available guarantee that it cannot start one is that it never
 # loads the code that could.
 DEFAULT_PORT = int(re.search(
     r"^DEFAULT_PORT\s*=\s*(\d+)",
-    pathlib.Path(ROOT, "voice_tunnel", "config.py").read_text(encoding="utf-8"),
+    pathlib.Path(ROOT, "command_bridge", "config.py").read_text(encoding="utf-8"),
     re.M).group(1))
 
 fails = []
@@ -112,7 +112,7 @@ def _descendants():
     return out
 
 
-TUNNEL_ENTRYPOINTS = ("voice-tunnel-run.py", "-m voice_tunnel", "voice_tunnel.cli",
+TUNNEL_ENTRYPOINTS = ("voice-tunnel-run.py", "-m command_bridge", "command_bridge.cli",
                       "bin/voice-tunnel", "bin\\voice-tunnel", "voice-tunnel.cmd")
 
 
@@ -170,7 +170,7 @@ class ServerWatch:
               "ran, a detached server that reparented away before the check, or a server on a "
               "non-default port with an isolated VOICE_TUNNEL_DIR started outside this tree. "
               "The structural guarantee behind those is that this file imports no part of the "
-              "`voice_tunnel` package and spawns no subprocess except Playwright's browser.")
+              "`command_bridge` package and spawns no subprocess except Playwright's browser.")
 
 
 SERVED_PORTS = []

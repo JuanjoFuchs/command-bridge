@@ -15,8 +15,8 @@ per-name `VOICE_TUNNEL_WAKE_BARE` opt-in.
 """
 import pytest
 
-from voice_tunnel import config
-from voice_tunnel.wake import WakeGate
+from command_bridge import config
+from command_bridge.wake import WakeGate
 
 
 @pytest.fixture(autouse=True)

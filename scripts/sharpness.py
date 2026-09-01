@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS
 ---------------
-Three de-esser implementations shipped in one sitting (see `_deess` in voice_tunnel/tts.py and
+Three de-esser implementations shipped in one sitting (see `_deess` in command_bridge/tts.py and
 the 2026-08-15 entry in the project note). Each was measured as working. Every one landed on the
 owner as *"I didn't feel a difference."* The failure was not in the DSP:
 

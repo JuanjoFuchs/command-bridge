@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from voice_tunnel import voiceprint as vp
+from command_bridge import voiceprint as vp
 
 
 @pytest.fixture()

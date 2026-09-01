@@ -18,8 +18,8 @@ import time
 
 import pytest
 
-from voice_tunnel import cli, server, store
-from voice_tunnel.lanes import BROADCAST
+from command_bridge import cli, server, store
+from command_bridge.lanes import BROADCAST
 
 
 class _Req:

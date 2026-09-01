@@ -18,7 +18,7 @@ watchdog prompt says never to use it; the status payload was using it anyway.
 """
 import pytest
 
-from voice_tunnel import server, store
+from command_bridge import server, store
 
 
 @pytest.fixture

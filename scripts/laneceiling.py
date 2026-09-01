@@ -38,7 +38,7 @@ import sys
 import threading
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-WEB = ROOT / "voice_tunnel" / "web"
+WEB = ROOT / "command_bridge" / "web"
 TUNNEL_PORT = 8765
 
 # Ten names that survive a wake-word match: distinct first syllables, no shared prefix, two

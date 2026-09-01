@@ -298,7 +298,7 @@ try:
         # think as "Listening". Reported 2026-08-07: "I haven't seen the thinking that often."
         import subprocess as _sp2
 
-        _sp2.run([sys.executable, "-m", "voice_tunnel", "watch", "--session", SESSION,
+        _sp2.run([sys.executable, "-m", "command_bridge", "watch", "--session", SESSION,
                   "--since", str(api("/status")["turns_logged"] - 1), "--timeout", "2"],
                  capture_output=True, text=True, cwd=ROOT, env=env)
         time.sleep(0.8)
@@ -327,7 +327,7 @@ try:
 
         def _blocked_watch():
             t0 = time.time()
-            r = _sp.run([sys.executable, "-m", "voice_tunnel", "watch", "--session", SESSION,
+            r = _sp.run([sys.executable, "-m", "command_bridge", "watch", "--session", SESSION,
                          "--since", str(cursor_now), "--timeout", "25"],
                         capture_output=True, text=True, cwd=ROOT, env=env)
             result["elapsed"] = time.time() - t0
@@ -365,7 +365,7 @@ try:
         time.sleep(0.6)
 
         # No branch of the hint may ever tell the agent to stop watching again.
-        raw = _sp.run([sys.executable, "-m", "voice_tunnel", "watch", "--session", SESSION,
+        raw = _sp.run([sys.executable, "-m", "command_bridge", "watch", "--session", SESSION,
                        "--since", str(api("/status")["turns_logged"] - 1), "--timeout", "2"],
                       capture_output=True, text=True, cwd=ROOT, env=env).stdout
         check("stop watching" not in raw, "no hint tells the agent to stop watching", raw[-90:])

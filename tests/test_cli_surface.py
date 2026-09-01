@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from voice_tunnel import cli, config, lanes
+from command_bridge import cli, config, lanes
 
 
 def run(argv, capsys):
@@ -390,12 +390,12 @@ def test_describe_reports_the_installed_version_not_a_literal():
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version as pkg_version
 
-    import voice_tunnel
+    import command_bridge
 
     try:
         installed = pkg_version("voice-tunnel")
     except PackageNotFoundError:
         pytest.skip("not installed; nothing to compare against")
 
-    assert voice_tunnel.__version__ == installed
+    assert command_bridge.__version__ == installed
     assert cli.DESCRIBE["version"] == installed

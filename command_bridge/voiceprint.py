@@ -1,4 +1,4 @@
-"""voice_tunnel.voiceprint — learn what the owner sounds like, so the wake word stops being mandatory.
+"""command_bridge.voiceprint — learn what the owner sounds like, so the wake word stops being mandatory.
 
 The wake word has been the weakest link in this project. A general-purpose recognizer rendered
 "Claude" as Grab, Grub, God, Well, Joe, Clock, Clos, quote, club and Crawley and never once got

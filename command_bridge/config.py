@@ -1,4 +1,4 @@
-"""voice_tunnel.config — every tunable in one place, each with the reason it has that value.
+"""command_bridge.config — every tunable in one place, each with the reason it has that value.
 
 Config-as-data (AGENTS.md convention 5): a number scattered in code is a number nobody dares
 change. A number here with its rationale is one an operator can reason about.
@@ -164,7 +164,7 @@ The latency that actually mattered was never this — Parakeet cut transcription
 # enough to still cut off someone composing out loud and long enough to make every short question
 # wait — and no single number fixes both, because the right wait depends on whether the sentence
 # SOUNDED finished. Smart Turn v3.2 answers that from prosody, at the boundary the segmenter
-# already has. See specs/004-turn-detection.md and voice_tunnel/turndetect.py.
+# already has. See specs/004-turn-detection.md and command_bridge/turndetect.py.
 #
 # Defaults are HuggingFace's production values, adopted rather than re-derived: they ship this
 # model on by default in speech-to-speech, which runs on thousands of Reachy Mini robots. Taking

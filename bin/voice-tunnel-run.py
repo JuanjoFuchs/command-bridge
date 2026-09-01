@@ -3,7 +3,7 @@
 
 WHY THIS FILE EXISTS. The shims used to invoke the CLI as an inline program:
 
-    python -c "import sys; sys.path.insert(0, r'$VOICE_TUNNEL_ROOT'); from voice_tunnel.cli import main; ..."
+    python -c "import sys; sys.path.insert(0, r'$VOICE_TUNNEL_ROOT'); from command_bridge.cli import main; ..."
 
 which fails in two ways that are only visible on Windows. First, `$VOICE_TUNNEL_ROOT` had to be spliced
 into a Python raw string, so a root ending in a backslash — what `cygpath -w` returns for a drive
@@ -22,7 +22,7 @@ import sys
 # in the interpreter's site-packages — a shim named after a directory must mean that directory.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from voice_tunnel.cli import main  # noqa: E402
+from command_bridge.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(main())

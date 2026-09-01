@@ -1,4 +1,4 @@
-"""voice_tunnel.cli — the surface an agent drives.
+"""command_bridge.cli — the surface an agent drives.
 
 `describe` is the contract and the live source of truth. If you add a command, update
 `describe` in the same commit — an agent reads `describe`, not the README (AGENTS.md rule 3).
@@ -1356,7 +1356,7 @@ DESCRIBE: dict[str, Any] = {
                "each invocation. A setting repeated on every call is a setting that will "
                "eventually be repeated wrong.",
     },
-    # Generated from voice_tunnel.config.SETTINGS, never hand-listed: the previous hand-written block
+    # Generated from command_bridge.config.SETTINGS, never hand-listed: the previous hand-written block
     # documented 8 of the 17 variables the code reads, and the ones it omitted (VOICE_TUNNEL_PIPER_BIN,
     # VOICE_TUNNEL_PIPER_VOICE) were exactly the ones an agent could not run piper without.
     "env": {s["key"]: s["what"] for s in config.SETTINGS},
@@ -1745,12 +1745,12 @@ def cmd_describe(args) -> dict[str, Any]:
             "no_env_vars_needed": INVOCATION["no_env_vars_needed"],
             "no_python_dash_c": (
                 "Never invoke this as `python -c \"import sys; sys.path.insert(...)\"`. "
-                f"`{sys.executable} -m voice_tunnel <command>` is the equivalent that works."
+                f"`{sys.executable} -m command_bridge <command>` is the equivalent that works."
             ),
             "if_not_found": (
                 f"This is an installed package, not a checkout — there is no repo and no bin/. "
                 f"The console script is in {scripts}; put that on PATH, call it by absolute "
-                f"path, or run `{sys.executable} -m voice_tunnel <command>`."
+                f"path, or run `{sys.executable} -m command_bridge <command>`."
             ),
             "settings_file": config.env_file_path(),
             "first_call": INVOCATION["first_call"],

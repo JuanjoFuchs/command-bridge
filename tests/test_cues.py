@@ -3,7 +3,7 @@ import struct
 
 import pytest
 
-from voice_tunnel import config, cues
+from command_bridge import config, cues
 
 
 def _samples(pcm):

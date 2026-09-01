@@ -1,4 +1,4 @@
-"""voice_tunnel.timing — where did the time actually go.
+"""command_bridge.timing — where did the time actually go.
 
 **Why this exists.** Twice in one live session the answer to "why is this slow" had to be
 reconstructed by hand, from clip IDs and log wall-clocks, after the fact. Both times the guess

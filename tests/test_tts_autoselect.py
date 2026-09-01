@@ -14,7 +14,7 @@ import os
 import pytest
 
 from tests.test_cli_surface import run
-from voice_tunnel import config
+from command_bridge import config
 
 
 @pytest.fixture()
@@ -139,7 +139,7 @@ def test_next_names_setup_when_setup_is_what_fixes_it(clean, tmp_sessions, capsy
     The platform is patched rather than the test skipped, because the platform this is developed
     on is the one platform where the bug is invisible.
     """
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     clean.setattr(config, "piper_voice", lambda: "")
     clean.setattr(config, "have_module", lambda _n: False)

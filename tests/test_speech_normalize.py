@@ -21,7 +21,7 @@ judge of it (TC1).
 import pytest
 
 from tests.test_cli_surface import run
-from voice_tunnel import cli, speech, timing, tts
+from command_bridge import cli, speech, timing, tts
 
 # ============================================================ AC1: the FR2 table, class by class
 
@@ -45,9 +45,9 @@ def test_a_dotted_number_is_voiced_with_point(text, expected):
 
 
 @pytest.mark.parametrize("text, expected", [
-    # dotted identifier -> "dot". The underscore goes with it: it is not a sound, and "voice
-    # underscore tunnel" is not what an engineer says.
-    ("voice_tunnel.config.speech_speed", "voice tunnel dot config dot speech speed"),
+    # dotted identifier -> "dot". The underscore goes with it: it is not a sound, and "command
+    # underscore bridge" is not what an engineer says.
+    ("command_bridge.config.speech_speed", "command bridge dot config dot speech speed"),
     # file extension
     ("config.py", "config dot py"),
     ("README.md", "README dot md"),
@@ -252,7 +252,7 @@ def test_the_gap_is_a_fraction_of_his_own_pause_rather_than_a_number_of_seconds(
     """`rate --pause` is tuned by ear and its own note tells him to raise it when a list runs
     together. A clause break stated in absolute seconds would stop tracking that, and could
     overtake the sentence pause at the bottom of the permitted range."""
-    from voice_tunnel import config
+    from command_bridge import config
 
     for pause in (0.3, config.SENTENCE_SILENCE_S, 0.85, config.PAUSE_MAX):
         clause = pause * speech.CLAUSE_PAUSE_RATIO
@@ -298,7 +298,7 @@ def test_the_kokoro_path_inserts_the_shorter_gap_for_a_comma(monkeypatch):
     """The wiring, not just the arithmetic — with a stub standing in for the model, so no model
     is loaded and nothing is synthesized. What is measured is the number of ZERO bytes inserted
     between pieces, which is the same silence the acceptance harness measures in the audio."""
-    from voice_tunnel import config
+    from command_bridge import config
 
     class _Stub:
         def create(self, text, voice=None, speed=1.0, lang=None):
@@ -386,7 +386,7 @@ def test_the_say_path_records_the_normalised_string_against_the_clip_id(tmp_sess
     over. What IS verified is the part that carries the requirement — that the helper the say path
     calls writes the normalised form beside the clip id, in the log `voice-tunnel timing` reads.
     """
-    from voice_tunnel import server
+    from command_bridge import server
 
     returned = server.record_spoken("dev", "clip-42", "We are on 0.2.6.", 0.9)
     events = [e for e in timing.read("dev") if e.get("stage") == "spoken"]
@@ -400,9 +400,9 @@ def test_the_say_path_records_the_normalised_string_against_the_clip_id(tmp_sess
 
 def test_the_recorded_string_is_the_one_synthesis_would_have_used(handed, tmp_sessions):
     """Same anti-drift rule as `pronounce`: recorded, not re-derived by a parallel rendering."""
-    from voice_tunnel import server
+    from command_bridge import server
 
-    text = "Open .env and read voice_tunnel.config.speech_speed."
+    text = "Open .env and read command_bridge.config.speech_speed."
 
     recorded = server.record_spoken("dev", "clip-1", text, 0.0)
     tts.synthesize(text, backend="none")

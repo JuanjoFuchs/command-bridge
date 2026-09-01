@@ -17,8 +17,8 @@ import urllib.error
 
 import pytest
 
-from voice_tunnel import cli
-from voice_tunnel.server import TunnelState
+from command_bridge import cli
+from command_bridge.server import TunnelState
 
 
 @pytest.fixture()

@@ -9,7 +9,7 @@ import os
 import pytest
 
 from tests.test_cli_surface import run
-from voice_tunnel import cli
+from command_bridge import cli
 
 
 def test_setup_is_named_by_every_remedy_it_actually_fixes(capsys, tmp_sessions, monkeypatch):
@@ -95,7 +95,7 @@ def test_the_live_wake_name_is_in_the_status_snapshot():
     """`voice-tunnel wake` compares persisted against live, and the live half read null forever
     because the snapshot never carried it — next to correct live phrases, which made it look like
     the server had a name it would not admit to."""
-    from voice_tunnel.server import TunnelState
+    from command_bridge.server import TunnelState
 
     snap = TunnelState(session="t", token=None).snapshot()
     assert snap.get("wake"), "the running gate's name belongs in status"

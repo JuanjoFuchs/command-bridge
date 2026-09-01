@@ -1,4 +1,4 @@
-"""voice_tunnel.security — who may reach the socket, and who may open a session.
+"""command_bridge.security — who may reach the socket, and who may open a session.
 
 Read ai-docs/reference/security.md before changing anything here. The short version:
 

@@ -26,7 +26,7 @@ Three things get measured here:
 3. **Does a different voice beat the filter?** The open Next Action is "a better voice"; this
    prices that against the de-esser without anyone having to listen to ten clips.
 
-Attempts 2 and 3 run the REAL shipped `_deess` from voice_tunnel/tts.py. Attempt 1 was replaced
+Attempts 2 and 3 run the REAL shipped `_deess` from command_bridge/tts.py. Attempt 1 was replaced
 and no longer exists in the tree, so it is RECONSTRUCTED here from its description -- and the
 reconstruction is checked against the effect size recorded at the time (-33% high-band energy),
 so a bad reconstruction shows up as a failed check rather than as a quiet wrong answer.
@@ -219,12 +219,12 @@ def attempt2_spectral_no_shelf(pcm: bytes, rate: int, strength: float = 0.6) -> 
 
 
 def attempt3_shipped(pcm: bytes, rate: int, strength: float = 0.6) -> bytes:
-    """The de-esser CURRENTLY IN THE TREE -- calls voice_tunnel.tts._deess directly.
+    """The de-esser CURRENTLY IN THE TREE -- calls command_bridge.tts._deess directly.
 
     Not a reconstruction. Whatever is in tts.py is what gets scored, so this stays honest if the
     file changes underneath.
     """
-    from voice_tunnel import config, tts
+    from command_bridge import config, tts
     old = os.environ.get("VOICE_TUNNEL_DEESS")
     os.environ["VOICE_TUNNEL_DEESS"] = str(strength)
     try:
@@ -240,7 +240,7 @@ def attempt3_shipped(pcm: bytes, rate: int, strength: float = 0.6) -> bytes:
 def _spectral(pcm: bytes, rate: int, strength: float, floor_frac: float) -> bytes:
     """Shared implementation of the spectral de-esser, parameterised by the shelf floor.
 
-    Mirrors voice_tunnel/tts.py::_deess. Duplicated rather than imported because the whole point
+    Mirrors command_bridge/tts.py::_deess. Duplicated rather than imported because the whole point
     is to run it with a floor the shipped code does not expose -- and editing tts.py to expose it
     would mean the measuring apparatus modifying the thing being measured.
     """
@@ -341,7 +341,7 @@ def render(text: str, voice: str, name: str, backend: str = "piper") -> tuple[st
     """Render with the de-esser OFF, so every variant below starts from identical raw audio."""
     os.environ["VOICE_TUNNEL_TTS"] = backend
     os.environ["VOICE_TUNNEL_DEESS"] = "0"
-    from voice_tunnel import tts
+    from command_bridge import tts
     pcm, rate = tts.synthesize(text, backend=backend, voice=voice)
     return write_wav(_out(f"{name}.wav"), pcm, rate), pcm, rate
 
@@ -352,7 +352,7 @@ def finish(pcm: bytes, rate: int, name: str) -> str:
     `normalize` matters more than it looks: it is the peak normaliser that "hands part of the
     level straight back" after a ducking de-esser, and leaving it out would flatter attempt 1.
     """
-    from voice_tunnel import tts
+    from command_bridge import tts
     return write_wav(_out(f"{name}.wav"), tts.pad(tts.normalize(pcm), rate), rate)
 
 

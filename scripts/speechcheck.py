@@ -79,7 +79,7 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from voice_tunnel import asr, config, tts  # noqa: E402  (after sys.path)
+from command_bridge import asr, config, tts  # noqa: E402  (after sys.path)
 
 # --------------------------------------------------------------------------------------------
 # Choices this harness makes. Every one is a decision, not a law, so each is named and printed.
@@ -127,11 +127,11 @@ def load_transform():
     authored by the same pass that authors the fix can only agree with it.
     """
     try:
-        from voice_tunnel.speech import normalize_for_speech
+        from command_bridge.speech import normalize_for_speech
     except Exception as exc:  # ImportError today, anything at all once it exists
         return None, f"{type(exc).__name__}: {exc}"
     if not callable(normalize_for_speech):
-        return None, "voice_tunnel.speech.normalize_for_speech is not callable"
+        return None, "command_bridge.speech.normalize_for_speech is not callable"
     return normalize_for_speech, None
 
 
@@ -140,7 +140,7 @@ def on_path_transform_disabled():
     """Neutralise whatever normalisation the synthesis path applies for itself.
 
     See the module docstring: this is what keeps AC5 a real negative arm instead of a second
-    copy of AC4. Patches every `normalize_for_speech` bound anywhere under `voice_tunnel.`,
+    copy of AC4. Patches every `normalize_for_speech` bound anywhere under `command_bridge.`,
     which covers both `from .speech import normalize_for_speech` and `speech.normalize_for_speech(...)`
     call styles, and restores them all on the way out.
     """
@@ -149,7 +149,7 @@ def on_path_transform_disabled():
 
     patched = []
     for name, mod in list(sys.modules.items()):
-        if not (name == "voice_tunnel" or name.startswith("voice_tunnel.")):
+        if not (name == "command_bridge" or name.startswith("command_bridge.")):
             continue
         fn = getattr(mod, "normalize_for_speech", None)
         if callable(fn):
@@ -394,7 +394,7 @@ CLIPS = [
      "AC4 — the acceptance case JJ named"),
     ("R3", "Open config.py.", True,
      "AC6 — file extension"),
-    ("R4", "Check voice_tunnel.config.speech_speed now.", True,
+    ("R4", "Check command_bridge.config.speech_speed now.", True,
      "AC6 — dotted identifier"),
     ("O1", "Wait... really?", True,
      "TC2 — an ellipsis is prosody, not three points"),
@@ -630,7 +630,7 @@ def print_header(env: dict, normalize, why_missing: str | None) -> None:
         print("                   Slice A has not landed. Positive arms report the UN-NORMALISED")
         print("                   baseline and are marked BLOCKED, never PASS.")
     else:
-        print("  TRANSFORM      : voice_tunnel.speech.normalize_for_speech  AVAILABLE")
+        print("  TRANSFORM      : command_bridge.speech.normalize_for_speech  AVAILABLE")
     print(f"  silence detect : {WINDOW_MS:.0f} ms windows, {SILENCE_REL_DB:.0f} dB below the "
           f"clip's peak window, runs >= {MIN_SILENCE_MS:.0f} ms count, "
           f">= {REPORT_SILENCE_MS:.0f} ms reported, padding trimmed")
@@ -753,7 +753,7 @@ DESCRIBE = {
                              "applies it to exactly one arm. Once FR1 puts normalisation on the "
                              "path, an unpatched negative arm is normalised too and AC5 becomes a "
                              "second copy of AC4 that passes and means nothing.",
-        "no_local_transform": "If voice_tunnel.speech.normalize_for_speech is missing, the positive "
+        "no_local_transform": "If command_bridge.speech.normalize_for_speech is missing, the positive "
                               "arms report the un-normalised BASELINE and are marked BLOCKED. This "
                               "harness never implements the thing it measures.",
         "cache": "Measurements are cached under LOCALAPPDATA keyed on the FINAL STRING plus the full "

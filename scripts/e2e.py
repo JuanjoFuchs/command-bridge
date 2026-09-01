@@ -28,7 +28,7 @@ import wave
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from voice_tunnel import config, security, store, tts  # noqa: E402
+from command_bridge import config, security, store, tts  # noqa: E402
 
 # Built from the CONFIGURED wake name, not hardcoded. The name is a setting now, and a gate that
 # speaks the old one tests nothing except that the old one still works.
@@ -70,7 +70,7 @@ def build_fake_mic(path: str) -> str:
     """
     import numpy as np
 
-    from voice_tunnel import asr as _asr
+    from command_bridge import asr as _asr
 
     pcm, rate = tts.synthesize(SPOKEN, backend="sapi")
 
@@ -179,7 +179,7 @@ def run(headed: bool, keep: bool) -> int:
     print(f"\n== start the tunnel ==  (port {port}, session {session})")
     proc = subprocess.Popen(
         [PY, "-c",
-         f"import sys; sys.path.insert(0, r'{ROOT}'); from voice_tunnel.cli import main; "
+         f"import sys; sys.path.insert(0, r'{ROOT}'); from command_bridge.cli import main; "
          f"raise SystemExit(main(['serve','--session','{session}','--port','{port}']))"],
         cwd=ROOT, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -464,7 +464,7 @@ def run(headed: bool, keep: bool) -> int:
         def cli(*argv, timeout=180):
             r = subprocess.run(
                 [PY, "-c",
-                 f"import sys; sys.path.insert(0, r'{ROOT}'); from voice_tunnel.cli import main; "
+                 f"import sys; sys.path.insert(0, r'{ROOT}'); from command_bridge.cli import main; "
                  f"raise SystemExit(main({list(argv)!r}))"],
                 cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout,
             )

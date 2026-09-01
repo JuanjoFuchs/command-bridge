@@ -17,8 +17,8 @@ The failures, for whoever changes this next:
 """
 import types
 
-import voice_tunnel.cli as cli
-from voice_tunnel import store
+import command_bridge.cli as cli
+from command_bridge import store
 
 
 def _args(**kw):

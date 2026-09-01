@@ -1,4 +1,4 @@
-"""voice_tunnel.asr — utterance-buffered speech recognition.
+"""command_bridge.asr — utterance-buffered speech recognition.
 
 **Why this is simpler than a streaming ASR.** A meeting transcriber works where
 you cannot wait for a speaker to stop — it needs incremental commits (LocalAgreement-2) to react
@@ -101,7 +101,7 @@ class UtteranceBuffer:
         and every one of those tests would start depending on an 8 MB download.
 
         `None` means "no opinion": unavailable, or it failed. The timer decides, exactly as it did
-        before this existed. See voice_tunnel/turndetect.py and specs/004-turn-detection.md.
+        before this existed. See command_bridge/turndetect.py and specs/004-turn-detection.md.
         """
         self._last_asked_silence = -10**9
         """Trailing-silence count at the last early check, so `feed` cannot run the model on

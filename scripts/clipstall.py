@@ -36,7 +36,7 @@ import sys
 import threading
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WEB = os.path.join(REPO, "voice_tunnel", "web")
+WEB = os.path.join(REPO, "command_bridge", "web")
 SESSIONS = os.path.join(REPO, "sessions")
 DEFAULT_PORT = 8765
 SERVED_PORTS: list[int] = []

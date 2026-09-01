@@ -8,8 +8,8 @@ import tarfile
 
 import pytest
 
-from voice_tunnel import config
-from voice_tunnel import download as dl
+from command_bridge import config
+from command_bridge import download as dl
 
 
 def test_a_voice_name_derives_its_own_url():
@@ -221,7 +221,7 @@ def test_a_parakeet_model_without_sherpa_falls_back_to_whisper(tmp_path, monkeyp
     """THE regression. Selecting on model presence alone means `download asr` — 600 MB — flips
     the engine to an implementation that is not installed, and the failure lands at the first
     spoken word rather than at the download."""
-    from voice_tunnel import config
+    from command_bridge import config
 
     monkeypatch.setenv("VOICE_TUNNEL_PARAKEET_DIR", str(tmp_path))
     monkeypatch.delenv("VOICE_TUNNEL_ASR", raising=False)
@@ -233,7 +233,7 @@ def test_a_parakeet_model_without_sherpa_falls_back_to_whisper(tmp_path, monkeyp
 def test_an_explicit_engine_is_still_obeyed(tmp_path, monkeypatch):
     """Someone who names an engine deserves the error, not a silent substitution — and `doctor`
     is where the mismatch gets explained."""
-    from voice_tunnel import config
+    from command_bridge import config
 
     monkeypatch.setenv("VOICE_TUNNEL_ASR", "parakeet")
     monkeypatch.setattr(config, "have_module", lambda name: name != "sherpa_onnx")
@@ -242,7 +242,7 @@ def test_an_explicit_engine_is_still_obeyed(tmp_path, monkeypatch):
 
 
 def test_both_halves_present_selects_parakeet(tmp_path, monkeypatch):
-    from voice_tunnel import config
+    from command_bridge import config
 
     monkeypatch.setenv("VOICE_TUNNEL_PARAKEET_DIR", str(tmp_path))
     monkeypatch.delenv("VOICE_TUNNEL_ASR", raising=False)
@@ -259,7 +259,7 @@ def test_doctor_accepts_piper_without_an_executable(monkeypatch, tmp_path, capsy
     bundle, which reported `bin=(not found)` while synthesis was demonstrably working.
     """
 
-    from voice_tunnel import cli, config
+    from command_bridge import cli, config
 
     voice = tmp_path / "en_GB-alan-medium.onnx"
     voice.write_bytes(b"\0" * (2 << 20))

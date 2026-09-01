@@ -37,7 +37,7 @@ import types
 
 import pytest
 
-from voice_tunnel import cli, config, server, store
+from command_bridge import cli, config, server, store
 
 # --------------------------------------------------------------------------- shared fixtures
 

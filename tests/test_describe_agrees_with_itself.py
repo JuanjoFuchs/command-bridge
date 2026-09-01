@@ -17,7 +17,7 @@ import argparse
 import pytest
 
 from tests.test_cli_surface import run
-from voice_tunnel import cli
+from command_bridge import cli
 
 # ------------------------------------------------------------------- `say`'s return shape
 
@@ -189,7 +189,7 @@ def test_the_published_ladder_is_the_one_the_code_computes():
 def test_the_ladder_is_generated_rather_than_typed():
     """Change the cap and the document has to follow, or this is just a fourth hand-written copy
     of a number that has already drifted three ways."""
-    import voice_tunnel.cli as c
+    import command_bridge.cli as c
 
     original = c.WATCH_BACKOFF_MAX_S
     try:

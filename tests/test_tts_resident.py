@@ -12,7 +12,7 @@ import threading
 
 import pytest
 
-from voice_tunnel import config, tts
+from command_bridge import config, tts
 
 # ----------------------------------------------------------------- a stub voice
 
@@ -278,7 +278,7 @@ def test_the_missing_model_remedy_names_a_command_that_exists(monkeypatch, tmp_p
     command the parser rejects is worse than no remedy."""
     import argparse
 
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     monkeypatch.setattr(config, "models_dir", lambda: str(tmp_path))
     monkeypatch.setattr(config, "kokoro_model", lambda: "")

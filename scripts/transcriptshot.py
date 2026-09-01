@@ -29,7 +29,7 @@ import sys
 import threading
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-WEB = ROOT / "voice_tunnel" / "web"
+WEB = ROOT / "command_bridge" / "web"
 TUNNEL_PORT = 8765
 
 # Every message the page needs to believe three agents are in the room. Delivered through

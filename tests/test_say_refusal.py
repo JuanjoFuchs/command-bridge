@@ -25,7 +25,7 @@ import json
 
 import pytest
 
-from voice_tunnel import config, server, store
+from command_bridge import config, server, store
 
 
 class _Req:
@@ -166,7 +166,7 @@ def test_the_cli_exits_one_with_the_documented_code(monkeypatch, capsys):
     """AC3. Non-zero, and the exit code documented for it: 1, the operation failed with .error and
     .remedy in the payload. The slug is what an agent branches on; the exit code is what it can
     branch on before parsing anything."""
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     refusal = {"spoke": False, "error": "refusing to speak: he said 1 thing(s) you have not read.",
                "code": config.UNREAD_REFUSAL_CODE,
@@ -187,7 +187,7 @@ def test_the_cli_exits_one_with_the_documented_code(monkeypatch, capsys):
 def test_a_refusal_does_not_get_the_clip_branches(monkeypatch, capsys):
     """The branches after a `say` are all about the fate of a CLIP — held, delivered, stale. There
     is no clip, so describing one would be inventing an event."""
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     monkeypatch.setattr(cli, "_request", lambda *a, **k: {
         "spoke": False, "error": "refusing", "code": config.UNREAD_REFUSAL_CODE,
@@ -204,7 +204,7 @@ def test_a_refusal_does_not_get_the_clip_branches(monkeypatch, capsys):
 def test_the_code_slug_is_in_the_documented_code_list_and_the_commands_own_docs():
     """AC4, convention 3. An agent reads `describe`, not this file — a slug it is told to branch
     on that appears nowhere in the contract is a slug it will never write a branch for."""
-    from voice_tunnel import cli
+    from command_bridge import cli
 
     assert config.UNREAD_REFUSAL_CODE in cli.DESCRIBE["error_codes"]
     assert "Exit 1" in cli.DESCRIBE["error_codes"][config.UNREAD_REFUSAL_CODE]
@@ -224,7 +224,7 @@ def test_no_flag_anywhere_on_say_disables_the_check():
     for, which is why this repo has already deleted one such flag from another queue."""
     import argparse as _argparse
 
-    from voice_tunnel import cli
+    from command_bridge import cli
     sub = next(a for a in cli.build_parser()._actions
                if isinstance(a, _argparse._SubParsersAction))
     flags = {o for a in sub.choices["say"]._actions for o in a.option_strings}

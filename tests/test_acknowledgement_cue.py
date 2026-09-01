@@ -24,7 +24,7 @@ import types
 import numpy as np
 import pytest
 
-from voice_tunnel import cues, server, store
+from command_bridge import cues, server, store
 
 
 class _Client:

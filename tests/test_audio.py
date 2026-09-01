@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from voice_tunnel import asr, config, tts
+from command_bridge import asr, config, tts
 
 # --------------------------------------------------------------- PCM handling
 
@@ -336,7 +336,7 @@ def test_the_deesser_attenuates_a_sibilant_burst():
     """
     import numpy as np
 
-    from voice_tunnel import tts
+    from command_bridge import tts
 
     rate = 22050
     t = np.arange(rate // 2) / rate
@@ -354,7 +354,7 @@ def test_the_deesser_leaves_a_vowel_alone():
     back bit-identical."""
     import numpy as np
 
-    from voice_tunnel import tts
+    from command_bridge import tts
 
     rate = 22050
     t = np.arange(rate // 2) / rate
@@ -368,7 +368,7 @@ def test_deess_zero_is_a_true_bypass():
     costs a float32 round trip on every clip."""
     import numpy as np
 
-    from voice_tunnel import config, tts
+    from command_bridge import config, tts
 
     rate = 22050
     t = np.arange(1000) / rate
@@ -392,7 +392,7 @@ def test_a_midrange_tone_is_not_treated_as_sibilance():
     """
     import numpy as np
 
-    from voice_tunnel import tts
+    from command_bridge import tts
 
     rate = 22050
     t = np.arange(rate // 2) / rate
@@ -415,7 +415,7 @@ def test_the_deesser_cuts_the_band_and_not_the_level():
     """
     import numpy as np
 
-    from voice_tunnel import config, tts
+    from command_bridge import config, tts
 
     rate = 22050
     t = np.arange(rate // 3) / rate

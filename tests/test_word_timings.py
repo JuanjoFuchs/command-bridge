@@ -19,7 +19,7 @@ result describes the real timeline; these prove the arithmetic, which is what wo
 import numpy as np
 import pytest
 
-from voice_tunnel import config, tts
+from command_bridge import config, tts
 
 SPACE = 16          # the space token in kokoro's vocab; word boundaries are a split on it
 UNIT = tts.KOKORO_UNIT_SAMPLES

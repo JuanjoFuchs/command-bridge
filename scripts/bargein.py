@@ -58,8 +58,8 @@ def his_voice(seconds: float) -> np.ndarray:
 
 def agent_voice(seconds: float) -> np.ndarray:
     """The agent's own TTS — what leaks back through the speakers."""
-    from voice_tunnel import config, tts
-    from voice_tunnel.asr import resample_linear
+    from command_bridge import config, tts
+    from command_bridge.asr import resample_linear
 
     pcm, rate = tts.synthesize("This is the agent speaking a reply that should not interrupt "
                                "itself, however loudly it comes back through the microphone.")
@@ -81,7 +81,7 @@ async def _say(s, url: str) -> None:
 
 
 async def drive(label: str, audio: np.ndarray, expect_barge: bool) -> None:
-    from voice_tunnel import config
+    from command_bridge import config
 
     url = f"http://127.0.0.1:{PORT}"
     async with aiohttp.ClientSession() as s:

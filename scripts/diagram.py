@@ -23,7 +23,7 @@ WHAT IS BORROWED FROM IT:
     the other way.
   - A three-colour palette applied by role, and a title/label/caption type scale.
 
-The colours are the phone client's own (`voice_tunnel/web/index.html`): warm is "a human has
+The colours are the phone client's own (`command_bridge/web/index.html`): warm is "a human has
 the floor", cool is "the machine has it". The README and the thing it documents should not
 disagree about what a colour means.
 """

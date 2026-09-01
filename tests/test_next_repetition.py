@@ -29,7 +29,7 @@ import types
 
 import pytest
 
-import voice_tunnel.cli as cli
+import command_bridge.cli as cli
 
 SESSION = "s"
 CURSOR = 1354

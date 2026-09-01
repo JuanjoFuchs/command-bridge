@@ -1,6 +1,6 @@
 """FALSE-POSITIVE CONTROL: a read whose name is computed cannot be resolved, and must not fail.
 
-`voice_tunnel/` contains several of these and every one is legitimate — the `_env` helper itself,
+`command_bridge/` contains several of these and every one is legitimate — the `_env` helper itself,
 `config get` / `config set` resolving the key a user typed, and the `effective()` walk over
 `SETTINGS`. That is the generic plumbing which makes a registry a registry: it reads whatever
 name it is handed, so there is no literal for a source walk to find and nothing for it to check.

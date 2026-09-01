@@ -14,7 +14,7 @@ comment is one the next edit re-introduces.
 import pathlib
 import re
 
-SERVER = pathlib.Path(__file__).resolve().parents[1] / "voice_tunnel" / "server.py"
+SERVER = pathlib.Path(__file__).resolve().parents[1] / "command_bridge" / "server.py"
 
 
 def _control_handler() -> str:

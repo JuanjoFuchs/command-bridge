@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from voice_tunnel import config
+from command_bridge import config
 
 
 @pytest.fixture()
@@ -192,7 +192,7 @@ def test_this_install_s_own_shim_is_a_clean_pass(capsys, tmp_sessions, tmp_path,
 def test_downloads_say_bytes_fetched_not_bytes(tmp_path, monkeypatch):
     """`bytes: 0` read as 'this file is empty'; it meant 'nothing was downloaded'."""
     monkeypatch.setenv("VOICE_TUNNEL_MODELS_DIR", str(tmp_path))
-    src = (config.ROOT and os.path.join(config.ROOT, "voice_tunnel", "download.py"))
+    src = (config.ROOT and os.path.join(config.ROOT, "command_bridge", "download.py"))
     text = open(src, encoding="utf-8").read()
     assert '"bytes":' not in text, "the ambiguous key is back"
     assert '"bytes_fetched":' in text

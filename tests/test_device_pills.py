@@ -52,7 +52,7 @@ import re
 
 import pytest
 
-PAGE = pathlib.Path(__file__).resolve().parents[1] / "voice_tunnel" / "web" / "index.html"
+PAGE = pathlib.Path(__file__).resolve().parents[1] / "command_bridge" / "web" / "index.html"
 
 # ---------------------------------------------------------------------------------------------
 # The reference model.

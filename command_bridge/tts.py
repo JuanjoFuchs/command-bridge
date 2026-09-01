@@ -1,4 +1,4 @@
-"""voice_tunnel.tts — text to speech, pluggable backend.
+"""command_bridge.tts — text to speech, pluggable backend.
 
 Backends:
   * ``sapi``  — Windows System.Speech via PowerShell. Zero install, fully offline, present on
@@ -15,7 +15,7 @@ down between clips and swallow the first ~100 ms. This project is phone-first, s
 session is Bluetooth, and unpadded audio presents as "the TTS is broken".
 
 Output is always mono 16-bit PCM. The SAMPLE RATE is the backend's own and travels back with the
-audio — :data:`voice_tunnel.config.TTS_SR` for SAPI and piper, 24 kHz for kokoro. Assuming one
+audio — :data:`command_bridge.config.TTS_SR` for SAPI and piper, 24 kHz for kokoro. Assuming one
 global rate here would either resample kokoro down for nothing or play it 9% slow.
 """
 from __future__ import annotations

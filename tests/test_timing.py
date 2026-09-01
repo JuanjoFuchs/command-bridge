@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from voice_tunnel import timing
+from command_bridge import timing
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def session(tmp_path, monkeypatch):
 
 def _write(session, rows):
     """Write events with explicit monotonic values, so durations are asserted not measured."""
-    import voice_tunnel.config as config
+    import command_bridge.config as config
 
     with open(timing.path(session), "w", encoding="utf-8") as fh:
         for stage, mono, extra in rows:

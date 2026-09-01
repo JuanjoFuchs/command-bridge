@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
-from voice_tunnel import server
-from voice_tunnel.lanes import BROADCAST
+from command_bridge import server
+from command_bridge.lanes import BROADCAST
 
 
 class _Req:

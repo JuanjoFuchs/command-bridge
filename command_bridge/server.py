@@ -1,4 +1,4 @@
-"""voice_tunnel.server — the tunnel. Serves the client page and carries audio both ways.
+"""command_bridge.server — the tunnel. Serves the client page and carries audio both ways.
 
 Endpoints
     GET  /              the phone client (single self-contained page)
@@ -976,7 +976,7 @@ async def handle_index(request: web.Request) -> web.StreamResponse:
     phone flow to a single URL, and it can do nothing without a valid token on the socket."""
     path = os.path.join(WEB_DIR, "index.html")
     if not os.path.exists(path):
-        return web.Response(status=500, text="voice_tunnel/web/index.html missing")
+        return web.Response(status=500, text="command_bridge/web/index.html missing")
     # Never cache the client. The page is edited constantly during development and a stale copy
     # is the worst kind of bug to chase: the server has the fix, the user reloads, and nothing
     # changes — so you conclude the fix did not work and go break something else.

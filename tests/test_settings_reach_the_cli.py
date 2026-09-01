@@ -25,7 +25,7 @@ import os
 
 import pytest
 
-from voice_tunnel import cli, config
+from command_bridge import cli, config
 
 FIVE = (
     "VOICE_TUNNEL_BARGE_IN",

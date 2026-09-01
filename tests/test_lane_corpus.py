@@ -19,9 +19,9 @@ import re
 
 import pytest
 
-from voice_tunnel import config
-from voice_tunnel.lanes import resolve
-from voice_tunnel.wake import WakeGate, normalize
+from command_bridge import config
+from command_bridge.lanes import resolve
+from command_bridge.wake import WakeGate, normalize
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

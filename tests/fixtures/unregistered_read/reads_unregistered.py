@@ -1,7 +1,7 @@
 """NEGATIVE CONTROL for the settings-registry guard. This module reads a variable nobody registered.
 
 It is never imported and never executed — the guard *parses* it, the same way it parses
-`voice_tunnel/`. It exists because a walker that returns zero findings and a walker that parses
+`command_bridge/`. It exists because a walker that returns zero findings and a walker that parses
 nothing at all are indistinguishable from the outside, and this repo has shipped a denylist that
 refused nothing and three diagnostics that never populated. A green check is a hypothesis until
 something has been seen to turn it red.

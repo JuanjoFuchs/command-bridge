@@ -11,7 +11,7 @@ the 1 s status check — so a longer ceiling costs nothing and saves a turn.
 import time
 import types
 
-import voice_tunnel.cli as cli
+import command_bridge.cli as cli
 
 
 def test_the_wait_doubles_while_nothing_happens():

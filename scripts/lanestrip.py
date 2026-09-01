@@ -29,7 +29,7 @@ import sys
 import threading
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WEB = os.path.join(REPO, "voice_tunnel", "web")
+WEB = os.path.join(REPO, "command_bridge", "web")
 SESSIONS = os.path.join(REPO, "sessions")
 DEFAULT_PORT = 8765
 SERVED_PORTS: list[int] = []
@@ -88,7 +88,7 @@ def _tunnel_children():
     except Exception:
         return []
     return [ln.strip() for ln in raw.splitlines()
-            if "voice_tunnel" in ln or "voice-tunnel" in ln]
+            if "command_bridge" in ln or "voice-tunnel" in ln]
 
 
 class ServerWatch:
