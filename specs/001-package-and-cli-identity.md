@@ -1,9 +1,9 @@
 ---
-id: "CB-001"
+id: "001"
 title: Package and CLI identity — the rename to Command Bridge
-status: proposed
+status: pending
 blocked_by: []
-blocks: ["CB-002", "CB-003"]
+blocks: ["002", "003"]
 ---
 
 # Package and CLI identity — the rename to Command Bridge
@@ -123,9 +123,10 @@ predates it.**
 
 ## Out of Scope
 
-- **Renaming the inherited specs 001–029.** They describe features that are now Command Bridge;
-  renumbering them is churn with no behaviour change. New specs are `CB-###`.
-- **Publishing under the new name** — that is CB-010, after the merge is proven.
+- **Rewriting the inherited voice-tunnel specs.** They describe features that are now Command Bridge;
+  they were shelved under `specs/voice-tunnel/` so Command Bridge's own sequence starts at 001, and
+  they are not renumbered or rewritten.
+- **Publishing under the new name** — that is spec 010, after the merge is proven.
 
 ## References
 

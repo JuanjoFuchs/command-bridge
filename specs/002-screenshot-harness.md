@@ -1,16 +1,16 @@
 ---
-id: "CB-002"
+id: "002"
 title: A full-page screenshot on every iteration — the UI verification harness
-status: proposed
-blocked_by: ["CB-001"]
-blocks: ["CB-003"]
+status: pending
+blocked_by: ["001"]
+blocks: ["003"]
 ---
 
 # A full-page screenshot on every iteration — the UI verification harness
 
 ## Overview
 
-The merge's hard part is the UI (CB-003 folds two web clients into one page). You cannot iterate a UI
+The merge's hard part is the UI (spec 003 folds two web clients into one page). You cannot iterate a UI
 to a *verified* outcome by reasoning about markup — you have to see what rendered. tunnel-vision
 already solved this with `shot`: a headless browser on a throwaway profile that photographs the page
 without stealing a human's browser. This spec brings that capability into Command Bridge and makes it
@@ -82,7 +82,7 @@ live.
 
 ## Implementation Tasks
 
-- [ ] Port tunnel-vision's `shot` driver into `command_bridge/` (post-CB-001 naming).
+- [ ] Port tunnel-vision's `shot` driver into the renamed package (after spec 001).
 - [ ] Make the capture full-page at a configurable viewport (FR2); drop the 900×560 default.
 - [ ] Wire `--lane` and `--out`; JSON result with path + dimensions + exit codes.
 - [ ] Settle fonts/animations before the shutter for determinism (NFR2).
@@ -116,8 +116,8 @@ live.
 ## Out of Scope
 
 - **Visual-diff/regression assertions.** This spec delivers the picture; asserting on it is the UI
-  specs' job (CB-006/007), and each will name what its screenshot must show.
-- **Rendering changes to the page itself** — that is CB-003.
+  specs' job (specs 006/007), and each will name what its screenshot must show.
+- **Rendering changes to the page itself** — that is spec 003.
 
 ## References
 
