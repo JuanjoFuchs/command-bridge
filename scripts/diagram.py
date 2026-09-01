@@ -124,8 +124,8 @@ def build(theme: str) -> tuple[str, list[str]]:
     o.append(
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" '
         f'height="{H}" role="img" aria-label="One spoken turn. You speak into a phone '
-        f'browser; voice-tunnel runs a wake gate and speech recognition and writes a line '
-        f'to a log; your agent reads that line, reasons, and calls say; voice-tunnel '
+        f'browser; command-bridge runs a wake gate and speech recognition and writes a line '
+        f'to a log; your agent reads that line, reasons, and calls say; command-bridge '
         f'synthesizes the reply and you hear it. Everything runs on your machine.">'
     )
     o.append(f'  <rect width="{W}" height="{H}" fill="{t["bg"]}"/>')
@@ -139,7 +139,7 @@ def build(theme: str) -> tuple[str, list[str]]:
 
     panels = (
         (YOU, "You", "no app · one tap"),
-        (TUN, "voice-tunnel", "holds no model · decides nothing"),
+        (TUN, "command-bridge", "holds no model · decides nothing"),
         (AGT, "Your agent", "all the intelligence"),
     )
     for (x, w), *_ in panels:

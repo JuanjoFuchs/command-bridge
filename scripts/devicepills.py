@@ -12,7 +12,7 @@ hidden" and "the pill is off the screen" are two separate claims that must both 
 
 WHAT IT DOES NOT DO, and this constraint shaped everything below (TC4). **A live voice session is
 running on `dev`, port 8765.** No verification for this spec may start, restart or stop a
-`voice-tunnel` server, and `layout.py`, `channel.py`, `orbstate.py`, `bargein.py` and `e2e.py` each
+`command-bridge` server, and `layout.py`, `channel.py`, `orbstate.py`, `bargein.py` and `e2e.py` each
 start one. So this harness serves `command_bridge/web/index.html` over a plain `http.server` on an
 ephemeral loopback port — `http://127.0.0.1` is a secure context, so `getUserMedia`,
 `enumerateDevices` and `AudioContext` are all available — and never speaks to a tunnel at all. The
@@ -112,15 +112,15 @@ def _descendants():
     return out
 
 
-TUNNEL_ENTRYPOINTS = ("voice-tunnel-run.py", "-m command_bridge", "command_bridge.cli",
-                      "bin/voice-tunnel", "bin\\voice-tunnel", "voice-tunnel.cmd")
+TUNNEL_ENTRYPOINTS = ("command-bridge-run.py", "-m command_bridge", "command_bridge.cli",
+                      "bin/command-bridge", "bin\\command-bridge", "command-bridge.cmd")
 
 
 def tunnel_children():
-    """Descendants of THIS process that look like a voice-tunnel invocation.
+    """Descendants of THIS process that look like a command-bridge invocation.
 
     Matched on the entry point, not on the path: this repository lives in a directory called
-    `voice-tunnel`, so every python process started from it carries that string and a substring
+    `command-bridge`, so every python process started from it carries that string and a substring
     match on the cwd would flag the harness itself.
     """
     hits = {}
@@ -138,7 +138,7 @@ class ServerWatch:
 
     def verify(self):
         print()
-        print("--- AC15: no voice-tunnel server process was started ---------------------------")
+        print("--- AC15: no command-bridge server process was started ---------------------------")
         now_sessions = _session_files()
         changed = sorted(k for k in set(self.sessions) | set(now_sessions)
                          if self.sessions.get(k) != now_sessions.get(k))
@@ -156,7 +156,7 @@ class ServerWatch:
               f"pids on {DEFAULT_PORT}: {sorted(now_listeners) or 'none'}")
 
         kids = tunnel_children()
-        check(not kids, "this process spawned no voice-tunnel child process",
+        check(not kids, "this process spawned no command-bridge child process",
               "" if not kids else f"found: {kids}")
 
         check(all(p != DEFAULT_PORT for p in SERVED_PORTS),
@@ -185,7 +185,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 
 def serve(root):
-    """A static file server on an ephemeral loopback port. NOT a voice-tunnel process: it has no
+    """A static file server on an ephemeral loopback port. NOT a command-bridge process: it has no
     `/ws` route, no session directory and no token — it hands out one HTML file."""
     httpd = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=root))
     port = httpd.server_address[1]
@@ -639,7 +639,7 @@ try:
         print()
         print("--- AC13: a stored preference must never become the route text -----------------")
         dctx, dpage = open_page(browser, port,
-                                storage={"voice-tunnel.sinkId": "spk-A"})
+                                storage={"command-bridge.sinkId": "spk-A"})
         # devA's LABEL is reachable — it is enumerated, as an input — so a page that resolved the
         # remembered id against the enumeration could produce it. Without that the control would
         # be trivially unfailable: the page could not name A even if it wanted to.

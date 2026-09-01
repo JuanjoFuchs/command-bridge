@@ -65,7 +65,7 @@ def test_the_endpoint_refuses_with_a_code_and_a_remedy(state):
 
     assert resp.status == 400
     assert '"code": "lane_exists"' in body
-    assert '"remedy": "voice-tunnel ' in body
+    assert '"remedy": "command-bridge ' in body
 
 
 def test_an_unknown_lane_is_named_in_the_remedy(state):

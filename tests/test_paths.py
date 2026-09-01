@@ -51,7 +51,7 @@ def test_an_installed_package_never_writes_next_to_its_own_code(installed):
             f"{path} is inside the package directory; an upgrade would delete it and a "
             f"read-only install would refuse to write it"
         )
-        assert "voice-tunnel" in path, f"{path} should be namespaced to this tool"
+        assert "command-bridge" in path, f"{path} should be namespaced to this tool"
 
 
 def test_installed_paths_are_under_one_user_directory(installed):
@@ -92,7 +92,7 @@ def test_macos_uses_application_support_and_ignores_xdg(installed, monkeypatch):
     ~/Library/Application Support, and honouring XDG there would hide it from them."""
     monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
 
-    assert "Library/Application Support/voice-tunnel" in config.session_dir()
+    assert "Library/Application Support/command-bridge" in config.session_dir()
     assert not config.session_dir().startswith("/tmp/xdg-data")
 
 
@@ -110,5 +110,5 @@ def test_pyproject_marks_a_checkout(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "ROOT", str(tmp_path))
     assert config._in_source_checkout() is False
 
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='voice-tunnel'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='command-bridge'\n", encoding="utf-8")
     assert config._in_source_checkout() is True

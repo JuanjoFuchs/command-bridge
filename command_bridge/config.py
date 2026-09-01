@@ -17,7 +17,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 """Absolute path to the directory containing the package, derived from THIS FILE, never the cwd.
 
-An agent invokes `voice-tunnel` from wherever its own turn happens to be standing, so any default
+An agent invokes `command-bridge` from wherever its own turn happens to be standing, so any default
 resolved against `os.getcwd()` would scatter turn logs and settings across whatever directories
 the caller passed through — the exact class of bug that makes a tool "work on my machine" and
 nowhere else.
@@ -52,10 +52,10 @@ def _user_dir(kind: str) -> str:
     find later — to read a transcript, to delete a voiceprint, to back something up. A tool that
     invents its own home makes every one of those a support question.
 
-        Windows   %LOCALAPPDATA%\\voice-tunnel        (Local, not Roaming: models are large and
+        Windows   %LOCALAPPDATA%\\command-bridge        (Local, not Roaming: models are large and
                                                        must not follow a roaming profile onto a
                                                        network share)
-        macOS     ~/Library/Application Support/voice-tunnel
+        macOS     ~/Library/Application Support/command-bridge
         Linux     $XDG_CONFIG_HOME | $XDG_DATA_HOME, else ~/.config | ~/.local/share
     """
     home = os.path.expanduser("~")
@@ -67,7 +67,7 @@ def _user_dir(kind: str) -> str:
         base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
     else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
-    return os.path.join(base, "voice-tunnel")
+    return os.path.join(base, "command-bridge")
 
 
 def _default_path(name: str, kind: str = "data") -> str:
@@ -264,7 +264,7 @@ not be handed an hour of log inside a `say` response, where it would crowd out t
 fields at the moment the agent is least able to spend the tokens. Twenty is far more than any
 single thought this tunnel has recorded — the worst measured was three turns — and small enough to
 stay a footnote. Nothing is lost by truncating: the cursor is NOT advanced, so the next `watch`
-returns them all again, and the whole log is one `voice-tunnel turns` away."""
+returns them all again, and the whole log is one `command-bridge turns` away."""
 
 UNREAD_REFUSAL_CODE = "unread_turns"
 """The stable slug on the payload `say` returns when it refuses to speak over an unread turn.
@@ -560,7 +560,7 @@ of distortion that is easy to misdiagnose as a bad model or a bad connection."""
 SPEECH_SPEED = 1.18
 """How fast the agent talks, as a multiple of the voice's native pace. Higher is faster.
 
-**SPEED is the unit this codebase speaks, everywhere** — settings file, `voice-tunnel rate`, the `/rate`
+**SPEED is the unit this codebase speaks, everywhere** — settings file, `command-bridge rate`, the `/rate`
 endpoint, `status`. Piper's own knob is `length_scale`, which is INVERTED (lower is faster), and
 letting that leak out was a real defect: the owner asked for 2.0 expecting twice as fast and got half
 speed. The inversion now exists in exactly one line, `length_scale_for` below, and nothing above
@@ -569,7 +569,7 @@ the piper boundary ever sees it.
 1.18 (= 1/0.85) because en_GB-alan-medium — the voice the owner picked — reads noticeably slowly at
 native pace ("I kind of liked Alan, it's just he speaks too slowly"). This scales duration, not
 pitch, so the voice keeps its character. Above ~1.33 it starts clipping consonants and sounding
-rushed. Override with COMMAND_BRIDGE_SPEECH_SPEED, or live and persistently with `voice-tunnel rate --speed`."""
+rushed. Override with COMMAND_BRIDGE_SPEECH_SPEED, or live and persistently with `command-bridge rate --speed`."""
 
 SPEED_MIN, SPEED_MAX = 0.5, 2.5
 """Accepted speed range: half speed to 2.5x. Bounded because a speed of 0 divides by zero on the
@@ -798,7 +798,7 @@ def parakeet_dir() -> str:
 def have_module(name: str) -> bool:
     """Is an optional runtime package importable? Checked WITHOUT importing it.
 
-    `sherpa-onnx` and `piper-tts` are extras (`pip install voice-tunnel[all]`), so unlike in a
+    `sherpa-onnx` and `piper-tts` are extras (`pip install command-bridge[all]`), so unlike in a
     checkout — where everything arrived together and this question never came up — either can be
     absent at runtime. `find_spec` answers it for the price of a path search rather than loading
     an ONNX runtime to find out.
@@ -928,7 +928,7 @@ def tts_backend() -> str:
 
     THE SAME RULE `asr_engine` HAS USED ALL ALONG, and the asymmetry between them was a real
     defect. ASR upgraded itself the moment Parakeet was downloadable; TTS returned a hardcoded
-    "sapi" no matter what was installed. So `voice-tunnel setup` could install Piper, download a
+    "sapi" no matter what was installed. So `command-bridge setup` could install Piper, download a
     neural voice, report `ok: true` on every step — and leave synthesis on the robotic system
     voice, with `describe` still calling setup "one command to make a fresh install fully
     capable". Found by a cold-start audit that had to infer `config set COMMAND_BRIDGE_TTS piper`
@@ -995,7 +995,7 @@ def piper_voices() -> list:
     A Piper voice is an `.onnx` **plus a sidecar `.onnx.json`** describing its phonemes and
     sample rate; piper refuses to load one without the other. Requiring the sidecar is therefore
     not a heuristic, it is the format — and it is what keeps unrelated ONNX models that share the
-    directory (the titanet speaker embedder the voiceprint gallery uses) out of `voice-tunnel voices`,
+    directory (the titanet speaker embedder the voiceprint gallery uses) out of `command-bridge voices`,
     where they read as a voice you could select and then fail at synthesis time.
     """
     d = models_dir()
@@ -1028,7 +1028,7 @@ KOKORO_SPEED_MAX = 2.0
 `kokoro_onnx.Kokoro.create` opens with `assert speed >= 0.5 and speed <= 2.0`, so a persisted
 2.5 does not come back slightly-too-fast — it raises an `AssertionError` deep inside the package
 and every reply fails. That is a latent crash rather than a tuning question: the value is
-*already accepted and written to disk* by `voice-tunnel rate --speed 2.5`, which validates
+*already accepted and written to disk* by `command-bridge rate --speed 2.5`, which validates
 against `SPEED_MAX`, and the backend it will be handed to only exists on some installs.
 
 **Why this is a per-backend ceiling and not a lower `SPEED_MAX`.** Piper accepts 2.5 and the
@@ -1079,7 +1079,7 @@ def kokoro_model() -> str:
     # ONE DEFINITION OF WHICH MODEL IS LIVE. `doctor`, `status` and the loader all read this, and
     # they were briefly allowed to disagree — the backend loading the timestamped export while
     # `doctor` reported the plain one. A tool that misreports what it is running is the specific
-    # failure the runtime check in the Voice Tunnel Guide exists to catch.
+    # failure the runtime check in the Command Bridge Guide exists to catch.
     for name in (KOKORO_TIMESTAMPED_MODEL, "kokoro-v1.0.onnx"):
         path = os.path.join(models_dir(), name)
         if os.path.isfile(path):
@@ -1144,7 +1144,7 @@ def piper_bin() -> str:
 
     Order: explicit env > THIS interpreter's own scripts dir > the repo venv > PATH.
 
-    The running interpreter comes first because `pip install voice-tunnel[piper]` puts
+    The running interpreter comes first because `pip install command-bridge[piper]` puts
     `piper.exe` beside it, and that is by definition the copy this process's packages were
     installed with. It used to be missing from this list entirely, so a fully isolated
     installation still resolved a `piper.exe` belonging to some other Python on PATH — a
@@ -1204,7 +1204,7 @@ def piper_voice() -> str:
         return named
     installed = piper_voices()
     # One installed voice is not a choice, so take it. Several is a choice, and guessing which
-    # voice someone wants to hear is worse than saying "name one" — `voice-tunnel doctor` says how.
+    # voice someone wants to hear is worse than saying "name one" — `command-bridge doctor` says how.
     return os.path.join(d, f"{installed[0]}.onnx") if len(installed) == 1 else ""
 
 
@@ -1223,7 +1223,7 @@ def piper_voice() -> str:
 #   * The repo already documents it (`.env.example`) and already gitignores it.
 #   * Keys ARE environment variable names, so "env overrides file" needs no mapping layer —
 #     it is one `setdefault` call and there is no second name for anything.
-#   * Python 3.11's tomllib is READ-ONLY, so `voice-tunnel config set` would have needed a hand-rolled
+#   * Python 3.11's tomllib is READ-ONLY, so `command-bridge config set` would have needed a hand-rolled
 #     TOML writer: a new way to corrupt a file, bought for no behaviour anyone asked for.
 
 def env_file_default() -> str:
@@ -1238,11 +1238,11 @@ _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 """What counts as a variable name when READING the file — the POSIX shell rule, permissive."""
 
 _WRITABLE_KEY_RE = re.compile(r"^COMMAND_BRIDGE_[A-Z0-9_]+$")
-"""What `voice-tunnel config set` is allowed to WRITE — strict, this tool's own namespace only.
+"""What `command-bridge config set` is allowed to WRITE — strict, this tool's own namespace only.
 
 Permissive on read, strict on write, and the asymmetry is the point: a file a human hand-edited
 should not be second-guessed, but a machine writing into it must stay in its lane. An agent that
-hallucinates `voice-tunnel config set PATH ""` should be refused, not obeyed."""
+hallucinates `command-bridge config set PATH ""` should be refused, not obeyed."""
 
 _LOAD_REPORT: dict = {}
 """What the last load_env_file() actually did, so `config show` can attribute each value to env
@@ -1278,7 +1278,7 @@ def parse_env_text(text: str) -> dict:
 
     Tolerant on purpose: this file is hand-edited, and refusing to start because line 12 has a
     stray word would be a worse failure than ignoring line 12. Anything skipped is reported by
-    `voice-tunnel config show` under `ignored`, so nothing is silently swallowed.
+    `command-bridge config show` under `ignored`, so nothing is silently swallowed.
 
     Understands: `#` comments, blank lines, an optional `export ` prefix, and values wrapped in
     matching single or double quotes. An unquoted value may carry a trailing ` # comment`;
@@ -1379,9 +1379,9 @@ def validate_setting(key: str, value: str) -> None:
     """
     if not _WRITABLE_KEY_RE.match(key or ""):
         raise ValueError(
-            f"{key!r} is not a settable key. `voice-tunnel config set` writes only this tool's own "
+            f"{key!r} is not a settable key. `command-bridge config set` writes only this tool's own "
             f"namespace: an upper-case name starting with COMMAND_BRIDGE_ (e.g. COMMAND_BRIDGE_TTS). "
-            f"Run `voice-tunnel config show` for the full list."
+            f"Run `command-bridge config show` for the full list."
         )
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         raise ValueError(
@@ -1414,9 +1414,9 @@ def _line_key(line: str) -> str:
 
 
 _HEADER = (
-    "# voice-tunnel settings. Gitignored. Read automatically by every `voice-tunnel` command.\n"
+    "# command-bridge settings. Gitignored. Read automatically by every `command-bridge` command.\n"
     "# Process environment variables override anything here.\n"
-    "# Managed by `voice-tunnel config set` / `voice-tunnel config unset`; hand-editing is fine too.\n"
+    "# Managed by `command-bridge config set` / `command-bridge config unset`; hand-editing is fine too.\n"
 )
 
 
@@ -1552,11 +1552,11 @@ SETTINGS: tuple = (
     _setting("COMMAND_BRIDGE_KOKORO_VOICE",
              f"kokoro voice NAME, not a path — a voice is a style vector inside the one pack, "
              f"unlike piper where a voice IS a file (default {DEFAULT_KOKORO_VOICE}). "
-             f"`voice-tunnel voices` lists what the pack holds",
+             f"`command-bridge voices` lists what the pack holds",
              kokoro_voice),
     _setting("COMMAND_BRIDGE_KOKORO_MODEL",
              "kokoro-v1.0.onnx; auto-found in the models dir. Empty means it is not downloaded "
-             "— `voice-tunnel download kokoro`",
+             "— `command-bridge download kokoro`",
              kokoro_model),
     _setting("COMMAND_BRIDGE_KOKORO_VOICES",
              "voices-v1.0.bin, the voice pack; auto-found in the models dir. Required AS WELL AS "
@@ -1564,13 +1564,13 @@ SETTINGS: tuple = (
              kokoro_voices_bin),
     _setting("COMMAND_BRIDGE_SPEECH_SPEED",
              f"how fast the agent talks; 1.0 is native pace, higher is faster "
-             f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `voice-tunnel rate --speed`. "
+             f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `command-bridge rate --speed`. "
              f"NOTE the kokoro backend caps at {KOKORO_SPEED_MAX} and clamps above it "
              f"(piper takes the full range); `status` says when it clamped",
              lambda: str(speech_speed())),
     _setting("COMMAND_BRIDGE_SENTENCE_PAUSE",
              f"seconds of silence between sentences (0-{PAUSE_MAX}); the pause IS the "
-             f"punctuation in speech. Set it live with `voice-tunnel rate --pause`",
+             f"punctuation in speech. Set it live with `command-bridge rate --pause`",
              lambda: str(sentence_pause())),
     _setting("COMMAND_BRIDGE_CONSONANT_BOOST",
              f"0-1 — how hard to lift consonants so they survive fast speech. Default "
@@ -1670,7 +1670,7 @@ SETTINGS: tuple = (
              lambda: "1" if cues_enabled() else "0"),
     _setting("COMMAND_BRIDGE_VERBOSE",
              "1 | 0 — narrate every action before doing it. Global across devices; "
-             "set live with `voice-tunnel verbose on`",
+             "set live with `command-bridge verbose on`",
              lambda: "1" if verbose_default() else "0"),
     _setting("COMMAND_BRIDGE_OWNER", "name the voiceprint gallery learns under", owner_name),
     _setting("COMMAND_BRIDGE_WAKE_NAME",
@@ -1680,7 +1680,7 @@ SETTINGS: tuple = (
 )
 """Every COMMAND_BRIDGE_* variable, in one place, with what it does and how to read its live value.
 
-ONE registry, three consumers: `voice-tunnel describe`'s env block, `voice-tunnel config show`, and the test that
+ONE registry, three consumers: `command-bridge describe`'s env block, `command-bridge config show`, and the test that
 asserts `.env.example` documents all of it. Before this, `describe` listed eight variables and
 the code read seventeen — so the piper settings an agent could not run without were discoverable
 only by reading tts.py. A contract that omits the thing you need is worse than no contract,

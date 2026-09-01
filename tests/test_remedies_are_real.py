@@ -1,16 +1,16 @@
-"""Every `pip install voice-tunnel[...]` this CLI prints must name an extra that exists.
+"""Every `pip install command-bridge[...]` this CLI prints must name an extra that exists.
 
 WHY THIS FILE EXISTS. Turn detection shipped in 0.2.0 and could not work for anybody who
 installed from PyPI. It imports `onnxruntime` and `transformers`; neither was declared in any
 extra or requirement, so a clean install could never load it. Meanwhile `doctor`, `download` and
-the runtime error all advised `pip install voice-tunnel[parakeet]` — an extra that installs
+the runtime error all advised `pip install command-bridge[parakeet]` — an extra that installs
 sherpa-onnx and neither of the two packages actually needed.
 
 Anyone following that advice stayed exactly as broken, and reasonably concluded the feature was
 unsupported on their machine. It went unnoticed because it works in a checkout that already
 carries both packages for other reasons, which is the only place it was ever run.
 
-Found by handing a fresh agent nothing but `voice-tunnel describe` and asking it to reach the
+Found by handing a fresh agent nothing but `command-bridge describe` and asking it to reach the
 best configuration: it ran the remedy verbatim, inspected the installed metadata, and reported
 that the command could not possibly do what the tool claimed.
 
@@ -26,7 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 
 # Every string the CLI can print that suggests installing an extra.
-EXTRA_PATTERN = re.compile(r"voice-tunnel\[([a-z0-9_,\- ]+)\]")
+EXTRA_PATTERN = re.compile(r"command-bridge\[([a-z0-9_,\- ]+)\]")
 
 
 def declared_extras() -> set[str]:
@@ -141,7 +141,7 @@ def test_every_optional_import_in_the_package_is_in_the_table_above():
 
 
 def test_the_all_extra_is_the_union_of_the_others():
-    """`all` has to mean all, or `voice-tunnel setup` silently leaves a feature broken."""
+    """`all` has to mean all, or `command-bridge setup` silently leaves a feature broken."""
     text = PYPROJECT.read_text(encoding="utf-8")
     block = text.split("[project.optional-dependencies]", 1)[1].split("\n[", 1)[0]
     all_line = next(ln for ln in block.splitlines() if ln.strip().startswith("all"))
@@ -153,7 +153,7 @@ def test_setup_installs_the_all_extra():
     """`setup` is the one command that must leave nothing on a fallback."""
     src = (ROOT / "command_bridge" / "cli.py").read_text(encoding="utf-8")
     body = src.split("def cmd_setup", 1)[1].split("\ndef ", 1)[0]
-    assert "voice-tunnel[all]" in body
+    assert "command-bridge[all]" in body
     for module in ("piper", "sherpa_onnx", "onnxruntime", "transformers"):
         assert module in body, f"setup does not check for {module}"
 

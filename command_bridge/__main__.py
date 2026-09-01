@@ -1,4 +1,4 @@
-"""`python -m command_bridge` — the same CLI as the `voice-tunnel` console script.
+"""`python -m command_bridge` — the same CLI as the `command-bridge` console script.
 
 Exists so the tool is reachable without the console script being on PATH. That happens more often
 than it sounds: a `pip install --user` on a machine whose user Scripts directory is not on PATH, a

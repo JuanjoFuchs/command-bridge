@@ -35,7 +35,7 @@ jobs:
             "Accept" = "application/vnd.github+json"
             "X-GitHub-Api-Version" = "2022-11-28"
           }
-          $zip = $release.assets | Where-Object { $_.name -match "voice-tunnel-$version-windows-x64\.zip$" }
+          $zip = $release.assets | Where-Object { $_.name -match "command-bridge-$version-windows-x64\.zip$" }
           if ($null -eq $zip) { Write-Error "Windows bundle not found for $tag"; exit 1 }
 
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -50,7 +50,7 @@ jobs:
         env:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
-          .\wingetcreate.exe update JuanjoFuchs.voice-tunnel `
+          .\wingetcreate.exe update JuanjoFuchs.command-bridge `
             --version "${{ steps.release.outputs.version }}" `
             --urls "${{ steps.release.outputs.installer_url }}" `
             --submit --token $env:WINGET_TOKEN

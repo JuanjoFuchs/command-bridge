@@ -254,7 +254,7 @@ def test_a_dead_server_is_never_permission_to_speak(monkeypatch):
     assert out["reason"] == "no_server" and out["finished"] is False
     assert out.get("running") is not False, "exit code 3 would break every existing watchdog"
     assert out["listening"] is False
-    assert "voice-tunnel serve" in out["hint"]
+    assert "command-bridge serve" in out["hint"]
 
 
 def test_a_second_waiter_is_refused(monkeypatch):
@@ -320,7 +320,7 @@ def test_the_waiting_command_reaches_its_handler_through_main(monkeypatch, capsy
     Renaming `cmd_watch` to `cmd_wait` left the dispatch table pointing at a name that no longer
     existed. The module still IMPORTED — the table is built inside `main()` — so every test in
     this suite passed while every real invocation raised NameError, and the scheduled watchdog
-    firing `voice-tunnel watch` every minute erred each time.
+    firing `command-bridge watch` every minute erred each time.
 
     The gap was that nothing in the suite ever called `main()` with a real argv. This does.
 
@@ -401,7 +401,7 @@ def test_the_retired_name_is_not_dispatchable_at_all(capsys):
     assert payload["code"] == "unknown_command"
     assert payload["replaced_by"] == "watch"
     # THE WHOLE POINT: the same call, respelled and runnable, not a list to choose from.
-    assert payload["remedy"] == "voice-tunnel watch --session dev --since 42"
+    assert payload["remedy"] == "command-bridge watch --session dev --since 42"
     assert "drain" not in payload["commands"]
 
 
@@ -443,19 +443,19 @@ def test_the_rules_no_longer_ask_an_agent_to_choose_a_command():
     assert "ONE WAITING COMMAND" in cli.DESCRIBE["RULE_2"]
     assert "GATES SPEAKING, NOT STARTING" in cli.DESCRIBE["RULE_3"]
     for rule in ("RULE_1", "RULE_2", "RULE_3"):
-        assert "voice-tunnel drain" not in cli.DESCRIBE[rule]
+        assert "command-bridge drain" not in cli.DESCRIBE[rule]
 
 
 def test_the_loop_runs_the_same_command_before_and_after_the_work():
     """The collapse, expressed in the loop an agent actually follows: `wait`, work, `wait`, `say`,
     `wait`. There is no second command to pick."""
     lines = cli.DESCRIBE["the_loop"]
-    waits = [i for i, ln in enumerate(lines) if "voice-tunnel watch" in ln]
-    say = next(i for i, ln in enumerate(lines) if "voice-tunnel say" in ln)
+    waits = [i for i, ln in enumerate(lines) if "command-bridge watch" in ln]
+    say = next(i for i, ln in enumerate(lines) if "command-bridge say" in ln)
 
     assert len(waits) >= 3, "before the work, before the say, and after it"
     assert any(i < say for i in waits) and any(i > say for i in waits)
-    assert not any("voice-tunnel drain" in ln for ln in lines)
+    assert not any("command-bridge drain" in ln for ln in lines)
 
 
 def test_the_watchdog_prompt_emits_the_new_command():
@@ -463,9 +463,9 @@ def test_the_watchdog_prompt_emits_the_new_command():
     spelling the tool wants to be running a release from now."""
     prompt = cli.WATCHDOG_PROMPT.format(session="dev")
 
-    assert "voice-tunnel watch --session dev" in prompt
-    assert "voice-tunnel drain" not in prompt
-    assert "voice-tunnel wait" not in prompt, "the third name he rejected must not be taught"
+    assert "command-bridge watch --session dev" in prompt
+    assert "command-bridge drain" not in prompt
+    assert "command-bridge wait" not in prompt, "the third name he rejected must not be taught"
     # WAS: `assert "deprecated alias" in prompt`, so the prompt named the old command as the one
     # on its way out. There is nothing on its way out any more — it is gone — and a scheduled
     # prompt that mentions a command which does not exist is the tool teaching a dead spelling.
@@ -633,7 +633,7 @@ def test_a_clean_reply_says_so_without_raising_the_alarm(monkeypatch):
     out = _say(monkeypatch)
 
     assert "READ THE" not in out["next"]
-    assert "voice-tunnel watch --session dev --since 7" in out["next"]
+    assert "command-bridge watch --session dev --since 7" in out["next"]
 
 
 def test_describe_documents_the_new_fields():

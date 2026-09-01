@@ -2,7 +2,7 @@
 /**
  * Hand every argument to the real CLI in the private venv, and get out of the way.
  *
- * Deliberately thin. This program's entire contract is "`voice-tunnel <cmd>` behaves the same
+ * Deliberately thin. This program's entire contract is "`command-bridge <cmd>` behaves the same
  * however you installed it", and every line of cleverness here is a way for the npm path to
  * behave differently from the pip path — which is the one bug this wrapper must not have.
  *
@@ -17,14 +17,14 @@ const fs = require('fs');
 
 const { venvBin, findPython, MIN_PYTHON } = require('../scripts/postinstall.js');
 
-const REPAIR = 'npm rebuild @juanjofuchs/voice-tunnel';
+const REPAIR = 'npm rebuild @juanjofuchs/command-bridge';
 
 function fail(message) {
-  console.error(`\nvoice-tunnel: ${message}\n`);
+  console.error(`\ncommand-bridge: ${message}\n`);
   process.exit(1);
 }
 
-const exe = venvBin('voice-tunnel');
+const exe = venvBin('command-bridge');
 if (!fs.existsSync(exe)) {
   // Distinguish the two causes, because they need different fixes and a bare "not found" sends
   // people to the wrong one. No Python at all is a prerequisite problem; Python present but no
@@ -39,7 +39,7 @@ if (!fs.existsSync(exe)) {
   fail(
     `the private environment is missing or incomplete.\n` +
     `Run:  ${REPAIR}\n` +
-    `Or install directly, which needs no npm at all:  pip install voice-tunnel`
+    `Or install directly, which needs no npm at all:  pip install command-bridge`
   );
 }
 

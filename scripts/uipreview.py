@@ -2,7 +2,7 @@
 
     python scripts/uipreview.py [--out DIR] [--no-shot]
 
-WHAT THIS IS FOR. JJ dictated a revamp on 2026-08-24 (verbatim in Voice Tunnel) and asked the
+WHAT THIS IS FOR. JJ dictated a revamp on 2026-08-24 (verbatim in Command Bridge) and asked the
 right question before anyone built it: *"Is there any way you can build that without functionality
 in a different like in a preview HTML so that I can see it? … Or do you think does it make sense to
 invoke codex for image generation of this UI?"*
@@ -239,7 +239,7 @@ def head() -> str:
     # session-level job moves out to its own control and the orbs mean exactly one thing.
     #
     # *"the behavior right now that I have that tapping the orb turns it off and turns it on…
-    # Maybe we add that button as a power button right to the left of the voice tunnel title."*
+    # Maybe we add that button as a power button right to the left of the command bridge title."*
     # *"And that means that the orbs, each orb for each agent or each lane is just clicking on it,
     # is just switching to that lane."*
     return f"""
@@ -379,7 +379,7 @@ def build(style: str) -> str:
 
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            "<title>voice-tunnel UI revamp — three arrangements</title>"
+            "<title>command-bridge UI revamp — three arrangements</title>"
             f"<style>{style}{DELTA}</style></head><body>"
             f'<div class="rv-rail">{a}{b}{c}</div>{SCRIPT}</body></html>')
 

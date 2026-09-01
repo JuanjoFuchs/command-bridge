@@ -140,16 +140,16 @@ async def main() -> int:
     # A scratch turn log, but the REAL voiceprint gallery — it lives in the session dir, so
     # isolating that isolates his identity too and every score comes back 0.0 against an empty
     # gallery. Found the hard way: the check failed for three rounds while the code was correct.
-    scratch = tempfile.mkdtemp(prefix="voice-tunnel-barge-")
+    scratch = tempfile.mkdtemp(prefix="command-bridge-barge-")
     gallery = os.path.join(ROOT, "sessions", "voiceprints.json")
     if os.path.exists(gallery):
         shutil.copy(gallery, os.path.join(scratch, "voiceprints.json"))
     else:
         print("NOTE: no voiceprint gallery — barge-in cannot identify anyone. "
-              "Run a live session first, or `voice-tunnel voiceprint --learn-from <dir>`.")
+              "Run a live session first, or `command-bridge voiceprint --learn-from <dir>`.")
     env = dict(os.environ, COMMAND_BRIDGE_DIR=scratch, COMMAND_BRIDGE_TTS="piper")
     server = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "bin", "voice-tunnel-run.py"), "serve",
+        [sys.executable, os.path.join(ROOT, "bin", "command-bridge-run.py"), "serve",
          "--session", SESSION, "--port", str(PORT), "--token", TOKEN],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     try:

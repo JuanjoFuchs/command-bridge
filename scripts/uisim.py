@@ -440,7 +440,7 @@ def main() -> int:
     finally:
         httpd.shutdown()
 
-    print("\n--- no voice-tunnel server was started " + "-" * 40)
+    print("\n--- no command-bridge server was started " + "-" * 40)
     after = _listeners()
     check(after == before, f"the set of listeners on {TUNNEL_PORT} is unchanged",
           f"{sorted(before)} -> {sorted(after)}")

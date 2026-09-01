@@ -1,12 +1,12 @@
-# voice-tunnel
+# command-bridge
 
-[![CI](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/voice-tunnel/ci.yml?branch=main&label=CI)](https://github.com/JuanjoFuchs/voice-tunnel/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/voice-tunnel/release.yml?label=Release)](https://github.com/JuanjoFuchs/voice-tunnel/actions/workflows/release.yml)
-[![PyPI](https://img.shields.io/pypi/v/voice-tunnel)](https://pypi.org/project/voice-tunnel/)
-[![npm](https://img.shields.io/npm/v/%40juanjofuchs%2Fvoice-tunnel)](https://www.npmjs.com/package/@juanjofuchs/voice-tunnel)
-[![Python](https://img.shields.io/pypi/pyversions/voice-tunnel)](https://pypi.org/project/voice-tunnel/)
-[![GitHub Release](https://img.shields.io/github/v/release/JuanjoFuchs/voice-tunnel)](https://github.com/JuanjoFuchs/voice-tunnel/releases)
-[![License](https://img.shields.io/github/license/JuanjoFuchs/voice-tunnel)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/command-bridge/ci.yml?branch=main&label=CI)](https://github.com/JuanjoFuchs/command-bridge/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/command-bridge/release.yml?label=Release)](https://github.com/JuanjoFuchs/command-bridge/actions/workflows/release.yml)
+[![PyPI](https://img.shields.io/pypi/v/command-bridge)](https://pypi.org/project/command-bridge/)
+[![npm](https://img.shields.io/npm/v/%40juanjofuchs%2Fcommand-bridge)](https://www.npmjs.com/package/@juanjofuchs/command-bridge)
+[![Python](https://img.shields.io/pypi/pyversions/command-bridge)](https://pypi.org/project/command-bridge/)
+[![GitHub Release](https://img.shields.io/github/v/release/JuanjoFuchs/command-bridge)](https://github.com/JuanjoFuchs/command-bridge/releases)
+[![License](https://img.shields.io/github/license/JuanjoFuchs/command-bridge)](LICENSE)
 
 **Talk to your coding agent from your phone.** One command opens a page any phone browser can
 load — no app, no App Store — and carries audio both ways.
@@ -34,12 +34,12 @@ than editing it out. The tunnel's own half of the round trip is about a second.
 Two commands, and only the first one is yours.
 
 ```bash
-npm install -g @juanjofuchs/voice-tunnel
+npm install -g @juanjofuchs/command-bridge
 ```
 
 Then paste this to your coding agent:
 
-> Run `voice-tunnel describe` and follow it end to end: install anything missing, start the tunnel
+> Run `command-bridge describe` and follow it end to end: install anything missing, start the tunnel
 > under your own name, give me the URL to open on my phone, and then stay in `watch` so you can
 > hear me.
 
@@ -49,12 +49,12 @@ hear me?"*
 
 Needs **Python 3.10+ on PATH** — the npm package is a launcher, not a bundle, and builds a private
 environment inside itself without touching anything else on your machine. `pipx install
-voice-tunnel` is the same tool with one fewer wrapper, and [WinGet](#winget-windows-no-python-needed)
+command-bridge` is the same tool with one fewer wrapper, and [WinGet](#winget-windows-no-python-needed)
 needs nothing installed at all.
 
 **The one thing your agent cannot do for you:** a phone needs HTTPS to reach a microphone at all,
 so a plain LAN address gives *no microphone* rather than a broken one. Front the port with a
-tunnel — `ngrok http 8765` is the smallest, and `voice-tunnel status` detects it — and use the
+tunnel — `ngrok http 8765` is the smallest, and `command-bridge status` detects it — and use the
 https address it prints. Your agent will tell you when this applies, and `status.phone.exposure`
 tells you what it costs.
 
@@ -67,7 +67,7 @@ Would rather drive it yourself? [Use it](#use-it) is the manual path.
 Point the agent at `describe` before anything else — the line above does exactly that:
 
 ```bash
-voice-tunnel describe     # the whole contract, as JSON
+command-bridge describe     # the whole contract, as JSON
 ```
 
 That one call is the entire onboarding — no MCP server, no daemon, no separate documentation to
@@ -78,12 +78,12 @@ first one answers the wrong question. Every command also returns a `next` field 
 what to do at the moment it applies, rather than in a document it read once.
 
 `describe` is generated from the same source as the behaviour, so it cannot drift from the tool
-the way a README can. When something is wrong, `voice-tunnel doctor` says what and hands back the
+the way a README can. When something is wrong, `command-bridge doctor` says what and hands back the
 command that fixes it — read its `degraded` list even when `ok` is true, because a machine can
 have a neural voice and a fast recognizer sitting on disk while this process uses neither.
 
 That claim gets tested the only way it can be: hand an agent a fresh install, nothing but
-`voice-tunnel describe`, and ask it to reach the best configuration the machine allows. Several
+`command-bridge describe`, and ask it to reach the best configuration the machine allows. Several
 releases have come out of watching where those runs got stuck.
 
 The wedge is borrowed from [agent-mail][am].
@@ -97,9 +97,9 @@ into speech; the agent that started it does the thinking. That is why it works w
 — Claude Code, Codex and Grok have each driven it unchanged.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/JuanjoFuchs/voice-tunnel/main/docs/architecture-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/JuanjoFuchs/voice-tunnel/main/docs/architecture-light.svg">
-  <img alt="One spoken turn. You speak into a phone browser; voice-tunnel runs a wake gate and speech recognition and writes a line to a log; your agent reads that line with watch --since, reasons, and calls say; voice-tunnel synthesizes the reply and you hear it. Everything runs on your machine." src="https://raw.githubusercontent.com/JuanjoFuchs/voice-tunnel/main/docs/architecture-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/docs/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/docs/architecture-light.svg">
+  <img alt="One spoken turn. You speak into a phone browser; command-bridge runs a wake gate and speech recognition and writes a line to a log; your agent reads that line with watch --since, reasons, and calls say; command-bridge synthesizes the reply and you hear it. Everything runs on your machine." src="https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/docs/architecture-light.svg">
 </picture>
 
 The cursor is what makes the split safe. `watch --since <cursor>` blocks until a turn lands and
@@ -111,8 +111,8 @@ seconds thinking about the last thing.
 ### npm
 
 ```bash
-npm install -g @juanjofuchs/voice-tunnel
-voice-tunnel setup
+npm install -g @juanjofuchs/command-bridge
+command-bridge setup
 ```
 
 Needs Python 3.10+ on PATH. The postinstall builds a private virtualenv inside the package and
@@ -123,8 +123,8 @@ and the launcher repeats the guidance when you actually run the tool.
 ### pipx
 
 ```bash
-pipx install voice-tunnel
-voice-tunnel setup
+pipx install command-bridge
+command-bridge setup
 ```
 
 The canonical artifact — this is a Python package, and pipx installs it isolated without the npm
@@ -133,13 +133,13 @@ layer in between.
 ### pip
 
 ```bash
-pip install voice-tunnel
+pip install command-bridge
 ```
 
 ### WinGet (Windows, no Python needed)
 
 ```powershell
-winget install JuanjoFuchs.voice-tunnel
+winget install JuanjoFuchs.command-bridge
 ```
 
 The only channel that needs nothing else installed. Windows may flag it on first run: the bundle
@@ -147,20 +147,20 @@ is unsigned, and Defender's heuristic dislikes unsigned Python bundles.
 
 ### Better voice and better recognition
 
-`voice-tunnel setup` does all of this in one command. The pieces, if you want them individually:
+`command-bridge setup` does all of this in one command. The pieces, if you want them individually:
 
 ```bash
-pip install voice-tunnel[all]      # or [piper] / [parakeet]
+pip install command-bridge[all]      # or [piper] / [parakeet]
 
-voice-tunnel download asr          # Parakeet — 8x faster than whisper, more accurate
-voice-tunnel download voice        # a neural voice instead of the robotic one
-voice-tunnel download voiceprint   # learns your voice, so the wake phrase becomes optional
-voice-tunnel download turn         # ends your turn when you SOUND finished, not on a timer
-voice-tunnel download --list       # what is available, what you already have
+command-bridge download asr          # Parakeet — 8x faster than whisper, more accurate
+command-bridge download voice        # a neural voice instead of the robotic one
+command-bridge download voiceprint   # learns your voice, so the wake phrase becomes optional
+command-bridge download turn         # ends your turn when you SOUND finished, not on a timer
+command-bridge download --list       # what is available, what you already have
 ```
 
 Two independent things are involved and having one does not get you the other: the **extras**
-supply the engines, the **downloads** supply the models. `voice-tunnel doctor` says which of them
+supply the engines, the **downloads** supply the models. `command-bridge doctor` says which of them
 this process is actually using, which is not always the best one present.
 
 Models are downloaded, never bundled — a Parakeet checkpoint is 631 MB and would make the package
@@ -172,37 +172,37 @@ The manual path, if you would rather not hand the whole thing to an agent. Start
 **your agent's own name**, and put its page somewhere your phone can reach.
 
 ```bash
-voice-tunnel serve --wake claude          # or codex, grok, whatever is driving
+command-bridge serve --wake claude          # or codex, grok, whatever is driving
 ```
 
 Your phone needs HTTPS to reach a microphone at all — that is a browser rule, and a plain LAN
 address like `http://192.168.1.20:8765` gives **no microphone**, not a broken one. Front the port
-with an https tunnel. The smallest is ngrok, which `voice-tunnel status` detects on its own:
+with an https tunnel. The smallest is ngrok, which `command-bridge status` detects on its own:
 
 ```bash
 ngrok http 8765
 ```
 
-`tailscale serve --bg 8765` works too and needs `voice-tunnel config set
-VOICE_TUNNEL_ALLOW_CIDRS 100.64.0.0/10` — but it takes over the device's DNS through MagicDNS,
+`tailscale serve --bg 8765` works too and needs `command-bridge config set
+COMMAND_BRIDGE_ALLOW_CIDRS 100.64.0.0/10` — but it takes over the device's DNS through MagicDNS,
 system-wide, which can break a corporate VPN on the same machine. Anything else (cloudflared, a
-reverse proxy) is invisible to this tool, so tell it: `voice-tunnel config set
-VOICE_TUNNEL_PUBLIC_URL <https url>`.
+reverse proxy) is invisible to this tool, so tell it: `command-bridge config set
+COMMAND_BRIDGE_PUBLIC_URL <https url>`.
 
 > **Read this before you open a tunnel.** A forwarder connects from `127.0.0.1`, so everything it
-> relays arrives as a loopback peer and passes `VOICE_TUNNEL_ALLOW_CIDRS` unconditionally. While
+> relays arrives as a loopback peer and passes `COMMAND_BRIDGE_ALLOW_CIDRS` unconditionally. While
 > a tunnel is up that allowlist filters *nothing*, and the token in the URL is the only gate on a
-> live microphone — so treat that URL as a credential, set `VOICE_TUNNEL_TOKEN` yourself rather
+> live microphone — so treat that URL as a credential, set `COMMAND_BRIDGE_TOKEN` yourself rather
 > than letting it be regenerated each restart, and take the tunnel down when you are done.
-> `voice-tunnel status` reports all of this under `phone.exposure`; `voice-tunnel doctor` warns
+> `command-bridge status` reports all of this under `phone.exposure`; `command-bridge doctor` warns
 > when the only gate is a token nobody chose.
 
 Then, from the agent's side, this is the whole loop:
 
 ```bash
-voice-tunnel watch --session dev --since -1   # BLOCKS until you speak; returns turns + a cursor
-voice-tunnel say   --session dev "All green." # speaks back
-voice-tunnel watch --session dev --since 7    # always resume from the cursor you were given
+command-bridge watch --session dev --since -1   # BLOCKS until you speak; returns turns + a cursor
+command-bridge say   --session dev "All green." # speaks back
+command-bridge watch --session dev --since 7    # always resume from the cursor you were given
 ```
 
 ### Saying its name
@@ -212,7 +212,7 @@ is always required**, which is what makes any name safe — `grok` is an English
 is a word you say constantly, but nobody says "hey grok" by accident.
 
 ```bash
-voice-tunnel wake --name codex     # change it, live, no restart
+command-bridge wake --name codex     # change it, live, no restart
 ```
 
 Once the voiceprint knows you, you are addressed **without saying anything**.
@@ -227,7 +227,7 @@ That last one is not a corner case. Without echo cancellation a reply leaks into
 almost any device, and "the agent interrupts itself" is the default failure. Measured here: the
 owner's voice scores 0.23 against a 0.15 threshold, the agent's own voice scores **0.000**.
 
-Needs `voice-tunnel download voiceprint` and a voice it has learned. Without one it stays quiet
+Needs `command-bridge download voiceprint` and a voice it has learned. Without one it stays quiet
 rather than guessing, because a tunnel that stops whenever the room makes a noise is worse than
 one you cannot interrupt.
 
@@ -236,7 +236,7 @@ one you cannot interrupt.
 By default a turn ends after a fixed silence — 1.5 seconds. That number is a compromise: shorter
 cuts you off while you are still thinking, longer makes every quick question wait for nothing.
 
-`voice-tunnel download turn` replaces it with [Smart Turn v3.2][st] (8 MB, CPU, BSD-2-Clause),
+`command-bridge download turn` replaces it with [Smart Turn v3.2][st] (8 MB, CPU, BSD-2-Clause),
 which listens to *how* the sentence ended. A finished question closes early; a trailing "I was
 thinking that maybe we could…" gets more room. It runs once at each pause, not continuously, and
 if it is not installed the timer works exactly as it always has.
@@ -273,16 +273,16 @@ knowingly. If you expose it publicly, put real authentication in front of it: th
 allowlist cannot help you there, because a tunnel forwards from localhost and every request
 therefore arrives from an allowed peer.
 
-Your files are plain files. `voice-tunnel config path` says where. The voiceprint is a
+Your files are plain files. `command-bridge config path` says where. The voiceprint is a
 192-dimension centroid — speech cannot be reconstructed from it.
 
 ## Settings
 
 ```bash
-voice-tunnel config show           # every setting, its value, and where it came from
-voice-tunnel rate --speed 1.4      # talk faster — applies now and every session after
-voice-tunnel verbose on            # narrate every action before doing it
-voice-tunnel timing                # where the time actually went, per exchange
+command-bridge config show           # every setting, its value, and where it came from
+command-bridge rate --speed 1.4      # talk faster — applies now and every session after
+command-bridge verbose on            # narrate every action before doing it
+command-bridge timing                # where the time actually went, per exchange
 ```
 
 Precedence is **process env > settings file > built-in default**. `.env.example` documents every
@@ -303,8 +303,8 @@ venv/Scripts/python scripts/diagram.py      # regenerate the diagram above, both
 
 | Path | What |
 |---|---|
-| `voice_tunnel/` | store, asr, wake, tts, voiceprint, security, server, cli, config |
-| `voice_tunnel/web/index.html` | the phone client, self-contained, no build step |
+| `command_bridge/` | store, asr, wake, tts, voiceprint, security, server, cli, config |
+| `command_bridge/web/index.html` | the phone client, self-contained, no build step |
 | `docs/` | the README diagram, generated by `scripts/diagram.py` |
 | `specs/` | 001 the tunnel · 002 packaging · 003 npm · 004 turn detection |
 | `ai-docs/reference/` | security model, turn-log contract, browser constraints |

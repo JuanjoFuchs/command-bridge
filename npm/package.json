@@ -1,16 +1,16 @@
 {
-  "name": "@juanjofuchs/voice-tunnel",
+  "name": "@juanjofuchs/command-bridge",
   "version": "0.2.7",
   "description": "A local voice tunnel: talk to your coding agent from a phone browser, no app",
   "author": "JuanjoFuchs",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JuanjoFuchs/voice-tunnel.git"
+    "url": "git+https://github.com/JuanjoFuchs/command-bridge.git"
   },
-  "homepage": "https://github.com/JuanjoFuchs/voice-tunnel#readme",
+  "homepage": "https://github.com/JuanjoFuchs/command-bridge#readme",
   "bugs": {
-    "url": "https://github.com/JuanjoFuchs/voice-tunnel/issues"
+    "url": "https://github.com/JuanjoFuchs/command-bridge/issues"
   },
   "keywords": [
     "voice",
@@ -23,7 +23,7 @@
     "tunnel"
   ],
   "bin": {
-    "voice-tunnel": "bin/voice-tunnel.js"
+    "command-bridge": "bin/command-bridge.js"
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js"

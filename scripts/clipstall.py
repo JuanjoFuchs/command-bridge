@@ -18,7 +18,7 @@ other state as healthy. A `suspended` context is not closed: it is alive, it acc
 state was already understood ONE FUNCTION AWAY, in `reconnect()`, and never handled here.
 
 ⚠ **SAFE TO RUN DURING A LIVE SESSION**, like `scripts/lanestrip.py` and `scripts/devicepills.py`.
-It starts NO voice-tunnel server: the page is served by a plain `http.server` on an ephemeral port,
+It starts NO command-bridge server: the page is served by a plain `http.server` on an ephemeral port,
 the socket is stubbed out, and the last section PROVES that rather than asserting it.
 
     python scripts/clipstall.py
@@ -89,7 +89,7 @@ class ServerWatch:
         self.listeners = _listeners_on(DEFAULT_PORT)
 
     def verify(self):
-        note("no voice-tunnel server process was started")
+        note("no command-bridge server process was started")
         now = _session_files()
         changed = sorted(k for k in set(self.sessions) | set(now)
                          if self.sessions.get(k) != now.get(k))

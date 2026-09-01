@@ -158,7 +158,7 @@ def test_too_short_audio_is_not_enrolled():
 
 def test_gallery_follows_the_session_dir_so_tests_cannot_poison_the_real_one(tmp_path, monkeypatch):
     """The UI harness speaks with a SYNTHETIC voice. If the gallery ever moved to a fixed
-    location (say ~/.voice-tunnel), every test run would enrol Piper as the owner and quietly
+    location (say ~/.command-bridge), every test run would enrol Piper as the owner and quietly
     destroy the real print. Keeping it under COMMAND_BRIDGE_DIR is what makes the harness safe to run.
     """
     monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path / "isolated"))

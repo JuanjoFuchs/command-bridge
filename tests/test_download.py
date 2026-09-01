@@ -99,7 +99,7 @@ def test_a_normal_tar_still_extracts(tmp_path):
 
 
 # ------------------------------------------------------------------------ kokoro
-# `_ResidentKokoro._load` told you to run `voice-tunnel download kokoro` and the target did not
+# `_ResidentKokoro._load` told you to run `command-bridge download kokoro` and the target did not
 # exist — the parser rejected it with a usage error. These pin the shape that made the target
 # worth implementing rather than rewording the message: it is TWO files, and half of it is a real
 # state to be in.
@@ -213,7 +213,7 @@ def test_the_sherpa_release_tag_typo_is_preserved():
 
 
 # --- a downloaded model is only half the answer -------------------------------
-# The runtime that loads it ships as an extra (`pip install voice-tunnel[parakeet]`). In a
+# The runtime that loads it ships as an extra (`pip install command-bridge[parakeet]`). In a
 # checkout both always arrived together, so this distinction did not exist until the tool became
 # installable and the split became real.
 
@@ -254,7 +254,7 @@ def test_both_halves_present_selects_parakeet(tmp_path, monkeypatch):
 def test_doctor_accepts_piper_without_an_executable(monkeypatch, tmp_path, capsys):
     """The resident path needs no `piper.exe`, and `doctor` used to demand one anyway.
 
-    That failed a working install for everyone who ran `pip install voice-tunnel[piper]` — the
+    That failed a working install for everyone who ran `pip install command-bridge[piper]` — the
     wheel ships a library, not an executable. Found by running `doctor` inside a PyInstaller
     bundle, which reported `bin=(not found)` while synthesis was demonstrably working.
     """

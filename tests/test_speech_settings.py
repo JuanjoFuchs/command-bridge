@@ -61,7 +61,7 @@ def test_a_speed_outside_the_range_is_clamped_not_divided_by_zero():
 
 def test_kokoro_has_a_lower_ceiling_than_the_setting_allows():
     """THE LATENT CRASH. `kokoro_onnx.create` opens with `assert speed <= 2.0`, while this tool
-    accepts and persists up to 2.5 — so a value `voice-tunnel rate --speed 2.5` writes without
+    accepts and persists up to 2.5 — so a value `command-bridge rate --speed 2.5` writes without
     complaint makes every Kokoro reply raise an AssertionError from inside the package.
 
     The relationship is what matters, not the two numbers: the moment they are equal this test is
@@ -135,7 +135,7 @@ def test_an_out_of_range_persisted_value_is_clamped_on_read(env_file, monkeypatc
     assert config.sentence_pause() == config.PAUSE_MAX
 
 
-# ------------------------------------------------------------------ `voice-tunnel rate`
+# ------------------------------------------------------------------ `command-bridge rate`
 
 
 def test_rate_persists_by_default_so_it_survives_a_restart(env_file, capsys, tmp_sessions):
@@ -158,7 +158,7 @@ def test_rate_saves_even_when_no_server_is_running(env_file, capsys, tmp_session
 
     assert code == cli.EXIT_OK
     assert payload["applied_live"] is False
-    assert "voice-tunnel serve" in payload["note"]
+    assert "command-bridge serve" in payload["note"]
     assert config.read_env_file(str(env_file))["COMMAND_BRIDGE_SPEECH_SPEED"] == "1.5"
 
 

@@ -416,7 +416,7 @@ def ref_dir() -> str:
     if base:
         return base
     root = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.cache")
-    return os.path.join(root, "voice-tunnel-sharpness", "din45692")
+    return os.path.join(root, "command-bridge-sharpness", "din45692")
 
 
 def fetch_reference(name: str) -> str:

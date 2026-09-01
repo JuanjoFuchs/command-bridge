@@ -140,13 +140,13 @@ def test_describe_tells_the_caller_how_to_invoke_it():
     in the contract said there was a shim or a settings file."""
     invocation = cli.DESCRIBE["invocation"]
     assert "python -c" in invocation["no_python_dash_c"]
-    assert "voice-tunnel config set" in cli.DESCRIBE["config_file"]["write_it_with"]
+    assert "command-bridge config set" in cli.DESCRIBE["config_file"]["write_it_with"]
 
 
 def test_describe_exits_zero_and_is_json(capsys):
     code, payload, _ = run(["describe"], capsys)
     assert code == cli.EXIT_OK
-    assert payload["tool"] == "voice-tunnel"
+    assert payload["tool"] == "command-bridge"
 
 
 # --------------------------------------------------------------- config command
@@ -217,7 +217,7 @@ def test_config_get_on_an_unknown_key_names_the_remedy(capsys, tmp_path, monkeyp
     # to tell which document was wrong.
     assert code == cli.EXIT_USAGE
     assert payload["code"] == "invalid_input"
-    assert "voice-tunnel config show" in payload["remedy"]
+    assert "command-bridge config show" in payload["remedy"]
 
 
 def test_the_same_code_always_means_the_same_exit_status(capsys, tmp_path, monkeypatch):
@@ -266,7 +266,7 @@ def test_a_command_needing_a_server_exits_three_not_one(capsys, tmp_sessions):
 
     assert code == cli.EXIT_NO_SERVER
     assert payload["code"] == "no_server"
-    assert "voice-tunnel serve" in payload["remedy"]
+    assert "command-bridge serve" in payload["remedy"]
 
 
 def test_the_no_server_remedy_names_the_watch_that_must_follow(capsys, tmp_sessions):
@@ -278,7 +278,7 @@ def test_the_no_server_remedy_names_the_watch_that_must_follow(capsys, tmp_sessi
     that is how `--waits 5,3,2` outlived the ladder it configured."""
     _, payload, _ = run(["say", "--session", "ghost", "hello"], capsys)
 
-    assert "voice-tunnel watch" in payload["remedy"]
+    assert "command-bridge watch" in payload["remedy"]
 
 
 def test_a_bad_session_name_exits_usage(capsys, tmp_sessions):
@@ -393,7 +393,7 @@ def test_describe_reports_the_installed_version_not_a_literal():
     import command_bridge
 
     try:
-        installed = pkg_version("voice-tunnel")
+        installed = pkg_version("command-bridge")
     except PackageNotFoundError:
         pytest.skip("not installed; nothing to compare against")
 

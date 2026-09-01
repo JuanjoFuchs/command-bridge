@@ -65,7 +65,7 @@ leave by reasoning**.
   substituted. *Which is more than was true before: the sweep this required found that the single
   most-emitted string in the tool — the guidance that fires once per turn of every conversation —
   was printing a literal `<cursor>` placeholder it already had the value for.*
-- **`voice-tunnel contextcost`'s script, and a CI gate under it** (spec `011`). `scripts/contextcost.py`
+- **`command-bridge contextcost`'s script, and a CI gate under it** (spec `011`). `scripts/contextcost.py`
   recomputes what the above actually saves — both columns from the live code, so the number cannot
   rot into a stale constant — and `--gate` exits non-zero below the floors the spec pre-registered.
   It measures the payload the agent really receives, including the 23 characters the repeat marker
@@ -84,8 +84,8 @@ leave by reasoning**.
   turn-logging path — before any agent had seen the turn, and whether or not one was listening — so
   it asserted acknowledgement for every utterance including the ones nobody would answer. It now
   follows the agent's intent to respond, which is what lets its **absence** carry information.
-  `voice-tunnel consumed --not-responding` is how an agent reads a turn and stays silent.
-- **`voice-tunnel pronounce "<text>"`** (spec `008`). Prints exactly what the engine will be handed,
+  `command-bridge consumed --not-responding` is how an agent reads a turn and stays silent.
+- **`command-bridge pronounce "<text>"`** (spec `008`). Prints exactly what the engine will be handed,
   with no server involved — the thing you reach for when asking why a clip sounded wrong.
 - **Speech normalisation before synthesis** (spec `008`), above the backend dispatch so every engine
   gets it. `0.2.6` was being spoken as "zero two six" and `1.0.0` as "one hundred": the dot was
@@ -100,7 +100,7 @@ leave by reasoning**.
   now fails the build** on any `VOICE_TUNNEL_*` the code reads and the registry does not declare,
   walking the source rather than comparing two hand-maintained lists — because a table that can only
   be wrong when somebody forgets to update it cannot catch somebody forgetting to update it.
-- **`voice-tunnel download kokoro`.** `_ResidentKokoro._load` had been telling people to run this
+- **`command-bridge download kokoro`.** `_ResidentKokoro._load` had been telling people to run this
   since the backend landed, and the parser rejected it with a usage error — the one instruction
   the failure gave you exited 2. It fetches both halves (the 325 MB `kokoro-v1.0.onnx` and the
   28 MB `voices-v1.0.bin`) and checks for them **separately**: model-without-pack is a real state
@@ -109,7 +109,7 @@ leave by reasoning**.
   the backend landed with nothing declaring it, so `VOICE_TUNNEL_TTS=kokoro` could only ever work
   in a checkout whose venv already carried the package — which is exactly where it was written and
   exactly where the test suite runs. It is in `[all]` rather than beside it because someone who
-  has already run `pip install voice-tunnel[all]` and is then told to install `[kokoro]` has no
+  has already run `pip install command-bridge[all]` and is then told to install `[kokoro]` has no
   way to know the first command was meant to have covered it.
 - **A test that walks the source for optional imports** instead of checking the pairs someone
   remembered to list. The existing table could not fail for an import nobody added a row for,
@@ -143,7 +143,7 @@ leave by reasoning**.
   its remedy and change something that was right. There is now a real kokoro branch, naming the
   runtime and the model halves separately because they are fixed by different commands.
 - **A speed above 2.0 no longer makes every Kokoro reply raise.** `kokoro_onnx.create` opens with
-  `assert speed >= 0.5 and speed <= 2.0`, while `SPEED_MAX` is 2.5 and `voice-tunnel rate --speed
+  `assert speed >= 0.5 and speed <= 2.0`, while `SPEED_MAX` is 2.5 and `command-bridge rate --speed
   2.5` accepts and persists it. The clamp sits at the Kokoro boundary — the same place
   `length_scale_for` contains piper's inverted unit — rather than in `SPEED_MAX`, because piper
   handles 2.5 and the owner uses high speeds deliberately; lowering the global maximum would take
@@ -195,7 +195,7 @@ already done everything right — which is the only failure mode left once it wo
 ### Fixed
 
 - **Every remedy `setup` covers now names `setup`.** `next` reads those strings to work out what
-  one command fixes, so remedies naming only their narrow `pip install voice-tunnel[piper]` made
+  one command fixes, so remedies naming only their narrow `pip install command-bridge[piper]` made
   `setup` look smaller than it is: the audit was told it covered two checks and handed pip lines
   for two more, when `[all]` had already fixed all four.
 - **The ASR remedy no longer tells you to pin what selects itself.** It ended with
@@ -240,7 +240,7 @@ session being told to fix something `setup` cannot fix.
 
 ### Added
 
-- **`voice-tunnel stop --session <s>`.** The tool could start a detached server and had no way to
+- **`command-bridge stop --session <s>`.** The tool could start a detached server and had no way to
   end one. `describe` tells you to run `serve` in the background and never said how it stops, so
   the only exit was the OS handle of whatever launched it — gone entirely in a new session. It
   asks the server to shut down first, so the turn log is flushed, and falls back to the pid.
@@ -252,11 +252,11 @@ session being told to fix something `setup` cannot fix.
 ### Fixed
 
 - **`doctor`'s `next` is assembled from the checks' own remedies.** It was a template that named
-  `voice-tunnel setup` for anything non-ok. An audit reached a state where the only remaining item
+  `command-bridge setup` for anything non-ok. An audit reached a state where the only remaining item
   was `shim_on_path` — a PATH observation `setup` does not touch — and was told, repeatedly and
   verbatim, to run the one command that could not possibly help, while the correct advice sat one
   level down in that check's own `remedy`. Advice that ignores the diagnosis is a loop.
-- **`shim_on_path` is advisory, not degraded.** It reports what a *bare* `voice-tunnel` resolves
+- **`shim_on_path` is advisory, not degraded.** It reports what a *bare* `command-bridge` resolves
   to, which is permanently different for anyone calling this copy by absolute path — as its own
   remedy recommends. So it could never be cleared, `degraded` was never empty, and the field this
   release series exists to make trustworthy quietly became noise.
@@ -292,7 +292,7 @@ session being told to fix something `setup` cannot fix.
 
 ## 0.2.3 — 2026-08-10
 
-A third cold-start audit — fresh virtualenv, published wheel, no context but `voice-tunnel
+A third cold-start audit — fresh virtualenv, published wheel, no context but `command-bridge
 describe` — reached a working install and ended up on the system voice anyway. Nothing had
 failed; the tool simply never used what it had just installed.
 
@@ -310,8 +310,8 @@ failed; the tool simply never used what it had just installed.
   definition the one this process's packages were installed with; it was missing from the search
   order entirely, so a fully isolated installation still resolved a binary belonging to some other
   Python on PATH.
-- **`shim_on_path` no longer passes for somebody else's install.** `voice-tunnel` being on PATH
-  says nothing about *which* voice-tunnel is on PATH — the audit's isolated copy reported `ok` the
+- **`shim_on_path` no longer passes for somebody else's install.** `command-bridge` being on PATH
+  says nothing about *which* command-bridge is on PATH — the audit's isolated copy reported `ok` the
   whole time while naming a console script from a different installation, still carrying another
   agent's wake name. A mismatch is now `degraded` and says so in full.
 - **A failing `say` reports what the server said.** The client read the error body, failed to find
@@ -361,7 +361,7 @@ mistake: reporting a state as fine when it is merely functional.
 ## 0.2.1 — 2026-08-10
 
 Turn detection did not work in 0.2.0 outside a source checkout, and the tool's own advice for
-fixing it could not work either. Found by giving an agent nothing but `voice-tunnel describe` and
+fixing it could not work either. Found by giving an agent nothing but `command-bridge describe` and
 asking it to reach the best available configuration.
 
 ### Fixed
@@ -370,12 +370,12 @@ asking it to reach the best available configuration.
   declared in any extra — so the feature could not load for anyone who installed from PyPI. There
   is now a `turn` extra carrying both, included in `all`.
 - **The remedies pointed at the wrong extra.** `doctor`, `download turn`, and the runtime error
-  all advised `pip install voice-tunnel[parakeet]`, which installs sherpa-onnx and neither of the
+  all advised `pip install command-bridge[parakeet]`, which installs sherpa-onnx and neither of the
   packages actually needed. Running the printed fix verbatim left you exactly as broken.
 
 ### Added
 
-- **`voice-tunnel setup`** — installs the optional engines into the current interpreter and
+- **`command-bridge setup`** — installs the optional engines into the current interpreter and
   downloads all four models (voice, recognizer, voiceprint, turn) in one idempotent command.
   Assembling that from four separate instructions is four chances to do three of them, and the
   two axes involved are easy to confuse: the extras supply the engines, the downloads supply the

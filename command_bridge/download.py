@@ -139,7 +139,7 @@ def piper_voice_urls(name: str) -> tuple:
     if len(parts) != 3:
         raise ValueError(
             f"{name!r} is not a piper voice name — expected <locale>-<speaker>-<quality>, "
-            f"e.g. en_GB-alan-medium. `voice-tunnel download --list` shows a starting set."
+            f"e.g. en_GB-alan-medium. `command-bridge download --list` shows a starting set."
         )
     locale, speaker, quality = parts
     lang = locale.split("_")[0]
@@ -156,7 +156,7 @@ def _fetch(url: str, dest: str, on_progress: Callable | None = None) -> int:
     means the model at the destination path is either whole or absent.
     """
     os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-    req = urllib.request.Request(url, headers={"User-Agent": "voice-tunnel"})
+    req = urllib.request.Request(url, headers={"User-Agent": "command-bridge"})
     tmp = None
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:

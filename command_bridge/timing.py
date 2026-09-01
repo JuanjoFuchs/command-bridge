@@ -7,7 +7,7 @@ second — the tool spent ~2 s and the AGENT spent 39 s and 60 s. A stopwatch in
 not an instrument, and a conversation is exactly the kind of thing you cannot re-run to measure.
 
 So every stage stamps itself as it happens, into `sessions/<session>.timing.jsonl`. Reading it
-back with `voice-tunnel timing` turns "it feels slow" into a number next to a stage name.
+back with `command-bridge timing` turns "it feels slow" into a number next to a stage name.
 
 Two clocks per event, deliberately:
 
@@ -135,7 +135,7 @@ def _exchanges(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def report(session: str, limit: int = 0) -> dict[str, Any]:
-    """The `voice-tunnel timing` payload: recent exchanges, their slowest step, and the overall culprit."""
+    """The `command-bridge timing` payload: recent exchanges, their slowest step, and the overall culprit."""
     events = read(session)
     if not events:
         return {

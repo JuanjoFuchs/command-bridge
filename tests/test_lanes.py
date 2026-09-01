@@ -162,7 +162,7 @@ def test_every_lane_error_carries_a_code_and_a_remedy():
         with pytest.raises(LaneError) as exc:
             call()
         assert exc.value.code in {"lane_exists", "unknown_lane"}
-        assert exc.value.remedy.startswith("voice-tunnel ")
+        assert exc.value.remedy.startswith("command-bridge ")
 
 
 def test_the_default_lane_cannot_be_removed():

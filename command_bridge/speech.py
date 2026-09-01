@@ -166,7 +166,7 @@ numbered list and the `.` closing a sentence are both out of reach.
 
 
 def _say_dotted_word(match: re.Match) -> str:
-    """`command_bridge.config.speech_speed` -> "voice tunnel dot config dot speech speed".
+    """`command_bridge.config.speech_speed` -> "command bridge dot config dot speech speed".
 
     The underscore goes too, and only inside a token this rule already matched. An underscore is
     not a sound — it is either read out as the word "underscore" or dropped, and neither is what
@@ -181,7 +181,7 @@ def normalize_for_speech(text: str) -> str:
 
     Pure, deterministic and engine-independent (FR1, FR5) — both installed engines were measured
     dropping the dot, so this is not a workaround for one of them. It is called from exactly two
-    places: `tts.synthesize`, above the backend dispatch, and `voice-tunnel pronounce`, which is
+    places: `tts.synthesize`, above the backend dispatch, and `command-bridge pronounce`, which is
     how you ask what the engine is about to be handed WITHOUT starting a server. They call the
     same function so the inspector cannot drift away from the thing it inspects (FR4a).
 

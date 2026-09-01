@@ -1,7 +1,7 @@
 """Installing a neural voice should be enough to use it.
 
 From the third cold-start audit on 2026-08-10: an agent given a fresh virtualenv and nothing but
-`voice-tunnel describe` ran `setup`, watched every step report success, and ended on the robotic
+`command-bridge describe` ran `setup`, watched every step report success, and ended on the robotic
 Windows system voice. Nothing had failed. `tts_backend()` returned a hardcoded `"sapi"` unless a
 human had exported `COMMAND_BRIDGE_TTS`, while `asr_engine()` had always upgraded itself the moment
 its model appeared — so the two halves of the same install behaved by opposite rules, and only one
@@ -114,7 +114,7 @@ def test_the_sapi_remedy_names_the_setting_when_setup_is_already_done(
     assert "COMMAND_BRIDGE_TTS piper" in tts["remedy"], (
         "with piper and a voice installed, the fix is the setting — not another setup run"
     )
-    assert "voice-tunnel setup" not in tts["remedy"], "do not advise re-running what has run"
+    assert "command-bridge setup" not in tts["remedy"], "do not advise re-running what has run"
 
 
 def test_the_sapi_remedy_still_says_setup_on_a_bare_install(clean, tmp_sessions, capsys):
@@ -147,7 +147,7 @@ def test_next_names_setup_when_setup_is_what_fixes_it(clean, tmp_sessions, capsy
 
     _, payload, _ = run(["doctor"], capsys)
     assert payload["failed"], "a bare posix install must report failures, not just fallbacks"
-    assert "voice-tunnel setup" in payload["next"], (
+    assert "command-bridge setup" in payload["next"], (
         "when several remedies are the same command, say the command"
     )
     for name in payload["degraded"]:

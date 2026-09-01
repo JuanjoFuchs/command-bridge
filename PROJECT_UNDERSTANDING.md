@@ -4,19 +4,19 @@ Current-state orientation. Keep it short — durable detail lives in `ai-docs/`.
 
 ## What this is
 
-A **voice tunnel**: a local CLI an agent starts, which serves a page to a phone browser and
+A **command bridge**: a local CLI an agent starts, which serves a page to a phone browser and
 carries audio both ways. The agent that starts it supplies all intelligence.
 
 ```
 Phone browser (no install)
    |  HTTPS (Tailscale Serve for the phone; http://localhost is already a secure context)
    v
-voice-tunnel serve  ── the DUMB half, no LLM ──────────────────────────────┐
+command-bridge serve  ── the DUMB half, no LLM ──────────────────────────────┐
    mic  -> wake gate -> ASR -> append turn to sessions/<s>.jsonl  │
-   spkr <- TTS <- text handed to `voice-tunnel say`                         │
+   spkr <- TTS <- text handed to `command-bridge say`                         │
                                                                   v
                                               The agent that started it (SMART)
-                                              voice-tunnel watch --since <cursor> -> reason -> voice-tunnel say
+                                              command-bridge watch --since <cursor> -> reason -> command-bridge say
 ```
 
 ## Why it is shaped this way
@@ -55,7 +55,7 @@ MCP call timeouts with queues, callbacks, and pause semantics. Polling a log has
 
 ## State
 
-Harness scaffolded. See `specs/001-voice-tunnel.md` for the build unit and its acceptance
+Harness scaffolded. See `specs/001-command-bridge.md` for the build unit and its acceptance
 criteria, and the task list in the driving session for progress.
 
 ## Gotchas

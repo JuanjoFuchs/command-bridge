@@ -91,10 +91,10 @@ AGENT_STATES = ["idle", "transcribing", "thinking", "synthesizing", "waiting", "
 PHASES = ["idle", "starting", "warming", "live", "denied"]
 TIMED = {"transcribing", "thinking", "synthesizing", "waiting"}
 
-env = dict(os.environ, COMMAND_BRIDGE_DIR=tempfile.mkdtemp(prefix="voice-tunnel-orb-"),
+env = dict(os.environ, COMMAND_BRIDGE_DIR=tempfile.mkdtemp(prefix="command-bridge-orb-"),
            COMMAND_BRIDGE_TTS="sapi")
 server = subprocess.Popen(
-    [sys.executable, f"{ROOT}/bin/voice-tunnel-run.py", "serve",
+    [sys.executable, f"{ROOT}/bin/command-bridge-run.py", "serve",
      "--session", SESSION, "--port", str(PORT), "--token", TOKEN],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
 
@@ -355,7 +355,7 @@ try:
         # `watch` is THE command: spec 005 made it smart enough that `drain` was unnecessary rather
         # than renaming it. A tool that keeps teaching a spelling it is retiring is how
         # `--waits 5,3,2` outlived the ladder it configured.
-        check("voice-tunnel watch --session" in nxt and "stop watching" not in nxt,
+        check("command-bridge watch --session" in nxt and "stop watching" not in nxt,
               "and hands back a runnable watch instead of telling the agent to stop",
               f"next={nxt!r}")
         check(result.get("elapsed", 99) < 20,

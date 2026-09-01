@@ -240,7 +240,7 @@ def test_every_next_this_tool_emits_carries_a_runnable_command(monkeypatch):
                 offenders.append(f"watch/{branch}/{form}: no session-substituted command")
             if "<" in text and ">" in text:
                 offenders.append(f"watch/{branch}/{form}: unresolved placeholder in {text!r}")
-            if "`voice-tunnel " not in text:
+            if "`command-bridge " not in text:
                 offenders.append(f"watch/{branch}/{form}: nothing runnable")
 
     for branch, server_says, now in SAY_BRANCHES:
@@ -252,7 +252,7 @@ def test_every_next_this_tool_emits_carries_a_runnable_command(monkeypatch):
                 offenders.append(f"say/{branch}/{form}: no session-substituted command")
             if "<" in text and ">" in text:
                 offenders.append(f"say/{branch}/{form}: unresolved placeholder in {text!r}")
-            if "`voice-tunnel " not in text:
+            if "`command-bridge " not in text:
                 offenders.append(f"say/{branch}/{form}: nothing runnable")
             del call
 
@@ -274,7 +274,7 @@ def test_the_two_exception_payloads_also_carry_their_command(monkeypatch):
         session=SESSION, since=CURSOR, timeout=0.0, force=False, all_turns=False))
 
     assert busy["reason"] == "watch_open"
-    assert f"`voice-tunnel watch --session {SESSION} --since {CURSOR} --force`" in busy["next"]
+    assert f"`command-bridge watch --session {SESSION} --since {CURSOR} --force`" in busy["next"]
     assert "next_repeated" not in busy
 
     monkeypatch.setattr(cli, "WATCH_SPEECH_MAX_S", 0.0)
@@ -286,7 +286,7 @@ def test_the_two_exception_payloads_also_carry_their_command(monkeypatch):
         session=SESSION, since=CURSOR, timeout=0.0, force=False, all_turns=False))
 
     assert ceiling["reason"] == "ceiling"
-    assert f"`voice-tunnel watch --session {SESSION} --since {CURSOR}`" in ceiling["next"]
+    assert f"`command-bridge watch --session {SESSION} --since {CURSOR}`" in ceiling["next"]
     assert "NOT permission to reply" in ceiling["next"], (
         "the one warning in this payload is the reason it exists; it may never be suppressed"
     )
@@ -304,7 +304,7 @@ def test_the_one_placeholder_left_is_the_value_that_cannot_be_known(monkeypatch)
     out = _say(monkeypatch, {**_CLIP, "cursor": None})
 
     assert "--since <cursor>" in out["next"]
-    assert f"`voice-tunnel watch --session {SESSION} --since <cursor>`" in out["next"], (
+    assert f"`command-bridge watch --session {SESSION} --since <cursor>`" in out["next"], (
         "even here the session is filled in and the invocation is otherwise complete"
     )
 
@@ -389,8 +389,8 @@ def test_the_short_form_says_where_the_reasoning_went(monkeypatch):
     repeat = _say(monkeypatch, {**_CLIP, "async": True}, now=True)
     short = repeat["next"]
 
-    assert "`voice-tunnel describe`" in short, "name the command that carries the reasoning"
-    assert "see `voice-tunnel describe`" in short, (
+    assert "`command-bridge describe`" in short, "name the command that carries the reasoning"
+    assert "see `command-bridge describe`" in short, (
         "with a VERB. This field is read to be executed, and a second backticked command sitting "
         "beside the first with nothing to say which one to run invites `describe` to be run as "
         "the next action, which is exactly what it is not"
@@ -445,7 +445,7 @@ def test_the_quiet_watch_is_left_exactly_as_it_was(monkeypatch):
     first = _watch(monkeypatch, _live())
     second = _watch(monkeypatch, _live())
 
-    assert first["next"] == second["next"] == f"run `voice-tunnel watch --session {SESSION} " \
+    assert first["next"] == second["next"] == f"run `command-bridge watch --session {SESSION} " \
                                               f"--since {CURSOR - 1}`"
     assert "next_repeated" not in second
     assert len(second["next"]) <= 51

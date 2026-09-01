@@ -1,4 +1,4 @@
-"""The PATH shims — the layer that decides whether `voice-tunnel` is a command or a ritual.
+"""The PATH shims — the layer that decides whether `command-bridge` is a command or a ritual.
 
 These run the shims as real subprocesses from an unrelated cwd, because every bug they guard
 against is invisible in-process: an import that only works from the repo root, a batch file that
@@ -24,12 +24,12 @@ def test_the_launcher_runs_from_an_unrelated_cwd(tmp_path):
     situation an agent is always in — it invokes the tool from wherever its own turn is standing.
     """
     proc = subprocess.run(
-        [sys.executable, os.path.join(BIN, "voice-tunnel-run.py"), "describe"],
+        [sys.executable, os.path.join(BIN, "command-bridge-run.py"), "describe"],
         cwd=str(tmp_path), capture_output=True, text=True, timeout=120,
     )
 
     assert proc.returncode == 0, proc.stderr
-    assert json.loads(proc.stdout)["tool"] == "voice-tunnel"
+    assert json.loads(proc.stdout)["tool"] == "command-bridge"
 
 
 def test_the_launcher_needs_no_environment(tmp_path):
@@ -39,7 +39,7 @@ def test_the_launcher_needs_no_environment(tmp_path):
     env["COMMAND_BRIDGE_ENV_FILE"] = str(tmp_path / "absent.env")
 
     proc = subprocess.run(
-        [sys.executable, os.path.join(BIN, "voice-tunnel-run.py"), "config", "path"],
+        [sys.executable, os.path.join(BIN, "command-bridge-run.py"), "config", "path"],
         cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=120,
     )
 
@@ -50,16 +50,16 @@ def test_the_launcher_needs_no_environment(tmp_path):
 def test_the_launcher_puts_this_checkout_first_on_sys_path():
     """A shim named after a directory must mean that directory, even if another copy of the
     package is installed in the interpreter's site-packages."""
-    source = open(os.path.join(BIN, "voice-tunnel-run.py"), encoding="utf-8").read()
+    source = open(os.path.join(BIN, "command-bridge-run.py"), encoding="utf-8").read()
     assert "sys.path.insert(0" in source
 
 
 def _git_bash():
-    """The bash `bin/voice-tunnel` actually targets: Git Bash / MSYS, where `cygpath` exists.
+    """The bash `bin/command-bridge` actually targets: Git Bash / MSYS, where `cygpath` exists.
 
     Explicitly NOT WSL's bash. On Windows `shutil.which("bash")` regularly resolves to
     C:\\Windows\\System32\\bash.exe, which is a Linux environment with a different filesystem
-    view — it cannot even open `D:\\...\\bin\\voice-tunnel` and exits 127. Handing that to this test made
+    view — it cannot even open `D:\\...\\bin\\command-bridge` and exits 127. Handing that to this test made
     it fail on a perfectly good shim, purely as a function of PATH order.
     """
     if os.name != "nt":
@@ -77,23 +77,23 @@ def _git_bash():
 @pytest.mark.skipif(_git_bash() is None, reason="no Git Bash on this machine (WSL bash is not it)")
 def test_the_bash_shim_works_from_an_unrelated_cwd(tmp_path):
     proc = subprocess.run(
-        [_git_bash(), os.path.join(BIN, "voice-tunnel"), "describe"],
+        [_git_bash(), os.path.join(BIN, "command-bridge"), "describe"],
         cwd=str(tmp_path), capture_output=True, text=True, timeout=120,
     )
 
     assert proc.returncode == 0, proc.stderr
-    assert json.loads(proc.stdout)["tool"] == "voice-tunnel"
+    assert json.loads(proc.stdout)["tool"] == "command-bridge"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="cmd shim is Windows-only")
 def test_the_cmd_shim_works_from_an_unrelated_cwd(tmp_path):
     proc = subprocess.run(
-        [os.path.join(BIN, "voice-tunnel.cmd"), "describe"],
+        [os.path.join(BIN, "command-bridge.cmd"), "describe"],
         cwd=str(tmp_path), capture_output=True, text=True, timeout=120, shell=False,
     )
 
     assert proc.returncode == 0, proc.stderr
-    assert json.loads(proc.stdout)["tool"] == "voice-tunnel"
+    assert json.loads(proc.stdout)["tool"] == "command-bridge"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="cmd shim is Windows-only")
@@ -104,12 +104,12 @@ def test_the_cmd_shim_is_ascii_with_crlf():
     that it could not find its own repo. Nothing about the file looks wrong when you read it,
     which is exactly why this needs to be a test and not a note.
     """
-    raw = open(os.path.join(BIN, "voice-tunnel.cmd"), "rb").read()
+    raw = open(os.path.join(BIN, "command-bridge.cmd"), "rb").read()
 
     assert not raw.startswith(b"\xef\xbb\xbf"), "a UTF-8 BOM confuses cmd.exe"
     non_ascii = [b for b in raw if b > 0x7F]
-    assert not non_ascii, f"voice-tunnel.cmd must be pure ASCII; found {len(non_ascii)} high bytes"
-    assert b"\r\n" in raw, "voice-tunnel.cmd must use CRLF line endings"
+    assert not non_ascii, f"command-bridge.cmd must be pure ASCII; found {len(non_ascii)} high bytes"
+    assert b"\r\n" in raw, "command-bridge.cmd must use CRLF line endings"
 
 
 def test_the_bash_shim_has_no_carriage_returns():
@@ -118,13 +118,13 @@ def test_the_bash_shim_has_no_carriage_returns():
     where nothing is missing. The repo is developed on Windows with core.autocrlf=true, so this
     is one `git clone` away at all times -- .gitattributes pins it, and this proves the pin.
     """
-    raw = open(os.path.join(BIN, "voice-tunnel"), "rb").read()
-    assert b"\r" not in raw, "bin/voice-tunnel must be LF-only or its shebang breaks"
+    raw = open(os.path.join(BIN, "command-bridge"), "rb").read()
+    assert b"\r" not in raw, "bin/command-bridge must be LF-only or its shebang breaks"
 
 
 def test_line_endings_are_pinned_for_both_shims():
     attributes = open(os.path.join(config.ROOT, ".gitattributes"), encoding="utf-8").read()
-    assert "bin/voice-tunnel" in attributes and "eol=lf" in attributes
+    assert "bin/command-bridge" in attributes and "eol=lf" in attributes
     assert "*.cmd" in attributes and "eol=crlf" in attributes
 
 
@@ -132,7 +132,7 @@ def test_no_shim_invokes_python_dash_c():
     """The smell this change removes. `python -c "import sys; sys.path.insert(...)"` had to
     splice a path into a raw string, so a root ending in a backslash closed the string early and
     produced a SyntaxError instead of a CLI."""
-    for name in ("voice-tunnel", "voice-tunnel.cmd"):
+    for name in ("command-bridge", "command-bridge.cmd"):
         source = open(os.path.join(BIN, name), encoding="utf-8").read()
         assert "-c " not in source, f"{name} still invokes python with an inline program"
 
@@ -158,4 +158,4 @@ def test_the_module_entry_runs_as_a_bare_script():
         env=dict(os.environ, PYTHONPATH=os.path.dirname(BIN)),
     )
     assert r.returncode == 0, f"entry point failed as a bare script: {r.stderr[-400:]}"
-    assert json.loads(r.stdout)["tool"] == "voice-tunnel"
+    assert json.loads(r.stdout)["tool"] == "command-bridge"

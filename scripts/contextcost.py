@@ -428,7 +428,7 @@ def failures(rows: list[Exchange]) -> list[str]:
 
 def render(rows: list[Exchange]) -> str:
     lines = [
-        "voice-tunnel context cost — spec 011, FR4",
+        "command-bridge context cost — spec 011, FR4",
         "",
         "  Both columns are computed from the working tree. `before` is the same code with FR1's",
         "  `last_refusal` memo and FR3's `next_branch` memo reset between calls, which is what the",

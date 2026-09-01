@@ -35,7 +35,7 @@ from command_bridge import config, server, store
 # recorded in spec 011. AC7 requires the saving at MEDIAN length, not at the flattering one — a
 # repeat that only pays off on a 700-character turn would be a saving on the rare case.
 MEDIAN_TURN = "so what I was thinking is we should probably just ship the smaller one now"
-MEASURED_TURN = ("I have noticed now that I am using my voice tunnel, I am saving on context "
+MEASURED_TURN = ("I have noticed now that I am using my command bridge, I am saving on context "
                  "window a lot and I am getting more value out of talking than by reading what "
                  "it writes, and it has been a very long back and forth, and my context window "
                  "is not growing, which is the whole point of the thing, so the question I have "
@@ -301,7 +301,7 @@ def test_a_repeat_carries_the_same_recovery_facts_as_the_first(state, synth):
     assert second["unread_count"] == len(second["unread"]) == 1, (
         "the count is of TURNS, so trimming their text must not make it disagree with the list"
     )
-    assert second["remedy"] == f"voice-tunnel watch --session {state.session} --since -1"
+    assert second["remedy"] == f"command-bridge watch --session {state.session} --since -1"
 
 
 # ------------------------------------------------------- AC6: TC4, nothing was spoken

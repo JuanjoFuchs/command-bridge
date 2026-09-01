@@ -164,7 +164,7 @@ def wav_duration(path: str) -> float:
 def run(headed: bool, keep: bool) -> int:
     from playwright.sync_api import sync_playwright
 
-    workdir = tempfile.mkdtemp(prefix="voice-tunnel-e2e-")
+    workdir = tempfile.mkdtemp(prefix="command-bridge-e2e-")
     session = "e2e"
     token = security.generate_token()
     port = free_port()
@@ -472,35 +472,35 @@ def run(headed: bool, keep: bool) -> int:
                 return json.loads(r.stdout or "{}"), r.returncode
             except json.JSONDecodeError as exc:
                 raise Failure(
-                    f"`voice-tunnel {' '.join(argv)}` did not emit JSON: "
+                    f"`command-bridge {' '.join(argv)}` did not emit JSON: "
                     f"{r.stdout[:200]}{r.stderr[:200]}"
                 ) from exc
 
         desc, rc = cli("describe")
-        check(rc == 0 and desc.get("tool") == "voice-tunnel", "voice-tunnel describe returns the contract")
+        check(rc == 0 and desc.get("tool") == "command-bridge", "command-bridge describe returns the contract")
         check("watch" in desc.get("commands", {}), "describe documents every command")
 
         st, rc = cli("status", "--session", session)
         check(rc == 0 and st.get("session") == session,
-              "voice-tunnel status reaches the running server via the runtime file",
+              "command-bridge status reaches the running server via the runtime file",
               json.dumps(st)[:200])
 
         w, rc = cli("watch", "--session", session, "--since", "-1", "--timeout", "5")
-        check(rc == 0 and w.get("count", 0) >= 1, "voice-tunnel watch --since -1 returns the turn")
-        check(w.get("cursor") == w["turns"][-1]["id"], "voice-tunnel watch returns a usable cursor")
+        check(rc == 0 and w.get("count", 0) >= 1, "command-bridge watch --since -1 returns the turn")
+        check(w.get("cursor") == w["turns"][-1]["id"], "command-bridge watch returns a usable cursor")
 
         before2 = page.evaluate("() => window.__voiceTunnel.played.length")
         s2, rc = cli("say", "--session", session, "Acknowledged, standing by.")
-        check(rc == 0 and s2.get("queued") is True, "voice-tunnel say queued a clip", json.dumps(s2)[:200])
+        check(rc == 0 and s2.get("queued") is True, "command-bridge say queued a clip", json.dumps(s2)[:200])
         page.wait_for_function(f"() => window.__voiceTunnel.played.length > {before2}", timeout=60000)
-        ok("voice-tunnel say reached the browser and played")
+        ok("command-bridge say reached the browser and played")
 
         # Use an IDLE session, not the live one. The fake mic loops, so the live session keeps
         # producing real turns and a "nothing new" assertion against it is inherently racy —
         # it would fail for the right reason and read as a bug.
         empty, rc = cli("watch", "--session", "e2eidle", "--since", "-1", "--timeout", "2")
         check(rc == 0 and empty.get("count") == 0 and empty.get("cursor") == -1,
-              "voice-tunnel watch times out to an empty heartbeat, not an error",
+              "command-bridge watch times out to an empty heartbeat, not an error",
               json.dumps(empty)[:200])
 
         # An empty watch must say whether anyone is actually listening. This is the moment the
@@ -550,7 +550,7 @@ def main() -> int:
     args = ap.parse_args()
 
     print("=" * 70)
-    print("voice-tunnel end-to-end acceptance (spec 001)")
+    print("command-bridge end-to-end acceptance (spec 001)")
     print("=" * 70)
     started = time.time()
     try:

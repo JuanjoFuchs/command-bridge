@@ -1,7 +1,7 @@
 """Build the wheel and provision a cold install from it — without publishing anything.
 
 WHY THIS EXISTS. Versions 0.2.1 through 0.2.4 were each found by handing an agent a fresh
-virtualenv, the published wheel and nothing but `voice-tunnel describe`. That worked — every round
+virtualenv, the published wheel and nothing but `command-bridge describe`. That worked — every round
 found real defects — but the loop ran through PyPI, so four public releases in ninety minutes were
 really four test iterations, and PyPI has no unpublish. The artifact under test was never the
 reason to publish; it was the only cold install lying around.
@@ -82,14 +82,14 @@ def provision(root: str, wheel: str, extras: str, share_models: bool) -> dict:
         # The one path shared on purpose. `doctor` reports it under runtime.shared, so the agent
         # can see it rather than discover it — which is the lesson 0.2.2 was named after.
         env["COMMAND_BRIDGE_MODELS_DIR"] = os.path.join(
-            os.path.expanduser("~"), ".voice-tunnel", "models")
+            os.path.expanduser("~"), ".command-bridge", "models")
 
     return {
         "root": root,
         "wheel": os.path.basename(wheel),
         "extras": extras or "(none — the bare floor)",
         "python": python,
-        "shim": os.path.join(venv, SCRIPTS, "voice-tunnel" + EXE),
+        "shim": os.path.join(venv, SCRIPTS, "command-bridge" + EXE),
         "env": env,
     }
 
@@ -157,7 +157,7 @@ def main() -> int:
     ap.add_argument("--keep-dist", action="store_true", help="leave the built wheel on disk")
     args = ap.parse_args()
 
-    root = args.dir or tempfile.mkdtemp(prefix="voice-tunnel-cold-")
+    root = args.dir or tempfile.mkdtemp(prefix="command-bridge-cold-")
     os.makedirs(root, exist_ok=True)
     dist = os.path.join(root, "dist")
 

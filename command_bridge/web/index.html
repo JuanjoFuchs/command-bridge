@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark light" />
 <meta name="theme-color" content="#080b11" media="(prefers-color-scheme: dark)" />
 <meta name="theme-color" content="#e7e9e7" media="(prefers-color-scheme: light)" />
-<title>voice-tunnel</title>
+<title>command-bridge</title>
 <link rel="icon" href="data:," /><!-- suppress the favicon 404; there is no icon to serve -->
 <style>
   /* ===========================================================================
@@ -988,7 +988,7 @@
 </head>
 <body>
   <!-- ONE HEADER ROW (spec 014 FR1/FR2). Title left, session and audio controls right.
-       JJ, 2026-08-24: "the voice tunnel title that's rendered at the very top of the page, I would
+       JJ, 2026-08-24: "the command bridge title that's rendered at the very top of the page, I would
        like to move it to the left. And in that same line, I would like to place the mute button and
        the device selectors and the virtual vose [verbose] mode... these controls will be aligned to
        the right instead."
@@ -1215,7 +1215,7 @@
   // cached, because a cached "in use" is precisely the lie this section exists to stop telling.
   // `sinkRefused` is sticky: a platform that answered NotSupportedError once will answer it
   // again, and re-showing the control after every enumeration would resurrect a dead switch.
-  let sinkWanted = localStorage.getItem("voice-tunnel.sinkId") || "";
+  let sinkWanted = localStorage.getItem("command-bridge.sinkId") || "";
   let sinkSupported = false, sinkRefused = false;
   // ONE DEVICE, TWO HALVES. `deviceGroups` is groupId -> {in, out, label} for the physical devices
   // whose input and output were BOTH enumerated; `groupOfDevice` is the reverse index, deviceId ->
@@ -1630,8 +1630,8 @@
     // The distinction that decides it: a PREFERENCE describes how you always want the tool
     // (verbose, speech rate, voice) and should outlive everything. STATE describes what is true
     // right now (muted, channel open) and outliving its moment is what makes it a trap.
-    sessionStorage.setItem("voice-tunnel.muted", muted ? "1" : "0");
-    // The server is told so `voice-tunnel status` can say "he has himself muted" — otherwise a silent
+    sessionStorage.setItem("command-bridge.muted", muted ? "1" : "0");
+    // The server is told so `command-bridge status` can say "he has himself muted" — otherwise a silent
     // tunnel and a muted one look identical from the agent's side, and the agent goes hunting
     // for a broken microphone that is working perfectly.
     tellServer("muted", muted);
@@ -2187,7 +2187,7 @@
   }
 
   // Paint only. Used when the SERVER tells us the value — either on the ready frame or after
-  // someone (a laptop, or the agent itself via `voice-tunnel verbose on`) changed it elsewhere. Echoing it
+  // someone (a laptop, or the agent itself via `command-bridge verbose on`) changed it elsewhere. Echoing it
   // back would be a loop, so this deliberately does not call tellServer.
   function paintVerbose(next) {
     verbose = Boolean(next);
@@ -2287,7 +2287,7 @@
     // instead of "not pressed", which is the difference between describing the transcript and
     // describing a switch.
     $collapse.setAttribute("aria-expanded", String(!on));
-    localStorage.setItem("voice-tunnel.collapsed", on ? "1" : "0");
+    localStorage.setItem("command-bridge.collapsed", on ? "1" : "0");
     diag.collapsed = on;
     // Rows added while collapsed have no measurable geometry, so the log would reopen scrolled
     // to wherever it was when it closed. Snap it back to the newest line on the way out.
@@ -2295,7 +2295,7 @@
   }
 
   $collapse.addEventListener("click", () => setCollapsed(!$log.hidden));
-  setCollapsed(localStorage.getItem("voice-tunnel.collapsed") === "1");
+  setCollapsed(localStorage.getItem("command-bridge.collapsed") === "1");
 
   $mute.addEventListener("click", () => setMuted(!muted));
   $verbose.addEventListener("click", () => setVerbose(!verbose));
@@ -2307,8 +2307,8 @@
   //
   // Any value left in localStorage by an older build is cleared, not read: it is precisely the
   // stale mute this change exists to stop honouring.
-  localStorage.removeItem("voice-tunnel.muted");
-  setMuted(sessionStorage.getItem("voice-tunnel.muted") === "1");
+  localStorage.removeItem("command-bridge.muted");
+  setMuted(sessionStorage.getItem("command-bridge.muted") === "1");
 
   // Live level -> CSS variable, smoothed and painted once per frame rather than per audio
   // callback. Writing a style on every 4096-sample block (~12/s) is wasteful and jittery;
@@ -2462,7 +2462,7 @@
       // changing the machine's default recording device, and useful on its own when the
       // default is the wrong mic. Labels are only populated once permission is granted, so
       // this takes two getUserMedia calls on the first run.
-      const remembered = localStorage.getItem("voice-tunnel.micId");
+      const remembered = localStorage.getItem("command-bridge.micId");
       if (remembered && !q.get("device")) {
         constraints.deviceId = { exact: remembered };
       }
@@ -2492,7 +2492,7 @@
         if (constraints.deviceId) {
           diag.errors.push("preferred mic unavailable, using default");
           delete constraints.deviceId;
-          localStorage.removeItem("voice-tunnel.micId");
+          localStorage.removeItem("command-bridge.micId");
           micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
         } else { throw err; }
       }
@@ -2850,7 +2850,7 @@
         }
         applyOrb();
       } else if (msg.type === "verbose") {
-        // Someone flipped it elsewhere — another device, or the agent via `voice-tunnel verbose on`.
+        // Someone flipped it elsewhere — another device, or the agent via `command-bridge verbose on`.
         paintVerbose(msg.value);
       } else if (msg.type === "stop_playback") {
         // He started talking over the reply and the voiceprint confirmed it was him. Stop now.
@@ -2874,7 +2874,7 @@
         if (!channelOpen) silencePlayback();
         applyOrb();
       } else if (msg.type === "wake") {
-        // The agent renamed itself mid-session (`voice-tunnel wake --name codex`). Nothing on
+        // The agent renamed itself mid-session (`command-bridge wake --name codex`). Nothing on
         // screen prints the phrase any more, so this is recorded rather than painted — the
         // harness still asserts the page learned it.
         wakeName = msg.name || wakeName;
@@ -3171,7 +3171,7 @@
         diag.errors.push("setSinkId: " + e.message);
         diag.sink.why = "unavailable: " + e.message;
         sinkWanted = "";
-        localStorage.removeItem("voice-tunnel.sinkId");
+        localStorage.removeItem("command-bridge.sinkId");
         // SAY IT OUT LOUD. He chose a speaker and is not getting it; reverting to the default in
         // silence is the exact move that let the interface and the audio disagree in the first
         // place. This clears itself on the next successful reconnect, like every other error here.
@@ -3618,7 +3618,7 @@
   }
 
   $mic.addEventListener("change", async () => {
-    localStorage.setItem("voice-tunnel.micId", $mic.value);
+    localStorage.setItem("command-bridge.micId", $mic.value);
     // Full stop/start rather than surgery on a live audio graph: swapping the source node
     // mid-stream is where subtle capture bugs breed, and the turn log lives on the server so
     // a reconnect costs nothing.
@@ -3637,7 +3637,7 @@
   // have to notice it to fix it.
   $spk.addEventListener("change", async () => {
     sinkWanted = $spk.value;
-    localStorage.setItem("voice-tunnel.sinkId", sinkWanted);
+    localStorage.setItem("command-bridge.sinkId", sinkWanted);
     await applySink("picked");
   });
 
@@ -3665,10 +3665,10 @@
     if (!group) { paintGroup(); return; }
 
     sinkWanted = group.out;
-    localStorage.setItem("voice-tunnel.sinkId", sinkWanted);
+    localStorage.setItem("command-bridge.sinkId", sinkWanted);
     await applySink("picked");
 
-    localStorage.setItem("voice-tunnel.micId", group.in);
+    localStorage.setItem("command-bridge.micId", group.in);
     await stop();
     await start();
   });
@@ -3695,7 +3695,7 @@
   // every lane an orb, and a lifecycle handler on each of them would mean N controls racing to own
   // one microphone. So it moved out to a control that is about the session rather than about an
   // agent, exactly as he asked: *"Maybe we add that button as a power button right to the left of
-  // the voice tunnel title... And that means that the orbs, each orb for each agent or each lane
+  // the command bridge title... And that means that the orbs, each orb for each agent or each lane
   // is just clicking on it, is just switching to that lane."*
   //
   // ⚠ THE ORB STAYS TAPPABLE WHILE THE SESSION IS OFF, and only then (TC2). A browser opens no

@@ -28,7 +28,7 @@ def test_setup_is_named_by_every_remedy_it_actually_fixes(capsys, tmp_sessions, 
         if check["name"] not in ("tts", "asr"):
             continue
         if check["status"] in ("failed", "degraded"):
-            assert "voice-tunnel setup" in (check["remedy"] or ""), (
+            assert "command-bridge setup" in (check["remedy"] or ""), (
                 f"{check['name']} is fixed by setup; say so, or `next` will undercount it"
             )
 
@@ -88,11 +88,11 @@ def test_the_serve_banner_says_how_to_stop(capsys):
     """The command that starts a background process should say how it ends, in the same breath.
     This banner explained how to rename the assistant and change the speech rate."""
     src = open(os.path.join(os.path.dirname(cli.__file__), "server.py"), encoding="utf-8").read()
-    assert "voice-tunnel stop --session" in src, "the banner must name the way out"
+    assert "command-bridge stop --session" in src, "the banner must name the way out"
 
 
 def test_the_live_wake_name_is_in_the_status_snapshot():
-    """`voice-tunnel wake` compares persisted against live, and the live half read null forever
+    """`command-bridge wake` compares persisted against live, and the live half read null forever
     because the snapshot never carried it — next to correct live phrases, which made it look like
     the server had a name it would not admit to."""
     from command_bridge.server import TunnelState

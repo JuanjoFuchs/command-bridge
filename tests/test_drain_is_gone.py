@@ -24,14 +24,14 @@ import pytest
 from command_bridge import cli, config
 
 REPO = config.ROOT
-RUNNER = os.path.join(REPO, "bin", "voice-tunnel-run.py")
+RUNNER = os.path.join(REPO, "bin", "command-bridge-run.py")
 
 
 # --------------------------------------------------------------------------- AC15: it is unknown
 
 
 def test_the_retired_name_exits_non_zero_as_an_unknown_command_and_names_watch(tmp_path):
-    """AC15 (`integration`). Driven through `bin/voice-tunnel-run.py`, the file every shim execs,
+    """AC15 (`integration`). Driven through `bin/command-bridge-run.py`, the file every shim execs,
     because the retirement lookup happens in `main` before `parse_args` and an in-process call to
     a handler would step straight over it.
 
@@ -187,7 +187,7 @@ WORD = re.compile(r"(?<![\w-])drain(?![\w-])", re.I)
 
 # 1. INVOCATION — text a reader could copy and execute. NO override, ever (see the docstring).
 INVOCATION = re.compile(
-    r"(?:^|[\s`\"'(\[/])(?:voice-tunnel(?:\.cmd)?|vt)\s+drain(?![\w-])"
+    r"(?:^|[\s`\"'(\[/])(?:command-bridge(?:\.cmd)?|vt)\s+drain(?![\w-])"
     r"|(?<![\w-])drain\s+--\w",
     re.I,
 )
@@ -375,15 +375,15 @@ ALLOWED = [
     ("command_bridge/cli.py", "# `watch` and `drain` are aliases  <- source comment, AC17's job"),
 ]
 FORBIDDEN = [
-    ("AGENTS.md", "run `voice-tunnel drain --session <s> --since <cursor>` before you reply"),
+    ("AGENTS.md", "run `command-bridge drain --session <s> --since <cursor>` before you reply"),
     ("AGENTS.md", "then `drain` in the foreground before every say"),
     ("AGENTS.md", "an empty watch is not permission to speak, so run `drain` first"),
     ("AGENTS.md", "`drain` re-watches on collapsing short ceilings and checks the signals"),
     ("AGENTS.md", "`watch` and `drain` are aliases for one another"),
     ("AGENTS.md", "`drain` still runs as a deprecated alias for one release"),
-    ("ai-docs/reference/turn-log.md", "voice-tunnel drain --session dev --since 42"),
+    ("ai-docs/reference/turn-log.md", "command-bridge drain --session dev --since 42"),
     ("scripts/e2e.py", "# pass `drain --waits 5,3,2` to collapse the ladder"),
-    ("README.md", "Use `voice-tunnel.cmd drain` on Windows."),
+    ("README.md", "Use `command-bridge.cmd drain` on Windows."),
 ]
 
 
@@ -410,7 +410,7 @@ def test_the_ac18_check_fires_on_a_planted_instruction_in_a_real_file(tmp_path):
 
     planted = original.replace(
         "**You are no longer asked to remember that.**",
-        "Run `voice-tunnel drain --session dev --since <cursor>` before you reply.\n\n"
+        "Run `command-bridge drain --session dev --since <cursor>` before you reply.\n\n"
         "**You are no longer asked to remember that.**",
         1,
     )
@@ -422,8 +422,8 @@ def test_the_ac18_check_fires_on_a_planted_instruction_in_a_real_file(tmp_path):
     path, lineno, rule, _why, text = findings[0]
     assert path == "AGENTS.md" and rule == "INVOCATION"
     assert lineno == planted.splitlines().index(
-        "Run `voice-tunnel drain --session dev --since <cursor>` before you reply.") + 1
-    assert "voice-tunnel drain" in text
+        "Run `command-bridge drain --session dev --since <cursor>` before you reply.") + 1
+    assert "command-bridge drain" in text
 
 
 def test_the_ac18_scan_is_actually_reading_the_repo():

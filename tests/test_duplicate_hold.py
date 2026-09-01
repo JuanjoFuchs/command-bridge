@@ -5,7 +5,7 @@
 kepler and both played when he came back to that lane.
 
     "The Kepler agent just spoke twice to me."
-    "I don't know if it's an issue of the agent or the voice tunnel."
+    "I don't know if it's an issue of the agent or the command bridge."
     "Make the same turn repeated twice."
 
 🎯 **The tool PRINTED the rule and did not enforce it, which is the whole finding.** The off-lane

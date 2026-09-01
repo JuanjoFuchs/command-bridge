@@ -50,7 +50,7 @@ def _piper_importable(monkeypatch):
     CI.** They stub the voice, so nothing here exercises piper's synthesis — but `synthesize()`
     imports `SynthesisConfig` for real, so the whole file collapsed with
     `ModuleNotFoundError: No module named 'piper'` on any environment without the optional
-    extra. That is precisely the environment a fresh `pip install voice-tunnel` produces, so the
+    extra. That is precisely the environment a fresh `pip install command-bridge` produces, so the
     suite was passing on the maintainer's machine and failing on the floor every user lands on.
 
     Skipping would have been the easy fix and the wrong one: it would leave the silence
@@ -175,7 +175,7 @@ def test_a_missing_voice_still_names_the_remedy(monkeypatch):
     with pytest.raises(tts.TTSError) as exc:
         tts._synth_piper("hello")
 
-    assert "voice-tunnel doctor" in str(exc.value)
+    assert "command-bridge doctor" in str(exc.value)
 
 
 def test_available_says_which_piper_path_is_live(monkeypatch, resident):
@@ -273,7 +273,7 @@ def test_a_speed_within_the_ceiling_is_not_recorded_as_clamped(monkeypatch):
 
 
 def test_the_missing_model_remedy_names_a_command_that_exists(monkeypatch, tmp_path):
-    """`_load` has always said `voice-tunnel download kokoro`; the target did not exist, so the
+    """`_load` has always said `command-bridge download kokoro`; the target did not exist, so the
     one instruction the failure gave you exited 2 with an argparse usage error. A remedy naming a
     command the parser rejects is worse than no remedy."""
     import argparse
@@ -286,7 +286,7 @@ def test_the_missing_model_remedy_names_a_command_that_exists(monkeypatch, tmp_p
     holder = tts._ResidentKokoro()
 
     assert holder._load() is None
-    assert "voice-tunnel download kokoro" in holder.unavailable_reason
+    assert "command-bridge download kokoro" in holder.unavailable_reason
 
     parser = cli.build_parser()
     sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
@@ -300,7 +300,7 @@ def test_the_missing_model_remedy_names_a_command_that_exists(monkeypatch, tmp_p
 # BOTH halves, and needing both is the whole shape of this package's optional extras: a voice
 # FILE on disk and the piper PACKAGE that reads it are independently present or absent. Checking
 # only the file skipped correctly on a bare machine and failed on one that had downloaded a voice
-# without `pip install voice-tunnel[piper]` — which is a completely ordinary state to be in.
+# without `pip install command-bridge[piper]` — which is a completely ordinary state to be in.
 @pytest.mark.skipif(
     not (config.piper_voice() and config.have_module("piper")),
     reason="needs both a piper voice on disk and the piper-tts package",

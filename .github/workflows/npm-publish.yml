@@ -3,7 +3,7 @@ name: Publish to npm
 # Simpler than agent-mail-cli's equivalent, and the difference is the packaging model: that one
 # downloads per-platform PyInstaller binaries into the npm package, so its workflow has to verify
 # every release asset exists first. This npm package carries no binary — it builds a private
-# virtualenv at postinstall and pip-installs `voice-tunnel` into it (spec 003) — so the only
+# virtualenv at postinstall and pip-installs `command-bridge` into it (spec 003) — so the only
 # thing that must be true before publishing is that the PyPI version is actually live.
 on:
   workflow_dispatch:
@@ -66,20 +66,20 @@ jobs:
             if (!ok) { console.error('npm >= 11.5.1 required for trusted publishing'); process.exit(1); }
           "
 
-      # THE ORDERING CONSTRAINT. npm postinstall runs `pip install voice-tunnel==<version>`, so
+      # THE ORDERING CONSTRAINT. npm postinstall runs `pip install command-bridge==<version>`, so
       # publishing to npm before PyPI has the version produces a package that installs cleanly
       # and then fails for every user. npm has no meaningful unpublish after 72 hours; PyPI has
       # none at all. Check first.
       - name: The PyPI version must already exist
         run: |
           VERSION="${{ inputs.version }}"
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/voice-tunnel/$VERSION/json")
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/command-bridge/$VERSION/json")
           if [ "$CODE" != "200" ]; then
-            echo "voice-tunnel==$VERSION is not on PyPI (HTTP $CODE)."
+            echo "command-bridge==$VERSION is not on PyPI (HTTP $CODE)."
             echo "npm postinstall would install a version that does not exist. Publish PyPI first."
             exit 1
           fi
-          echo "voice-tunnel==$VERSION is live on PyPI"
+          echo "command-bridge==$VERSION is live on PyPI"
 
       - name: Sync the package version
         working-directory: npm
@@ -90,7 +90,7 @@ jobs:
       - name: Syntax-check the launcher and the postinstall
         working-directory: npm
         run: |
-          node --check bin/voice-tunnel.js
+          node --check bin/command-bridge.js
           node --check scripts/postinstall.js
 
       # NO NODE_AUTH_TOKEN. Publishing authenticates by OIDC against the trusted publisher

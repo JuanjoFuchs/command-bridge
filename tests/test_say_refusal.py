@@ -129,7 +129,7 @@ def test_the_refusal_carries_the_turns_and_a_runnable_watch(state, synth):
     assert [t["text"] for t in payload["unread"]] == ["and one more thing"], (
         "the text, not just the ids — an agent cannot recognise a turn from a number"
     )
-    assert payload["remedy"] == f"voice-tunnel watch --session {state.session} --since -1"
+    assert payload["remedy"] == f"command-bridge watch --session {state.session} --since -1"
     assert "not read" in payload["error"]
 
 
@@ -170,7 +170,7 @@ def test_the_cli_exits_one_with_the_documented_code(monkeypatch, capsys):
 
     refusal = {"spoke": False, "error": "refusing to speak: he said 1 thing(s) you have not read.",
                "code": config.UNREAD_REFUSAL_CODE,
-               "remedy": "voice-tunnel watch --session dev --since 4",
+               "remedy": "command-bridge watch --session dev --since 4",
                "unread": [{"id": 5, "text": "wait"}], "unread_count": 1,
                "since": 4, "last_turn_id": 5}
     monkeypatch.setattr(cli, "_request", lambda *a, **k: dict(refusal))
@@ -191,7 +191,7 @@ def test_a_refusal_does_not_get_the_clip_branches(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "_request", lambda *a, **k: {
         "spoke": False, "error": "refusing", "code": config.UNREAD_REFUSAL_CODE,
-        "remedy": "voice-tunnel watch --session dev --since 4", "next": "read them",
+        "remedy": "command-bridge watch --session dev --since 4", "next": "read them",
         "unread": [{"id": 5, "text": "wait"}], "unread_count": 1, "since": 4, "last_turn_id": 5})
 
     cli.main(["say", "--session", "dev", "hello"])

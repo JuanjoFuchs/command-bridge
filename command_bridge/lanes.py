@@ -108,13 +108,13 @@ def validate_name(name: str) -> str:
     """
     if not isinstance(name, str):
         raise LaneError("lane name must be a string", "lane_exists",
-                        "voice-tunnel lane add <one lowercase word>")
+                        "command-bridge lane add <one lowercase word>")
     cleaned = name.strip().lower()
     if cleaned == BROADCAST:
         raise LaneError(
             f"'{BROADCAST}' is the broadcast lane and cannot be an agent lane",
             "lane_exists",
-            "voice-tunnel lane add <another name>",
+            "command-bridge lane add <another name>",
         )
     if not NAME_RE.match(cleaned):
         raise LaneError(
@@ -122,7 +122,7 @@ def validate_name(name: str) -> str:
             "-- it is matched as the single token after the greeting, so a space or a hyphen "
             "makes it unsayable",
             "lane_exists",
-            "voice-tunnel lane add <one lowercase word>",
+            "command-bridge lane add <one lowercase word>",
         )
     return cleaned
 
@@ -252,7 +252,7 @@ class LaneRegistry:
         raise LaneError(
             f"no lane named '{name}'",
             "unknown_lane",
-            f"voice-tunnel lane add {name}   # or use one of: "
+            f"command-bridge lane add {name}   # or use one of: "
             + ", ".join(self._lanes + [BROADCAST]),
         )
 
@@ -260,7 +260,7 @@ class LaneRegistry:
         name = validate_name(name)
         if name in self._lanes:
             raise LaneError(f"lane '{name}' is already registered", "lane_exists",
-                            "voice-tunnel lane list")
+                            "command-bridge lane list")
         self._lanes.append(name)
         return name
 
@@ -271,10 +271,10 @@ class LaneRegistry:
             raise LaneError(
                 f"'{name}' is this server's own lane and cannot be removed",
                 "lane_exists",
-                "voice-tunnel lane remove <another lane>",
+                "command-bridge lane remove <another lane>",
             )
         if name not in self._lanes:
-            raise LaneError(f"no lane named '{name}'", "unknown_lane", "voice-tunnel lane list")
+            raise LaneError(f"no lane named '{name}'", "unknown_lane", "command-bridge lane list")
         self._lanes.remove(name)
         if self.current == name:
             self.current = self.default

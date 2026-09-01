@@ -27,7 +27,7 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Lint
-        run: python -m ruff check voice_tunnel/ tests/ scripts/
+        run: python -m ruff check command_bridge/ tests/ scripts/
       - name: Test
         run: python -m pytest tests/ -q
 
@@ -121,33 +121,33 @@ jobs:
       - name: Build the bundle
         shell: bash
         run: |
-          python -m PyInstaller --onedir --name voice-tunnel --console \
+          python -m PyInstaller --onedir --name command-bridge --console \
             --collect-submodules onnxruntime --collect-data piper --collect-binaries sherpa_onnx \
             --hidden-import sherpa_onnx --hidden-import piper --hidden-import piper.voice \
             --exclude-module piper.train --exclude-module torch --exclude-module torchaudio \
             --exclude-module pytorch_lightning --exclude-module matplotlib --exclude-module tkinter \
-            voice_tunnel/__main__.py
+            command_bridge/__main__.py
 
       # Not "did it build" — did it build something that WORKS. A bundle whose native extensions
       # failed to collect still produces an .exe; it fails at the first real command.
       - name: Smoke test the bundle
         shell: bash
         run: |
-          ./dist/voice-tunnel/voice-tunnel.exe describe > /dev/null
-          ./dist/voice-tunnel/voice-tunnel.exe doctor || true
-          ./dist/voice-tunnel/voice-tunnel.exe download --list > /dev/null
+          ./dist/command-bridge/command-bridge.exe describe > /dev/null
+          ./dist/command-bridge/command-bridge.exe doctor || true
+          ./dist/command-bridge/command-bridge.exe download --list > /dev/null
 
       - name: Zip it
         shell: pwsh
         run: |
           $v = "${{ needs.build-packages.outputs.version }}"
-          Compress-Archive -Path dist/voice-tunnel/* -DestinationPath "voice-tunnel-$v-windows-x64.zip"
-          Get-Item "voice-tunnel-$v-windows-x64.zip" | Select-Object Name, Length
+          Compress-Archive -Path dist/command-bridge/* -DestinationPath "command-bridge-$v-windows-x64.zip"
+          Get-Item "command-bridge-$v-windows-x64.zip" | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-bundle
-          path: voice-tunnel-*-windows-x64.zip
+          path: command-bridge-*-windows-x64.zip
 
   create-release:
     runs-on: ubuntu-latest

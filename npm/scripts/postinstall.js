@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Build a private virtualenv beside this package and pip-install voice-tunnel into it.
+ * Build a private virtualenv beside this package and pip-install command-bridge into it.
  *
  * WHY THIS IS NOT A BUNDLED BINARY, unlike the sibling `agent-mail` package.
  *
  * agent-mail is pure stdlib, so PyInstaller turns it into a ~10 MB executable and npm ships that.
- * voice-tunnel depends on aiohttp, numpy and faster-whisper, and optionally on onnxruntime and
+ * command-bridge depends on aiohttp, numpy and faster-whisper, and optionally on onnxruntime and
  * sherpa-onnx — native wheels, per-platform, hundreds of megabytes together. A PyInstaller bundle
  * of that is enormous, slow to start, and reliably flagged by Windows Defender's ML heuristic
  * (agent-mail's own launcher carries a quarantine hint for exactly that reason). Shipping a real
@@ -77,37 +77,37 @@ function main() {
   const py = findPython();
   if (!py) {
     console.error(
-      `\nvoice-tunnel needs Python ${MIN_PYTHON.join('.')}+ and could not find it.\n` +
+      `\ncommand-bridge needs Python ${MIN_PYTHON.join('.')}+ and could not find it.\n` +
       `This package is a launcher around a Python program — it does not bundle an interpreter.\n` +
-      `Install Python from https://python.org, then re-run:  npm rebuild @juanjofuchs/voice-tunnel\n`
+      `Install Python from https://python.org, then re-run:  npm rebuild @juanjofuchs/command-bridge\n`
     );
     return; // exit 0 on purpose — see the header
   }
 
   try {
     if (!fs.existsSync(venvBin('python'))) {
-      console.log(`voice-tunnel: creating a private environment (Python ${py.version})`);
+      console.log(`command-bridge: creating a private environment (Python ${py.version})`);
       run(py.cmd, [...py.prefix, '-m', 'venv', VENV], 'venv creation');
     }
-    console.log('voice-tunnel: installing (this pulls native wheels and takes a minute)');
+    console.log('command-bridge: installing (this pulls native wheels and takes a minute)');
     run(venvBin('python'), ['-m', 'pip', 'install', '--quiet', '--upgrade', 'pip'], 'pip upgrade');
-    // PINNED to this package's own version. Unpinned, `npm install @juanjofuchs/voice-tunnel@0.1.0`
+    // PINNED to this package's own version. Unpinned, `npm install @juanjofuchs/command-bridge@0.1.0`
     // would fetch whatever PyPI has latest — so the version a user asked for and the version they
     // get could differ, and a bad PyPI release would reach back into every previously-published
     // npm version. The two registries carry the same number or the install fails loudly.
     run(venvBin('python'),
-        ['-m', 'pip', 'install', '--quiet', `voice-tunnel==${PKG_VERSION}`], 'pip install');
+        ['-m', 'pip', 'install', '--quiet', `command-bridge==${PKG_VERSION}`], 'pip install');
     console.log(
-      '\nvoice-tunnel installed. Next:\n' +
-      '  voice-tunnel doctor              what is missing, and the command that fixes it\n' +
-      '  voice-tunnel download --list     optional models: a neural voice, faster ASR\n' +
-      '  voice-tunnel serve --wake claude use YOUR agent\'s name\n'
+      '\ncommand-bridge installed. Next:\n' +
+      '  command-bridge doctor              what is missing, and the command that fixes it\n' +
+      '  command-bridge download --list     optional models: a neural voice, faster ASR\n' +
+      '  command-bridge serve --wake claude use YOUR agent\'s name\n'
     );
   } catch (err) {
     console.error(
-      `\nvoice-tunnel: setup did not complete — ${err.message}\n` +
-      `Fix the cause and re-run:  npm rebuild @juanjofuchs/voice-tunnel\n` +
-      `Or skip npm entirely:      pip install voice-tunnel\n`
+      `\ncommand-bridge: setup did not complete — ${err.message}\n` +
+      `Fix the cause and re-run:  npm rebuild @juanjofuchs/command-bridge\n` +
+      `Or skip npm entirely:      pip install command-bridge\n`
     );
   }
 }

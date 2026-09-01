@@ -165,7 +165,7 @@ def main() -> int:
     out_dev = find_device(OUT_MATCH, want_output=True)
     in_dev = find_device(IN_MATCH, want_output=False)
     print("=" * 72)
-    print("voice-tunnel UI test — real Chrome, real microphone via virtual cable")
+    print("command-bridge UI test — real Chrome, real microphone via virtual cable")
     print("=" * 72)
     print(f"  play into : [{out_dev}] {sd.query_devices(out_dev)['name']}")
     print(f"  chrome mic: [{in_dev}] {sd.query_devices(in_dev)['name']}")

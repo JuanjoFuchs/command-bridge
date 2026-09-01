@@ -293,7 +293,7 @@ def transcribe(pcm: bytes, rate: int) -> str:
 
 def cache_dir() -> str:
     root = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.cache")
-    return os.path.join(root, "voice-tunnel-speechcheck")
+    return os.path.join(root, "command-bridge-speechcheck")
 
 
 def cache_file() -> str:
@@ -795,7 +795,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SpeechCheckError(
                 "COMMAND_BRIDGE_TTS is 'none' — every clip would be silence and every transcript "
                 "empty, and the run would look plausible. Remedy:\n"
-                "    voice-tunnel config set COMMAND_BRIDGE_TTS kokoro")
+                "    command-bridge config set COMMAND_BRIDGE_TTS kokoro")
         normalize, why_missing = load_transform()
         use_cache = not args.no_cache
 

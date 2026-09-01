@@ -1,7 +1,7 @@
 """One root that really isolates, and checks that do not go quiet when they start passing.
 
 All three of these came out of a cold-start audit on 2026-08-10, where an agent was given a fresh
-virtualenv, the published wheel, and nothing but `voice-tunnel describe`.
+virtualenv, the published wheel, and nothing but `command-bridge describe`.
 
   * It set `COMMAND_BRIDGE_DIR`, believed the environment was pristine, and found
     `COMMAND_BRIDGE_WAKE_NAME=codex` already applied — leaked through the machine-wide settings
@@ -108,21 +108,21 @@ def test_the_voiceprint_check_is_always_present(capsys, tmp_sessions):
 
 def test_a_shim_belonging_to_another_install_is_not_a_clean_pass(capsys, tmp_sessions,
                                                                  tmp_path, monkeypatch):
-    """`voice-tunnel` being on PATH says nothing about *which* voice-tunnel is on PATH.
+    """`command-bridge` being on PATH says nothing about *which* command-bridge is on PATH.
 
     A cold-start audit built an isolated copy, configured it end to end, and this check reported
     `ok` throughout — naming a console script from a different installation that still carried
-    another agent's wake name. Every subsequent bare `voice-tunnel` would have run that one, which
+    another agent's wake name. Every subsequent bare `command-bridge` would have run that one, which
     is the same class of mistake as the incident the isolation work exists to prevent.
     """
     from tests.test_cli_surface import run
 
     stranger = tmp_path / "somebody-else" / "Scripts"
     stranger.mkdir(parents=True)
-    shim = stranger / "voice-tunnel.exe"
+    shim = stranger / "command-bridge.exe"
     shim.write_text("", encoding="utf-8")
     monkeypatch.setattr(config.shutil, "which",
-                        lambda name: str(shim) if name == "voice-tunnel" else None)
+                        lambda name: str(shim) if name == "command-bridge" else None)
     monkeypatch.setattr(config.sys, "executable", str(tmp_path / "mine" / "Scripts" / "python.exe"))
     monkeypatch.setattr(config, "_in_source_checkout", lambda: False)
 
@@ -144,7 +144,7 @@ def test_an_advisory_alone_does_not_make_the_runtime_sound_broken(capsys, tmp_se
 
     An audit reached a state where `shim_on_path` was the only non-ok item and watched `doctor`
     answer, every time: "RUNS, BUT NOT AS CONFIGURED — shim_on_path is on a fallback.
-    `voice-tunnel setup` installs the optional engines and downloads every model." `setup` does
+    `command-bridge setup` installs the optional engines and downloads every model." `setup` does
     not touch PATH. It had already run. The correct advice was sitting in that check's own
     `remedy` one level down, and the top-level line — the one thing an agent reads first — was a
     hardcoded template that ignored the diagnosis and produced a loop.
@@ -153,10 +153,10 @@ def test_an_advisory_alone_does_not_make_the_runtime_sound_broken(capsys, tmp_se
 
     stranger = tmp_path / "elsewhere" / "Scripts"
     stranger.mkdir(parents=True)
-    (stranger / "voice-tunnel.exe").write_text("", encoding="utf-8")
+    (stranger / "command-bridge.exe").write_text("", encoding="utf-8")
     monkeypatch.setattr(config.shutil, "which",
-                        lambda name: str(stranger / "voice-tunnel.exe")
-                        if name == "voice-tunnel" else None)
+                        lambda name: str(stranger / "command-bridge.exe")
+                        if name == "command-bridge" else None)
     monkeypatch.setattr(config, "_in_source_checkout", lambda: False)
 
     _, payload, _ = run(["doctor"], capsys)
@@ -179,7 +179,7 @@ def test_this_install_s_own_shim_is_a_clean_pass(capsys, tmp_sessions, tmp_path,
     scripts = tmp_path / "mine" / "Scripts"
     scripts.mkdir(parents=True)
     monkeypatch.setattr(config.shutil, "which",
-                        lambda name: str(scripts / "VOICE-TUNNEL.EXE") if name == "voice-tunnel"
+                        lambda name: str(scripts / "VOICE-TUNNEL.EXE") if name == "command-bridge"
                         else None)
     monkeypatch.setattr(config.sys, "executable", str(scripts / "python.exe"))
     monkeypatch.setattr(config, "_in_source_checkout", lambda: False)

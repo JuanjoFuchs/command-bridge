@@ -83,7 +83,7 @@ class TurnDetector:
             return self._session
         if not installed():
             self.unavailable_reason = (
-                f"{MODEL_FILE} is not installed — `voice-tunnel download turn`"
+                f"{MODEL_FILE} is not installed — `command-bridge download turn`"
             )
             return None
         try:
@@ -101,7 +101,7 @@ class TurnDetector:
             # anyone following it stayed exactly as broken and reasonably concluded the feature
             # was unsupported on their machine.
             self.unavailable_reason = (
-                f"turn detection needs `pip install voice-tunnel[turn]` ({exc})"
+                f"turn detection needs `pip install command-bridge[turn]` ({exc})"
             )
             return None
         try:

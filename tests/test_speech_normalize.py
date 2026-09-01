@@ -363,7 +363,7 @@ def test_describe_documents_the_new_command_and_the_new_field():
     # The field FR4b adds to the timing log, named where someone reading `timing` will find it.
     normalized = cli.DESCRIBE["commands"]["timing"]["returns"]["normalized"]
     assert "clip" in normalized
-    assert "voice-tunnel pronounce" in normalized, "point at the half that needs no server"
+    assert "command-bridge pronounce" in normalized, "point at the half that needs no server"
 
 
 def test_the_cli_command_is_wired_to_a_handler():
@@ -384,7 +384,7 @@ def test_the_say_path_records_the_normalised_string_against_the_clip_id(tmp_sess
     **End-to-end retrieval through a running `say` is NOT verified here and cannot be**: a live
     voice session is on the machine and TC4 forbids starting a server. Stated rather than papered
     over. What IS verified is the part that carries the requirement — that the helper the say path
-    calls writes the normalised form beside the clip id, in the log `voice-tunnel timing` reads.
+    calls writes the normalised form beside the clip id, in the log `command-bridge timing` reads.
     """
     from command_bridge import server
 

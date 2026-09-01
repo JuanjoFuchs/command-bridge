@@ -271,8 +271,8 @@ def test_the_chosen_speaker_survives_a_reload():
     to notice the second one before he can fix it, which is the whole complaint again.
     """
     raw = page()
-    assert 'localStorage.setItem("voice-tunnel.sinkId"' in raw, "the chosen speaker is not saved"
-    assert 'localStorage.getItem("voice-tunnel.sinkId")' in raw, "the saved speaker is never read back"
+    assert 'localStorage.setItem("command-bridge.sinkId"' in raw, "the chosen speaker is not saved"
+    assert 'localStorage.getItem("command-bridge.sinkId")' in raw, "the saved speaker is never read back"
 
 
 def test_a_failed_route_change_forgets_the_device_it_could_not_reach():

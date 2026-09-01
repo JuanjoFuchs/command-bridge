@@ -195,7 +195,7 @@ def test_only_this_tools_namespace_can_be_written(key, tmp_path, monkeypatch):
 
 
 def test_a_newline_in_a_value_is_refused(tmp_path, monkeypatch):
-    """Otherwise `voice-tunnel config set COMMAND_BRIDGE_OWNER $'jj\\nCOMMAND_BRIDGE_TOKEN=stolen'` forges a second setting."""
+    """Otherwise `command-bridge config set COMMAND_BRIDGE_OWNER $'jj\\nCOMMAND_BRIDGE_TOKEN=stolen'` forges a second setting."""
     monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / ".env"))
     with pytest.raises(ValueError, match="newline or control character"):
         config.write_setting("COMMAND_BRIDGE_OWNER", "jj\nCOMMAND_BRIDGE_TOKEN=stolen")
@@ -228,7 +228,7 @@ def test_the_piper_binary_is_found_in_the_repo_venv(tmp_path, monkeypatch):
 
 
 def test_this_interpreter_s_piper_beats_the_repo_venv(tmp_path, monkeypatch):
-    """`pip install voice-tunnel[piper]` puts piper.exe beside the interpreter that installed it.
+    """`pip install command-bridge[piper]` puts piper.exe beside the interpreter that installed it.
 
     That copy is by definition the one this process's packages were installed with, and it used
     to lose to a checkout path and then to PATH. A cold-start audit built a fully isolated
@@ -294,7 +294,7 @@ def test_a_sole_installed_voice_is_taken_even_if_it_is_not_the_default(tmp_path,
 
 def test_no_voice_is_chosen_when_the_choice_would_be_a_guess(tmp_path, monkeypatch):
     """Several installed and none of them the default: guessing which voice someone wants to
-    hear is worse than saying "name one", which is what `voice-tunnel doctor` then does."""
+    hear is worse than saying "name one", which is what `command-bridge doctor` then does."""
     monkeypatch.delenv("COMMAND_BRIDGE_PIPER_VOICE", raising=False)
     models = tmp_path / "models"
     models.mkdir()

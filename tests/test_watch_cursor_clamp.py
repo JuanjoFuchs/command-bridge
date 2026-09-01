@@ -87,7 +87,7 @@ NO_SERVER = {
     "running": False,
     "error": "no server registered for session 'dev'",
     "code": "no_server",
-    "remedy": "voice-tunnel serve --session dev",
+    "remedy": "command-bridge serve --session dev",
 }
 """Exactly what `cli._request` synthesises when nothing is registered — NFR2's condition."""
 

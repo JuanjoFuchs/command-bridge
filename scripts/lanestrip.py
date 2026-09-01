@@ -8,7 +8,7 @@ Two halves, and the split is the same one `scripts/orbstate.py` makes for the or
    right and a painter that never runs is the failure a model-only sweep cannot see.
 
 ⚠ **SAFE TO RUN DURING A LIVE SESSION**, like `scripts/devicepills.py` and unlike every other page
-harness here. It starts NO voice-tunnel server: the page is served by a plain `http.server` on an
+harness here. It starts NO command-bridge server: the page is served by a plain `http.server` on an
 ephemeral port, the socket is never opened, and the last section proves all of that rather than
 asserting it — because a harness that quietly started a second tunnel while he was mid-sentence
 would be a worse bug than anything it could find.
@@ -88,7 +88,7 @@ def _tunnel_children():
     except Exception:
         return []
     return [ln.strip() for ln in raw.splitlines()
-            if "command_bridge" in ln or "voice-tunnel" in ln]
+            if "command_bridge" in ln or "command-bridge" in ln]
 
 
 class ServerWatch:
@@ -97,7 +97,7 @@ class ServerWatch:
         self.listeners = _listeners_on(DEFAULT_PORT)
 
     def verify(self):
-        note("no voice-tunnel server process was started")
+        note("no command-bridge server process was started")
         now = _session_files()
         changed = sorted(k for k in set(self.sessions) | set(now)
                          if self.sessions.get(k) != now.get(k))
@@ -113,7 +113,7 @@ class ServerWatch:
               f"pids on {DEFAULT_PORT}: {sorted(listeners) or 'none'}")
 
         kids = _tunnel_children()
-        check(not kids, "this process spawned no voice-tunnel child process",
+        check(not kids, "this process spawned no command-bridge child process",
               "" if not kids else f"found: {kids}")
         check(all(p != DEFAULT_PORT for p in SERVED_PORTS),
               "every static server this harness opened is on an ephemeral port",

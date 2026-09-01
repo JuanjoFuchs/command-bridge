@@ -209,7 +209,7 @@ def main() -> int:
         print(f"  shots in {out}")
 
     after = _listeners()
-    print("\n--- no voice-tunnel server was started " + "-" * 40)
+    print("\n--- no command-bridge server was started " + "-" * 40)
     print(f"  listeners on {TUNNEL_PORT} unchanged: {after == before}")
     return 0
 

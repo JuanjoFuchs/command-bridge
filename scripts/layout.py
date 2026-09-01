@@ -233,9 +233,9 @@ def main() -> int:
         return 2
 
     # A scratch session dir, so a check never appends to a real turn log.
-    env = dict(os.environ, COMMAND_BRIDGE_DIR=tempfile.mkdtemp(prefix="voice-tunnel-layout-"))
+    env = dict(os.environ, COMMAND_BRIDGE_DIR=tempfile.mkdtemp(prefix="command-bridge-layout-"))
     server = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "bin", "voice-tunnel-run.py"), "serve",
+        [sys.executable, os.path.join(ROOT, "bin", "command-bridge-run.py"), "serve",
          "--session", "layout", "--port", str(PORT), "--token", TOKEN],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
     )

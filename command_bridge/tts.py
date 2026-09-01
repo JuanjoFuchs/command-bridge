@@ -154,7 +154,7 @@ def list_voices() -> list:
 
     For piper it delegates to config so "what is installed" has one definition (AGENTS.md
     convention 5). That listing requires each `.onnx` to have its sidecar `.onnx.json`, which
-    keeps the voiceprint gallery's speaker model out of `voice-tunnel voices` — it was being
+    keeps the voiceprint gallery's speaker model out of `command-bridge voices` — it was being
     offered as a selectable voice that then failed at synthesis time.
     """
     if config.tts_backend() == "kokoro":
@@ -306,7 +306,7 @@ of two. The relationship that holds is:
 **exact — zero error — across 14 cases** on 2026-08-26: four voices and speeds 0.8 through 4.0.
 Both roundings carry weight. Rounding the SUM instead of each token matched 0 of 10; the
 `max(1, …)` floor is what closed the last two, because a token never costs less than one unit and
-at high speed many round to zero. See Local TTS for the Voice Tunnel - Research."""
+at high speed many round to zero. See Local TTS for the Command Bridge - Research."""
 
 
 def word_offsets(tokens, durations, space_id):
@@ -417,7 +417,7 @@ class _ResidentKokoro:
         if missing:
             self.unavailable_reason = (
                 f"{' and '.join(missing)} not in {config.models_dir()} — run "
-                f"`voice-tunnel download kokoro`"
+                f"`command-bridge download kokoro`"
             )
             return None
         try:
@@ -837,9 +837,9 @@ def _piper_paths(voice_path: str | None) -> tuple[str, str]:
                             ("an .onnx voice", voice)) if not v]
         )
         raise TTSError(
-            f"the piper backend cannot start: no {missing}. Run `voice-tunnel doctor` for the exact "
-            f"remedy, or set it explicitly: `voice-tunnel config set COMMAND_BRIDGE_PIPER_BIN <path>` / "
-            f"`voice-tunnel config set COMMAND_BRIDGE_PIPER_VOICE <path>` (see `voice-tunnel voices`)."
+            f"the piper backend cannot start: no {missing}. Run `command-bridge doctor` for the exact "
+            f"remedy, or set it explicitly: `command-bridge config set COMMAND_BRIDGE_PIPER_BIN <path>` / "
+            f"`command-bridge config set COMMAND_BRIDGE_PIPER_VOICE <path>` (see `command-bridge voices`)."
         )
     return binary, voice
 
@@ -866,7 +866,7 @@ def _synth_piper(text: str, voice_path: str | None = None,
     if not binary:
         raise TTSError(
             f"piper cannot run in-process ({_RESIDENT.unavailable_reason}) and no piper binary "
-            f"was found to fall back to. Run `voice-tunnel doctor`."
+            f"was found to fall back to. Run `command-bridge doctor`."
         )
     fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
@@ -935,7 +935,7 @@ def synthesize_timed(
     dot in a technical term — `0.2.6` came back as "026" from piper and from kokoro alike — so
     the fix belongs on the path rather than in one engine or, worse, in every caller. Asking each
     agent to spell out its own version numbers is the same class of rule spec 007 exists to stop
-    relying on. `voice-tunnel pronounce` calls the same function, so what it prints is what the
+    relying on. `command-bridge pronounce` calls the same function, so what it prints is what the
     engine is handed.
     """
     if not text or not text.strip():

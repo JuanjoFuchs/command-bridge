@@ -42,7 +42,7 @@ def test_the_hold_is_documented_as_a_reason_to_watch_again():
     text = cli.DESCRIBE["commands"]["say"]["returns"]["held_for"]
 
     assert "WAIT AGAIN" in text.upper()
-    assert "voice-tunnel watch" in text, "name the command, do not describe it"
+    assert "command-bridge watch" in text, "name the command, do not describe it"
     assert "moved past" in text, "say WHY: the reply may answer a question he has left behind"
 
 
@@ -75,7 +75,7 @@ def test_an_unheld_reply_just_goes_back_to_listening(monkeypatch):
     is that nothing URGENT is implied when the server did not have to hold the clip."""
     out = _say(monkeypatch)
 
-    assert "voice-tunnel watch" in out["next"]
+    assert "command-bridge watch" in out["next"]
     assert "NOW" not in out["next"], "nothing suggests he kept talking; do not raise the alarm"
     assert "moved past" not in out["next"]
 

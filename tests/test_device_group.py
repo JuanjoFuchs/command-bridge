@@ -148,7 +148,7 @@ def test_the_combined_handler_writes_the_same_preferences_the_single_pickers_do(
     """Reusing both keys is what keeps persistence, `start()`'s restore path and the fallback
     layout working unchanged. A third stored preference is a third thing to go stale."""
     body = listener_source("$dev")
-    assert 'voice-tunnel.sinkId' in body and 'voice-tunnel.micId' in body, (
+    assert 'command-bridge.sinkId' in body and 'command-bridge.micId' in body, (
         "the grouped picker stores its choice somewhere else, so a reload or a fallback to the "
         "two-picker layout will not see it"
     )

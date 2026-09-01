@@ -742,7 +742,7 @@ class TunnelState:
         return {
             "session": self.session,
             "uptime_s": round(time.time() - self.started_at, 1),
-            # THE LIVE WAKE NAME. `voice-tunnel wake` reads this to show what the running gate
+            # THE LIVE WAKE NAME. `command-bridge wake` reads this to show what the running gate
             # actually accepts, as distinct from what is persisted — the two differ for the whole
             # life of a server started before the name was changed. `wake_phrases` was here from
             # the start and the NAME was not, so that comparison reported `live: {"name": null}`
@@ -1179,7 +1179,7 @@ def _unread_refusal(state: TunnelState, unread: dict[str, Any],
         # remedy computed from a different number than the complaint delivers the wrong turns and
         # leaves the refusal unescapable, which is the trap documented below.
         "remedy": (
-            f"voice-tunnel watch --session {state.session} --since {unread['since']}"
+            f"command-bridge watch --session {state.session} --since {unread['since']}"
         ),
         # Full turn objects the first time, ids alone on every repeat of the same identity. The
         # KEY does not change and neither does its type, so an agent that reads `unread[i]["id"]`
@@ -1278,7 +1278,7 @@ async def handle_say(request: web.Request) -> web.Response:
             {"error": "refusing to speak without a lane: several agents share this session, "
                       "and this tool cannot tell which one you are",
              "code": "no_lane",
-             "remedy": f"voice-tunnel say --session {state.session} --lane <yours> \"…\"",
+             "remedy": f"command-bridge say --session {state.session} --lane <yours> \"…\"",
              "lanes": list(state.lanes.names),
              "live_lane": state.lanes.current},
             status=400,
@@ -1287,7 +1287,7 @@ async def handle_say(request: web.Request) -> web.Response:
         if not isinstance(lane, str) or not state.lanes.knows(lane):
             return web.json_response(
                 {"error": f"no lane named '{lane}'", "code": "unknown_lane",
-                 "remedy": "voice-tunnel lane list",
+                 "remedy": "command-bridge lane list",
                  "lanes": list(state.lanes.names)},
                 status=400,
             )
@@ -1326,7 +1326,7 @@ async def handle_say(request: web.Request) -> web.Response:
     # constraint on a system**, and on 2026-08-27 an agent ignored it: two clip ids, identical
     # text, eighty-five seconds apart, both held for kepler and both played when he came back.
     # JJ: *"The Kepler agent just spoke twice to me."* — and, tellingly, *"I don't know if it's an
-    # issue of the agent or the voice tunnel."*
+    # issue of the agent or the command bridge."*
     #
     # ⚠ Against the HOLD only, never against what has already played (TC1): saying something again
     # an hour later is ordinary speech and not the tool's business. And a different lane holding
@@ -1342,7 +1342,7 @@ async def handle_say(request: web.Request) -> web.Response:
              "clip": (_dup.get("header") or {}).get("id"),
              "waiting_s": round(time.time() - _dup.get("at", time.time()), 1),
              "lane": lane,
-             "remedy": f"voice-tunnel watch --session {state.session} --lane {lane}",
+             "remedy": f"command-bridge watch --session {state.session} --lane {lane}",
              "next": "IT IS ALREADY WAITING AND HE CAN SEE THE RAISED HAND. Say something NEW or "
                      "say nothing — keep waiting on the watch, which returns the moment his "
                      "attention is back on this lane."},
@@ -1443,7 +1443,7 @@ def record_spoken(session: str, clip_id: str, text: str, held_for: float) -> str
     only moment both facts exist together.
 
     This is the AFTER-THE-FACT half. It can only be read back through a session that ran, so it
-    is deliberately not the whole answer: `voice-tunnel pronounce` is the ahead-of-time half and
+    is deliberately not the whole answer: `command-bridge pronounce` is the ahead-of-time half and
     needs no server at all. Both call `speech.normalize_for_speech`, so neither can drift from
     what synthesis actually used.
 
@@ -1939,9 +1939,9 @@ async def handle_rate(request: web.Request) -> web.Response:
     former possible — a preference the user expresses out loud should not require restarting the
     conversation to apply.
 
-    **This endpoint does not write the settings file.** Persistence belongs to `voice-tunnel rate`, which
+    **This endpoint does not write the settings file.** Persistence belongs to `command-bridge rate`, which
     writes `.env` and then calls this. A long-running server that edits config on disk is a
-    process racing every other `voice-tunnel config set`, for no behaviour anyone needs.
+    process racing every other `command-bridge config set`, for no behaviour anyone needs.
     """
     state: TunnelState = request.app["state"]
     ok, reason = _check(request, state)
@@ -2042,7 +2042,7 @@ async def handle_lane(request: web.Request) -> web.Response:
             if not isinstance(name, str) or not name.strip():
                 return web.json_response(
                     {"error": "name must be a non-empty string", "code": "bad_request",
-                     "remedy": f"voice-tunnel lane {action} <name>"},
+                     "remedy": f"command-bridge lane {action} <name>"},
                     status=400,
                 )
             if action == "add":
@@ -2065,7 +2065,7 @@ async def handle_lane(request: web.Request) -> web.Response:
         else:
             return web.json_response(
                 {"error": f"unknown action '{action}'", "code": "bad_request",
-                 "remedy": "voice-tunnel lane list"},
+                 "remedy": "command-bridge lane list"},
                 status=400,
             )
     except lanes_mod.LaneError as exc:
@@ -2980,7 +2980,7 @@ def run(
 
     # flush=True: without it the banner sits in the pipe buffer when serve is launched
     # detached (which is the normal way an agent runs it), so the operator never sees the URL.
-    print(f"voice-tunnel serving   http://{host}:{port}/?token={token}", flush=True)
+    print(f"command-bridge serving   http://{host}:{port}/?token={token}", flush=True)
     print(f"  session            {session}", flush=True)
     # The FIRST thing an agent reads after starting the tunnel, because it is the one instruction
     # this CLI cannot enforce on its own. Everything else here makes staying in `watch` the easy
@@ -2988,7 +2988,7 @@ def run(
     # project keeps hitting — five times in one session, always the same shape: answer in prose,
     # end the turn, and the person on the phone is talking to nobody.
     print("  watchdog           register a ~1/min job in YOUR harness that re-arms `watch` "
-          "(see `voice-tunnel describe` -> watchdog)", flush=True)
+          "(see `command-bridge describe` -> watchdog)", flush=True)
     print(f"  log                {store.log_path(session)}", flush=True)
     # The banner is what the operator reads before speaking, so it has to say the phrase. Without
     # this line the one thing you must know to use the tool at all was the one thing it never
@@ -2996,7 +2996,7 @@ def run(
     if gate_enabled:
         print(
             f'  say                "hey {config.wake_name()}"  '
-            f"(`voice-tunnel serve --wake <your name>` to change it)",
+            f"(`command-bridge serve --wake <your name>` to change it)",
             flush=True,
         )
     else:
@@ -3009,14 +3009,14 @@ def run(
         print("  turns end on       a fixed silence timer (turn detection off)", flush=True)
     elif not turndetect.installed():
         print(f"  turns end on       a fixed {config.END_OF_UTTERANCE_MS} ms silence "
-              f"(`voice-tunnel download turn` to use prosody instead)", flush=True)
+              f"(`command-bridge download turn` to use prosody instead)", flush=True)
     else:
         print("  turns end on       smart-turn — when you sound finished, not on a timer",
               flush=True)
     print(f"  tts                {tts.available()}", flush=True)
     print(
         f"  voice              speed {config.speech_speed()}x, "
-        f"{config.sentence_pause()}s between sentences  (`voice-tunnel rate` to change and persist)",
+        f"{config.sentence_pause()}s between sentences  (`command-bridge rate` to change and persist)",
         flush=True,
     )
     print(f"  allowlist          {', '.join(security.allowed_cidrs())}", flush=True)
@@ -3024,7 +3024,7 @@ def run(
     # to change the speech rate, and not how to shut the thing down — an audit had to find `stop`
     # by reading the whole `describe` payload. The command that starts a background process should
     # say how it ends, in the same breath.
-    print(f"  stop it with       voice-tunnel stop --session {session}", flush=True)
+    print(f"  stop it with       command-bridge stop --session {session}", flush=True)
     print(
         "  (a phone needs HTTPS: `tailscale serve` this port — a LAN IP will NOT work)",
         flush=True,
