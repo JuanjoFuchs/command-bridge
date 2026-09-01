@@ -35,7 +35,7 @@ from .page import PAGE_VERSION, render
 from .store import Store
 
 DEFAULT_PORT = 8770
-STATE_FILE = Path.home() / ".tunnel-vision.json"
+STATE_FILE = Path.home() / ".command-bridge.json"
 DEFAULT_FRAME = "main"
 DEFAULT_LANE = "main"
 
@@ -420,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
             if not frame or frame.get("kind") != "vega":
                 return 404, {"error": "no chart %r in lane %r" % (fid, lane),
                              "remedy": "send the spec first: "
-                                       "tunnel-vision chart --id %s --spec <file>" % fid,
+                                       "command-bridge chart --id %s --spec <file>" % fid,
                              "charts": [k for k, f in _lanes.get(lane, {}).items()
                                         if f.get("kind") == "vega"]}
             msg = {"id": fid, "lane": lane,
@@ -529,7 +529,7 @@ class Handler(BaseHTTPRequestHandler):
         if lane != _live and not (path == "/cue" and payload.get("arm")):
             return 409, {"error": "lane %r is not live — %r has the floor" % (lane, _live),
                          "live_lane": _live, "lane": lane,
-                         "remedy": "tunnel-vision raise --lane %s --why '<what you want to show>'"
+                         "remedy": "command-bridge raise --lane %s --why '<what you want to show>'"
                                    % lane}
 
         if path == "/look":
@@ -578,7 +578,7 @@ class Handler(BaseHTTPRequestHandler):
         text = str(payload.get("text") or "")
         if not text:
             return 400, {"error": "cue needs --text (or --cancel)",
-                         "remedy": "tunnel-vision cue --text 'the box [point:a] on the left'"}
+                         "remedy": "command-bridge cue --text 'the box [point:a] on the left'"}
 
         plan = cue_schedule(text, payload.get("words"), payload.get("seconds"))
         msg = {"marks": plan["marks"], "timing": plan["timing"], "lane": lane}

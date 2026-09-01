@@ -16,7 +16,7 @@ import hashlib
 
 PAGE = """<!doctype html>
 <meta charset="utf-8">
-<title>tunnel-vision</title>
+<title>command-bridge</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <!-- `@highlightjs/cdn-assets`, NOT the `highlight.js` npm package: the latter
      ships modules, not a browser bundle, so its /lib/highlight.min.js 404s and
@@ -989,7 +989,7 @@ PAGE = """<!doctype html>
 
   useLane("main");   // binds `cards`/`order` before the first event arrives
 
-  // `?shot=<ms>` is one-shot mode, used by `tunnel-vision shot`. A headless
+  // `?shot=<ms>` is one-shot mode, used by `command-bridge shot`. A headless
   // browser waits for the page to finish loading before it captures, and an
   // open EventSource means it never does — so in this mode we render, settle,
   // then CLOSE the stream, which is what lets the capture fire and the browser
