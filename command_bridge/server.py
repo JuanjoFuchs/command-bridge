@@ -2945,6 +2945,11 @@ def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web
             web.get("/ws", handle_ws),
         ]
     )
+    # The canvas rides the same server (spec 003): /events (SSE), the canvas page, and the frame-op
+    # routes. Additive only — the voice routes above are untouched. Routes are safe at app-build
+    # time; the store/follower threads start on serve (init_canvas), not here, so tests stay inert.
+    from .canvas import aio as canvas_aio
+    canvas_aio.setup(app)
     return app
 
 
@@ -3029,4 +3034,9 @@ def run(
         "  (a phone needs HTTPS: `tailscale serve` this port — a LAN IP will NOT work)",
         flush=True,
     )
+    # Bring the canvas state up on the same server: load the persisted canvas, start its writer and
+    # the voice-lane follower (spec 003). Done here, not in build_app, so it only runs on a real serve.
+    from .canvas import aio as canvas_aio
+    restored = canvas_aio.init_canvas(session)
+    print(f"  canvas             {restored} frame(s) restored, on this same server", flush=True)
     web.run_app(app, host=host, port=port, print=None)

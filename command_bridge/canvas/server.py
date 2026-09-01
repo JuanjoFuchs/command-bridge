@@ -627,6 +627,26 @@ class Handler(BaseHTTPRequestHandler):
         return 200, out
 
 
+# ---- module-level access to the operations, for an aiohttp host ------------
+# `apply` / `_camera` / `_cue` / `_batch` touch only the module state and
+# `publish()` — never the request socket — and return `(code, body)` rather than
+# writing HTTP. So a Handler instance built WITHOUT its socket-bound __init__ can
+# run them, which is what lets command-bridge's aiohttp server reuse the exact
+# frame-op logic instead of keeping a second copy that would drift.
+_ops = Handler.__new__(Handler)
+
+
+def apply(path: str, payload: dict) -> tuple[int, dict]:
+    """One canvas operation by route (`/frame`, `/point`, `/switch`, …). Pure w.r.t. HTTP:
+    mutates the canvas state, fans an SSE event through `publish`, and returns `(status, body)`."""
+    return _ops.apply(path, payload)
+
+
+def run_batch(payload: dict) -> list[dict]:
+    """Many operations in order; one failure returns its error in place and the rest still run."""
+    return _ops._batch(payload)
+
+
 def serve(port: int = DEFAULT_PORT, verbose: bool = False,
           fresh: bool = False, follow: bool = True,
           session: str = "dev") -> None:

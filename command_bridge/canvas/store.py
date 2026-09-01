@@ -33,7 +33,7 @@ import threading
 import time
 from pathlib import Path
 
-CANVAS_FILE = Path.home() / ".tunnel-vision-canvas.json"
+CANVAS_FILE = Path.home() / ".command-bridge-canvas.json"
 DEBOUNCE = 1.0
 VERSION = 1
 
@@ -81,7 +81,7 @@ class Store:
             live = raw.get("live")
             return clean, geo, str(live) if live else None
         except Exception as exc:                      # noqa: BLE001 — see docstring
-            print("tunnel-vision: ignoring unreadable canvas at %s (%s)"
+            print("command-bridge: ignoring unreadable canvas at %s (%s)"
                   % (self.path, exc), file=sys.stderr)
             return {}, {}, None
 
@@ -112,7 +112,7 @@ class Store:
             try:
                 self.write(snapshot())
             except Exception as exc:                  # noqa: BLE001
-                print("tunnel-vision: canvas save failed (%s)" % exc,
+                print("command-bridge: canvas save failed (%s)" % exc,
                       file=sys.stderr)
 
     def write(self, payload: dict) -> None:
