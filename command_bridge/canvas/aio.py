@@ -117,6 +117,23 @@ async def handle_canvas_page(request: web.Request) -> web.Response:
     return web.Response(text=canvas.render(), content_type="text/html")
 
 
+async def handle_canvas_status(request: web.Request) -> web.Response:
+    """The canvas half of `command-bridge status` (spec 005 FR4): which lane is live and the frames
+    present per lane. A GET — the draw ops are POSTs under /canvas/<op> — so it never mutates.
+    Optional ?lane= scopes the frame list to one lane."""
+    which = request.query.get("lane") or ""
+    with canvas._lock:
+        live = canvas._live
+        clients = len(canvas._subscribers)
+        lanes = {
+            lane: [{"id": f.get("id"), "kind": f.get("kind"), "title": f.get("title", "")}
+                   for f in frames.values()]
+            for lane, frames in canvas._lanes.items()
+            if not which or lane == which
+        }
+    return web.json_response({"live_lane": live, "clients": clients, "lanes": lanes})
+
+
 def init_canvas(session: str = "dev", fresh: bool = False, follow: bool = True) -> int:
     """Mirror `canvas.server.serve()`'s state setup, minus the ThreadingHTTPServer: load the
     persisted canvas, start the debounced writer, and start the voice-lane follower. Returns the
@@ -148,6 +165,7 @@ def setup(app: web.Application) -> None:
     CLI ops live under /canvas/ so /cue does not collide with the voice cue."""
     app.router.add_get("/events", handle_events)
     app.router.add_get("/canvas", handle_canvas_page)
+    app.router.add_get("/canvas/status", handle_canvas_status)
     app.router.add_post("/canvas/{op}", handle_canvas_op)
     app.router.add_post("/switch", handle_switch)
     app.router.add_post("/placed", handle_placed)

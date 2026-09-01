@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from . import __version__, config, store
@@ -1316,7 +1317,7 @@ DESCRIBE: dict[str, Any] = {
         },
         # Was registered in the parser but missing from this block until a test started
         # asserting the two agree — the exact silent drift AGENTS.md convention 3 warns about.
-        "cue": {
+        "earcon": {
             "args": {
                 "--session": "session id",
                 "name": "positional: heard (rising — your turn arrived) | thinking (flat, mid) "
@@ -1325,8 +1326,93 @@ DESCRIBE: dict[str, Any] = {
             },
             "returns": {"queued": "bool"},
             "notes": "A short non-speech tone, so a pause is legible without looking at the "
-                     "page. Cheaper and faster than speaking 'let me think about that'.",
+                     "page. Cheaper and faster than speaking 'let me think about that'. Was named "
+                     "`cue` until spec 005 gave that verb to the canvas speech-synced highlight.",
         },
+        # ── The canvas verbs (spec 005) ─────────────────────────────────────────────────────────
+        # The absorbed Tunnel Vision canvas, driven through the one server. Every verb takes
+        # --session (which server) and --lane (WHICH AGENT YOU ARE); only the live lane may move the
+        # camera. The canvas is a DUMB surface — these place, point at, and frame content; they
+        # decide nothing.
+        "set": {
+            "args": {"--session": "session id", "--lane": "WHICH AGENT YOU ARE; only the live lane "
+                     "draws", "--mermaid": "a mermaid definition — the cheapest tier",
+                     "--markdown": "markdown, rendered client-side", "--svg": "raw SVG",
+                     "--html": "raw HTML", "--text": "plain text",
+                     "--file": "read the content from a file (pair with --kind)",
+                     "--content": "the content, or '-' to read stdin (pair with --kind)",
+                     "--id": "which frame; re-using an id REPLACES it (default: main)",
+                     "--at": "'x,y' to place explicitly; omit to auto-pack",
+                     "--scale": "render larger (2 = twice) — importance, not zoom",
+                     "--kind": "with --file/--content: mermaid|markdown|html|svg|text",
+                     "--section": "markdown only: just this heading, verbatim; repeatable",
+                     "--title": "the frame's title bar"},
+            "returns": {"delivered_to": "int — open browsers that got it; ZERO means nobody is "
+                        "looking", "frames": "int — frames now on the canvas"},
+            "notes": "Frames ACCUMULATE; `look` moves him around them. Prefer the cheapest tier "
+                     "that expresses the thing.",
+        },
+        "look": {"args": {"--session": "session id", "--lane": "which agent you are",
+                          "--all": "frame the whole canvas instead of one frame"},
+                 "notes": "THE ATTENTION VERB (positional `id` = the frame) — use it as you start "
+                          "the sentence about that frame."},
+        "point": {"args": {"--session": "session id", "--lane": "which agent you are",
+                           "--look": "move the camera there too (alias --zoom)"},
+                  "returns": {"warning": "present when the target is OFF SCREEN"},
+                  "notes": "`point` IS THE POINT (positional `selector` = frame id, `frame:thing`, "
+                           "CSS, or mermaid node id; empty clears it). For several in one sentence "
+                           "use `cue`."},
+        "cue": {
+            "args": {"--session": "session id", "--lane": "which agent you are",
+                     "--text": "the sentence, with [point:<selector>] marks inline",
+                     "--words": "the `words` array from `command-bridge say --timings` (JSON, or - "
+                     "for stdin) — MEASURED timing", "--seconds": "clip duration when no schedule "
+                     "exists — ESTIMATED", "--cancel": "stop a running schedule", "--arm": "store "
+                     "and start when THIS lane goes live (a held clip)", "--look": "with --arm: "
+                     "bring the camera first", "--lead": "with --arm: the clip's lead-in (`held_for` "
+                     "from `say`)"},
+            "returns": {"timing": "'measured' | 'estimated' | 'immediate' — which clock produced "
+                        "this; do NOT call an 'estimated' cue word-synchronised", "marks": "[{selector, at}]"},
+            "notes": "THE DIFFERENTIATOR: one clip, several highlights, each firing as the speech "
+                     "reaches it. Issue it right before `say` returns. Resolves selectors as `point` does.",
+        },
+        "inspect": {"args": {"--session": "session id", "--lane": "which agent you are"},
+                    "returns": {"resolved": "int matched — ZERO is usually the answer you want",
+                                "elements": "[{tag, frame, pointed, visible, text}]"},
+                    "notes": "ASK THIS BEFORE YOU SCREENSHOT (positional `selector`) — ~50 tokens vs "
+                             "~1500 for an image."},
+        "remove": {"args": {"--session": "session id", "--lane": "which agent you are"},
+                   "notes": "Deletes one frame (positional `id`); the rest stay."},
+        "clear": {"args": {"--session": "session id", "--lane": "which agent you are"},
+                  "notes": "Empties the canvas and resets the camera — ask first."},
+        "zoom": {"args": {"--session": "session id", "--lane": "which agent you are",
+                          "--scale": "a number (1 = actual size) or 'fit'"},
+                 "notes": "The low-level camera (positional `selector`); prefer `look`."},
+        "raise": {"args": {"--session": "session id", "--lane": "which agent you are",
+                           "--why": "one line: what you want to show"},
+                  "notes": "Ask for attention without taking the screen — raises a hand on your orb."},
+        "chart": {"args": {"--session": "session id", "--lane": "which agent you are",
+                           "--spec": "a Vega-Lite spec (file or -), sent once",
+                           "--rows": "JSON rows to append (or -)",
+                           "--replace": "with --rows: clear existing first",
+                           "--data-name": "the named data source (default: table)",
+                           "--id": "which frame", "--title": "the frame's title bar",
+                           "--scale": "render larger — importance, not zoom"},
+                  "returns": {"inserted": "int — rows appended"},
+                  "notes": "The only tier whose second update is cheaper than its first."},
+        "batch": {"args": {"--session": "session id", "--lane": "which agent you are"},
+                  "notes": "Apply many canvas ops from stdin in one call (stdin, never argv — that "
+                           "keeps a shell out of the content path)."},
+        "switch": {"args": {"--session": "session id"},
+                   "notes": "Hand the floor to a lane (positional `to`). The SAME act as `lane "
+                            "switch` — the voice lane is authoritative and the canvas follows it "
+                            "(spec 004), so there is one switch, not a canvas-only twin."},
+        "run": {"args": {"--session": "session id", "--lane": "which agent you are",
+                         "--id": "which frame to render into", "--no-code": "show only the result",
+                         "--title": "the frame's title bar"},
+                "notes": "NOT AVAILABLE IN THIS BUILD (positional `file`) — the file-runner "
+                         "(matplotlib/pandas) was not ported. Render the result yourself and `set "
+                         "--html`, or use `chart`."},
         "voiceprint": {
             "args": {
                 "--forget": "NAME to delete",
@@ -1663,7 +1749,8 @@ def _serve_remedy(session: str) -> str:
     )
 
 
-def _request(session: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _request(session: str, path: str,
+             payload: dict[str, Any] | list[Any] | None = None) -> dict[str, Any]:
     rt = read_runtime(session)
     if not rt:
         # `error` keeps its exact original wording — callers may already match on it. `code` and
@@ -3337,8 +3424,169 @@ def cmd_consumed(args) -> dict[str, Any]:
     return _request(args.session, "/consumed", payload)
 
 
-def cmd_cue(args) -> dict[str, Any]:
+def cmd_earcon(args) -> dict[str, Any]:
+    """A short non-speech tone (heard/thinking/tool/speaking). Was named `cue` until spec 005 gave
+    that verb to the canvas speech-synced highlight; the sound and its vocabulary are unchanged."""
     return _request(args.session, "/cue", {"name": args.name})
+
+
+# ── The canvas verbs (spec 005) ───────────────────────────────────────────────────────────────
+# The absorbed Tunnel Vision canvas rides the SAME running server as the voice channel (spec 003),
+# so these verbs POST to its /canvas/<op> routes over the one client URL the voice verbs already
+# resolve — one `--session` reaches both halves (FR5). The canvas is a DUMB surface: these handlers
+# only marshal arguments and never decide anything (TC1). `--lane` is WHICH AGENT YOU ARE, folded
+# into the payload so only the live lane may move the camera — the rule the canvas already enforces.
+
+def _at(spec: str) -> list[int] | None:
+    """Parse an 'x,y' placement for a frame, or None for automatic packing."""
+    if not spec:
+        return None
+    try:
+        x, y = (int(float(p)) for p in spec.split(",", 1))
+    except ValueError:
+        raise ValueError(f"--at wants 'x,y', got {spec!r}") from None
+    return [x, y]
+
+
+def _canvas(session: str, op: str, payload: dict[str, Any] | list[Any] | None,
+            lane: str = "") -> dict[str, Any]:
+    if lane and isinstance(payload, dict) and "lane" not in payload:
+        payload = {**payload, "lane": lane}
+    return _request(session, "/canvas/" + op, payload if payload is not None else {})
+
+
+def cmd_set(args) -> dict[str, Any]:
+    """Place or replace a frame on the canvas (the /frame op)."""
+    from .canvas.extract import extract
+
+    if args.file:
+        kind, content = args.kind, Path(args.file).read_text(encoding="utf-8")
+    elif args.content:
+        kind = args.kind
+        content = sys.stdin.read() if args.content == "-" else args.content
+    else:
+        pair = next(((k, getattr(args, k)) for k in ("mermaid", "markdown", "svg", "html", "text")
+                     if getattr(args, k)), None)
+        if not pair:
+            return {"error": "nothing to place — pass one of "
+                             "--mermaid/--markdown/--svg/--html/--text/--file/--content",
+                    "code": "invalid_input"}
+        kind, content = pair
+    omitted: list[str] = []
+    missing: list[str] = []
+    if args.section:
+        if kind != "markdown":
+            return {"error": "--section only applies to markdown", "code": "invalid_input"}
+        content, _, omitted, missing = extract(content, args.section)
+        if not content.strip():
+            return {"error": f"no section matched {args.section}", "code": "invalid_input"}
+    out = _canvas(args.session, "frame",
+                  {"id": args.id, "kind": kind, "content": content, "title": args.title,
+                   "at": _at(args.at), "scale": args.scale or None}, args.lane)
+    if omitted:
+        out["omitted"] = omitted
+    if missing:
+        out["missing"] = missing
+    return out
+
+
+def cmd_look(args) -> dict[str, Any]:
+    return _canvas(args.session, "look", {"id": args.id, "all": args.all}, args.lane)
+
+
+def cmd_point(args) -> dict[str, Any]:
+    return _canvas(args.session, "point", {"selector": args.selector, "look": args.look}, args.lane)
+
+
+def cmd_canvas_cue(args) -> dict[str, Any]:
+    """The speech-synced highlight — the conjunction the merge exists for (spec 005 FR2). ONE clip,
+    several marks, each firing as the speech reaches it; feed `--words` from `say --timings`."""
+    if args.cancel:
+        return _canvas(args.session, "cue", {"cancel": True}, args.lane)
+    words = None
+    if args.words:
+        raw = sys.stdin.read() if args.words == "-" else args.words
+        try:
+            words = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            return {"error": f"--words is not valid JSON: {exc}", "code": "invalid_input"}
+        # Accept the whole `say --timings` response as well as the bare array — pasting what the
+        # other verb printed is what an agent will actually do.
+        if isinstance(words, dict):
+            words = words.get("words")
+    return _canvas(args.session, "cue",
+                   {"text": args.text, "words": words, "seconds": args.seconds,
+                    "arm": args.arm, "lead": args.lead, "look": args.look}, args.lane)
+
+
+def cmd_inspect(args) -> dict[str, Any]:
+    return _canvas(args.session, "inspect", {"selector": args.selector}, args.lane)
+
+
+def cmd_remove(args) -> dict[str, Any]:
+    return _canvas(args.session, "remove", {"id": args.id}, args.lane)
+
+
+def cmd_clear(args) -> dict[str, Any]:
+    return _canvas(args.session, "clear", {}, args.lane)
+
+
+def cmd_zoom(args) -> dict[str, Any]:
+    return _canvas(args.session, "zoom", {"selector": args.selector, "scale": args.scale}, args.lane)
+
+
+def cmd_raise(args) -> dict[str, Any]:
+    return _canvas(args.session, "raise", {"why": args.why}, args.lane)
+
+
+def cmd_chart(args) -> dict[str, Any]:
+    """A Vega-Lite chart: send the spec once (a frame), then append rows — the only tier whose
+    second update is cheaper than its first."""
+    if not args.spec and not args.rows:
+        return {"error": "chart needs --spec (the first time) or --rows (after that)",
+                "code": "invalid_input"}
+    if args.spec:
+        spec = sys.stdin.read() if args.spec == "-" else Path(args.spec).read_text(encoding="utf-8")
+        return _canvas(args.session, "frame",
+                       {"id": args.id, "kind": "vega", "content": spec, "title": args.title,
+                        "scale": args.scale or None}, args.lane)
+    raw = sys.stdin.read() if args.rows == "-" else args.rows
+    try:
+        rows = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {"error": f"--rows wants a JSON array: {exc}", "code": "invalid_input"}
+    return _canvas(args.session, "rows",
+                   {"id": args.id, "insert": rows, "remove_all": args.replace,
+                    "data_name": args.data_name}, args.lane)
+
+
+def cmd_batch(args) -> dict[str, Any]:
+    """Apply many canvas ops from stdin in one call (stdin, never argv — that keeps a shell out of
+    the content path)."""
+    try:
+        ops = json.loads(sys.stdin.read() or "[]")
+    except json.JSONDecodeError as exc:
+        return {"error": f"bad json on stdin: {exc}", "code": "invalid_input"}
+    if args.lane:
+        ops = [{**o, "lane": o.get("lane", args.lane)} if isinstance(o, dict) else o for o in ops]
+    return _request(args.session, "/canvas/batch", ops)
+
+
+def cmd_switch(args) -> dict[str, Any]:
+    """Hand the floor to a lane — the SAME act as `lane switch`. The voice lane is authoritative and
+    the canvas follows it (spec 004), so there is one switch, not a canvas-only twin that could move
+    a different lane."""
+    return _request(args.session, "/lane", {"action": "switch", "name": args.to})
+
+
+def cmd_run(args) -> dict[str, Any]:
+    """The canvas `run` verb executed a file and rendered its code + result. Its runtime
+    (matplotlib/pandas via the canvas runner) was deliberately not ported into the fork, so it is
+    unavailable in this build (spec 005 TC2) — reported cleanly, never as an import error."""
+    return {"error": "the `run` verb is not available in this build",
+            "code": "unsupported",
+            "remedy": "render the result yourself and place it with `command-bridge set --html …`, "
+                      "or use `command-bridge chart` for data; the file-runner was not ported"}
 
 
 def cmd_voiceprint(args) -> dict[str, Any]:
@@ -3507,6 +3755,13 @@ def cmd_status(args) -> dict[str, Any]:
         # false and the remedy permanently unfollowable. The port is what lets it find the
         # forwarder, and the forwarder is what makes the phone work.
         out.setdefault("phone", _phone_reachability(str(rt.get("host") or ""), rt.get("port")))
+    # The canvas half (spec 005 FR4): which lane is live and the frames per lane, folded in beside
+    # the voice state so one `status` answers for the whole surface. Best-effort — a server without
+    # the canvas mounted (or an older one) simply yields nothing here rather than erroring.
+    if isinstance(out, dict) and out.get("running") is not False:
+        canvas_state = _request(args.session, "/canvas/status")
+        if isinstance(canvas_state, dict) and "error" not in canvas_state:
+            out["canvas"] = canvas_state
     return out
 
 
@@ -4450,10 +4705,108 @@ def build_parser() -> argparse.ArgumentParser:
     # documented four, and an agent has no way to know which one is stale.
     from . import cues as _cues
 
-    cu = sub.add_parser("cue",
-                        help=f"play a short non-speech cue ({'|'.join(_cues.names())})")
+    cu = sub.add_parser("earcon",
+                        help=f"play a short non-speech tone ({'|'.join(_cues.names())})")
     cu.add_argument("--session", default="dev")
     cu.add_argument("name")
+
+    # ── The canvas verbs (spec 005) ─────────────────────────────────────────────────────────────
+    # The absorbed Tunnel Vision canvas, brought under the one CLI. Every verb takes --session
+    # (which server) and --lane (WHICH AGENT YOU ARE); only the live lane may move the camera.
+    def _canvas_parser(name: str, help_text: str):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--session", default="dev")
+        p.add_argument("--lane", default="",
+                       help="WHICH AGENT YOU ARE; only the live lane may move the camera")
+        return p
+
+    p_set = _canvas_parser("set", "place or replace a frame on the canvas")
+    gset = p_set.add_mutually_exclusive_group(required=True)
+    gset.add_argument("--mermaid", help="a mermaid definition — the cheapest tier")
+    gset.add_argument("--markdown", help="markdown, rendered client-side")
+    gset.add_argument("--svg", help="raw SVG")
+    gset.add_argument("--html", help="raw HTML")
+    gset.add_argument("--text", help="plain text")
+    gset.add_argument("--file", help="read the content from a file (pair with --kind)")
+    gset.add_argument("--content", help="the content, or '-' to read stdin (pair with --kind)")
+    p_set.add_argument("--id", default="",
+                       help="which frame (default: main); re-using an id REPLACES it in place")
+    p_set.add_argument("--at", default="", help="'x,y' canvas coordinate; omit to auto-pack")
+    p_set.add_argument("--scale", type=float, default=0,
+                       help="render larger (2 = twice the size) — importance, not zoom")
+    p_set.add_argument("--kind", default="mermaid",
+                       help="with --file/--content: mermaid|markdown|html|svg|text")
+    p_set.add_argument("--section", action="append", default=[], metavar="HEADING",
+                       help="markdown only: render just this section, verbatim; repeatable")
+    p_set.add_argument("--title", default="", help="shown on the frame's title bar")
+
+    p_look = _canvas_parser("look", "bring him to a frame — the attention verb")
+    p_look.add_argument("id", nargs="?", default="")
+    p_look.add_argument("--all", action="store_true", help="frame the whole canvas")
+
+    p_point = _canvas_parser("point", "highlight a frame or something inside one")
+    p_point.add_argument("selector", nargs="?", default="",
+                         help="frame id, CSS selector, or mermaid node id; empty clears it")
+    p_point.add_argument("--look", "--zoom", dest="look", action="store_true",
+                         help="bring the camera to it too")
+
+    p_ccue = _canvas_parser("cue", "highlights timed to the sentence you are speaking")
+    p_ccue.add_argument("--text", default="",
+                        help="the sentence, with [point:<selector>] marks inline where highlights belong")
+    p_ccue.add_argument("--words", default="",
+                        help="the `words` array from `command-bridge say --timings` (JSON, or - for "
+                             "stdin); MEASURED timing")
+    p_ccue.add_argument("--seconds", type=float, default=None,
+                        help="the clip's duration when no word schedule exists; ESTIMATED timing")
+    p_ccue.add_argument("--cancel", action="store_true",
+                        help="stop a running schedule and clear the highlight")
+    p_ccue.add_argument("--arm", action="store_true",
+                        help="store the schedule and start it when THIS lane goes live (a held clip)")
+    p_ccue.add_argument("--look", default="",
+                        help="with --arm: bring the camera to this frame before the first mark")
+    p_ccue.add_argument("--lead", type=float, default=0.0,
+                        help="with --arm: the clip's lead-in seconds (`held_for` from `say`)")
+
+    p_inspect = _canvas_parser("inspect",
+                               "ask the PAGE what a selector resolves to — cheaper than a shot")
+    p_inspect.add_argument("selector")
+
+    p_remove = _canvas_parser("remove", "delete one frame")
+    p_remove.add_argument("id")
+
+    _canvas_parser("clear", "empty the canvas and reset the camera")
+
+    p_zoom = _canvas_parser("zoom", "the low-level camera; prefer `look`")
+    p_zoom.add_argument("selector", nargs="?", default="")
+    p_zoom.add_argument("--scale", help="a number (1 = actual size) or 'fit'")
+
+    p_raise = _canvas_parser("raise", "ask for attention without taking the screen")
+    p_raise.add_argument("--why", default="", help="one line: what you want to show")
+
+    p_chart = _canvas_parser("chart", "a Vega-Lite chart: spec once, then rows")
+    p_chart.add_argument("--spec", help="a Vega-Lite spec: a file path, or '-' for stdin")
+    p_chart.add_argument("--rows", help="JSON array of rows to append, or '-' for stdin")
+    p_chart.add_argument("--replace", action="store_true",
+                         help="with --rows: clear the existing rows first")
+    p_chart.add_argument("--data-name", default="table",
+                         help="the named data source in the spec (default: table)")
+    p_chart.add_argument("--id", default="", help="which frame")
+    p_chart.add_argument("--title", default="", help="shown on the frame's title bar")
+    p_chart.add_argument("--scale", type=float, default=0)
+
+    _canvas_parser("batch", "apply many canvas operations from stdin, in one call")
+
+    p_run = _canvas_parser("run",
+                           "execute a file and show its code + result (not available in this build)")
+    p_run.add_argument("file")
+    p_run.add_argument("--id", default="")
+    p_run.add_argument("--no-code", action="store_true")
+    p_run.add_argument("--title", default="")
+
+    p_switch = sub.add_parser("switch",
+                              help="hand the floor to a lane — the same act as `lane switch`")
+    p_switch.add_argument("--session", default="dev")
+    p_switch.add_argument("to")
 
     vpp = sub.add_parser(
         "voiceprint", help="who the tunnel has learned to recognise by voice"
@@ -4665,8 +5018,22 @@ def main(argv=None) -> int:
         "pronounce": cmd_pronounce,
         "consumed": cmd_consumed,
         "voiceprint": cmd_voiceprint,
-        "cue": cmd_cue,
+        "earcon": cmd_earcon,
         "rate": cmd_rate,
+        # The canvas verbs (spec 005) — the one CLI drives both halves through the one server.
+        "set": cmd_set,
+        "look": cmd_look,
+        "point": cmd_point,
+        "cue": cmd_canvas_cue,
+        "inspect": cmd_inspect,
+        "remove": cmd_remove,
+        "clear": cmd_clear,
+        "zoom": cmd_zoom,
+        "raise": cmd_raise,
+        "chart": cmd_chart,
+        "batch": cmd_batch,
+        "switch": cmd_switch,
+        "run": cmd_run,
         "timing": cmd_timing,
         "verbose": cmd_verbose,
         "wake": cmd_wake,
