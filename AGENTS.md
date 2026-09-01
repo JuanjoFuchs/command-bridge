@@ -91,6 +91,12 @@ judgment in the agent is what makes the assistant *yours* rather than a generic 
    slug to branch on, `remedy` is the command that fixes it. An agent cannot infer a fix from a
    stack trace, and a tool that only says "no" makes it guess. Exit codes are part of the
    contract too: 0 ok, 1 the operation failed, 2 bad input, 3 no server is running.
+9. **Structural tools for structural change.** A codebase-wide rename or codemod goes through
+   `ast-grep` (0.45, AST-aware, uniform, reviewable), never a hand-edit across dozens of call sites
+   or a text `sed`; run `pyright` (1.1.410) on what you touched afterward as the type-check net. This
+   is the repo's own scale talking: the package rename touches 40 settings and ~847 tests, which is
+   exactly where a structural tool beats hand-editing. ⚠ An `ast-grep` pattern that is wrong matches
+   ZERO and reads as clean — sanity-check the hit count.
 
 ## Layout
 
