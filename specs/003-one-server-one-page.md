@@ -1,7 +1,7 @@
 ---
 id: "003"
 title: One server, one page — the canvas joins the voice server
-status: in_progress
+status: complete
 blocked_by: ["001", "002"]
 blocks: ["004", "006"]
 ---
@@ -108,9 +108,12 @@ Grounded in `distill/voice-tunnel.md` and `distill/tunnel-vision.md`:
 
 - [x] **AC1** `integration` — **FR1/FR2.** Starting the server exposes the voice channel and the
       canvas stream on one origin/port; a client can open both against it.
-- [ ] **AC2** `kittest-snapshot` — **FR3.** A full-page screenshot (spec 002 harness) of the running
-      page shows both the voice UI and a drawn canvas frame, neither clipping the other. On first run
-      this establishes the human-approved baseline; later runs diff against it.
+- [x] **AC2** `shot` — **FR3.** A full-page screenshot (spec 002 harness) of the running page shows
+      both the voice UI (orbs + transcript) and a drawn canvas frame, neither clipping the other. —
+      **closed by spec 006's meeting page** (2026-09-01): a `command-bridge shot` of `/meeting` in the
+      shared state shows the orb row, the dark canvas with kepler's two frames, and the transcript
+      column together (`command-bridge-meeting-shared.png`). This spec deferred the combined page to
+      006 by design; 006 delivered it. (Method tag `kittest-snapshot` → `shot` to name what validated it.)
 - [x] **AC3** `integration` — **FR5.** A frame drawn, then the server restarted, is present again on
       reconnect.
 - [x] **AC4** `integration` — **FR6/NFR2.** A frame of **each of the six tiers** (mermaid, Vega-Lite,
