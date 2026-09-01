@@ -117,6 +117,12 @@ def test_every_optional_import_in_the_package_is_in_the_table_above():
         # they need no extra because a floor install already has them.
         "numpy", "aiohttp", "faster_whisper",
         "command_bridge",                            # first-party, lazy for cycle reasons
+        # playwright — the `shot` harness's headless-browser driver. An optional DEV tool supplied
+        # by the multi-line `dev` extra (which the single-line parametrized check above cannot
+        # assert), and `shot.py` returns a {error, code, remedy} naming that extra when it is absent
+        # rather than failing silently — so the silent-unusable-feature this file exists to catch
+        # cannot happen for it.
+        "playwright",
     }
     offenders = []
     for path in sources():

@@ -1118,6 +1118,25 @@ DESCRIBE: dict[str, Any] = {
                      "a clip cut off mid-sentence shows up in `status.barges` and the timing log, "
                      "not in this payload.",
         },
+        "shot": {
+            "args": {
+                "--session": "session id",
+                "--out": "PNG path (default shot.png)",
+                "--viewport": "device size WxH, e.g. 390x844 (phone) or 1280x800 (desktop)",
+                "--lane": "shoot a specific lane's view rather than whatever is live",
+                "--url": "override the target URL (default: the live server's client URL)",
+                "--settle": "ms to let the page render before the shutter",
+            },
+            "returns": {
+                "path": "the PNG — OPEN IT. A screenshot you did not look at verified nothing",
+                "viewport": "[w, h] the shot was taken at",
+                "page": "[w, h] the full document captured — full-page, not a crop",
+                "error": "{error, code, remedy} when playwright or the browser is missing, or the "
+                         "server is down. The tool never raises.",
+            },
+            "notes": "Its OWN headless browser on a throwaway context, so it never touches the "
+                     "human's browser and works whether or not anyone has the page open.",
+        },
         "status": {
             "args": {"--session": "session id"},
             "returns": {
@@ -3491,6 +3510,21 @@ def cmd_status(args) -> dict[str, Any]:
     return out
 
 
+def cmd_shot(args) -> dict[str, Any]:
+    """Screenshot the live page in a PRIVATE headless browser — full-page, so you SEE what
+    rendered. It never touches the human's browser (its own throwaway context), and it returns
+    the PNG path: open it, because a screenshot you did not look at verified nothing."""
+    from . import shot as _shot
+    url = args.url or _client_url(args.session)
+    if not url:
+        return {"error": "no running server for this session",
+                "code": "no_server",
+                "remedy": f"start one with `command-bridge serve --session {args.session}`, "
+                          "or pass --url"}
+    viewport = _shot.parse_viewport(args.viewport)
+    return _shot.capture(url, args.out, viewport=viewport, lane=args.lane, settle_ms=args.settle)
+
+
 def cmd_stop(args) -> dict[str, Any]:
     """Stop a detached server.
 
@@ -4488,6 +4522,19 @@ def build_parser() -> argparse.ArgumentParser:
     t = sub.add_parser("status", help="live server state")
     t.add_argument("--session", default="dev")
 
+    ps = sub.add_parser("shot", help="full-page screenshot of the live page — SEE what rendered")
+    ps.add_argument("--session", default="dev")
+    ps.add_argument("--out", default="shot.png", metavar="PATH",
+                    help="where to write the PNG (default: shot.png)")
+    ps.add_argument("--viewport", default="390x844", metavar="WxH",
+                    help="device size, e.g. 390x844 (phone) or 1280x800 (desktop)")
+    ps.add_argument("--lane", default="", metavar="NAME",
+                    help="shoot a specific lane's view rather than whatever is live")
+    ps.add_argument("--url", default="", metavar="URL",
+                    help="override the target URL; default is the live server's client URL")
+    ps.add_argument("--settle", type=int, default=4000, metavar="MS",
+                    help="how long to let the page render before the shutter")
+
     x = sub.add_parser("stop", help="stop a detached server")
     x.add_argument("--session", default="dev")
 
@@ -4611,6 +4658,7 @@ def main(argv=None) -> int:
         "say": cmd_say,
         "lane": cmd_lane,
         "status": cmd_status,
+        "shot": cmd_shot,
         "stop": cmd_stop,
         "turns": cmd_turns,
         "voices": cmd_voices,
