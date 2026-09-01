@@ -941,6 +941,13 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
     if not state.talking():
         state.utterance_lane = None
     state.lanes.current = lane
+    # Spec 004 — the voice lane IS the canvas lane. This is the ONE place the live lane moves (the
+    # wake gate, the tap, and an explicit switch all reach it), so driving the canvas here, in
+    # process, is what lets it follow with no `/status` poll. `set_live` is a quick lock + fan-out
+    # and no-ops when the lane is unchanged, so it is safe on this hot path and harmless before the
+    # canvas is initialised (a bare set on an inert store).
+    from .canvas import server as _canvas
+    _canvas.set_live(lane)
     timing.stamp(state.session, "lane", lane=lane, why=why)
     await _broadcast_json(
         state,
@@ -3037,6 +3044,9 @@ def run(
     # Bring the canvas state up on the same server: load the persisted canvas, start its writer and
     # the voice-lane follower (spec 003). Done here, not in build_app, so it only runs on a real serve.
     from .canvas import aio as canvas_aio
-    restored = canvas_aio.init_canvas(session)
+    # follow=False: the canvas no longer POLLS /status for the live lane (spec 004). The voice
+    # server drives it in-process from `_set_lane`, so the cross-process Follower would be a second,
+    # laggier writer of the same value. Its code stays for the standalone canvas.
+    restored = canvas_aio.init_canvas(session, follow=False)
     print(f"  canvas             {restored} frame(s) restored, on this same server", flush=True)
     web.run_app(app, host=host, port=port, print=None)
