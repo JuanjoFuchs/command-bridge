@@ -318,9 +318,12 @@
   .laneorb .lanetimer {
     font-family:var(--mono); font-size:.54rem; font-variant-numeric:tabular-nums;
     letter-spacing:.03em; color:color-mix(in srgb, var(--lane-c) 65%, #cfd6de);
+    /* RESERVE THE LINE EVEN WHEN EMPTY, so a lane going busy↔idle (the seconds appearing or
+       disappearing) does not push the orb — and the whole UI below it — up and down (JJ, 2026-09-02:
+       "reserve that space so the UI does not shift every time"). Always in the DOM already, for the
+       tick; now it always occupies its line too. */
+    display:block; min-height:1.05em; line-height:1.05;
   }
-  /* Always in the DOM so the tick can write into it without a rebuild; empty it must take no space. */
-  .laneorb .lanetimer:empty { display:none; }
   .laneorb.live .disc {
     border-color:var(--lane-c);
     box-shadow:0 0 0 3px color-mix(in srgb,var(--lane-c) 22%,transparent),
@@ -3857,6 +3860,14 @@
   on("rows",   function (d) { frames[d.lane] = (frames[d.lane] || 1); apply(); });
   on("remove", function (d) { frames[d.lane] = Math.max(0, (frames[d.lane] || 1) - 1); apply(); });
   on("clear",  function (d) { frames[d.lane] = 0; apply(); });
+  // LIVE-RELOAD (JJ, 2026-09-02: "you can push these changes like you do with the canvas" — no manual
+  // refresh while iterating). A `reload` event pushed by POST /reload re-fetches this page. A short
+  // delay lets an in-flight edit settle and avoids a reload storm if several fire at once.
+  var reloadT;
+  es.addEventListener("reload", function () {
+    clearTimeout(reloadT);
+    reloadT = setTimeout(function () { location.reload(); }, 250);
+  });
 })();
 </script>
 </body>

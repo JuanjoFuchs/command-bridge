@@ -159,6 +159,15 @@ def init_canvas(session: str = "dev", fresh: bool = False, follow: bool = True) 
     return restored
 
 
+async def handle_reload(request: web.Request) -> web.Response:
+    """Push a live-reload to every open page (JJ, 2026-09-02: "push these changes like you do with the
+    canvas" — no manual browser refresh while iterating on the UI). Fans a `reload` event out on the
+    /events SSE, which the page listens for and calls location.reload(). Carries no data — it only
+    tells browsers to re-fetch a page they already have — so it is unauthenticated like the page."""
+    n = canvas.publish("reload", {})
+    return web.json_response({"reloaded": n})
+
+
 def setup(app: web.Application) -> None:
     """Register the canvas routes on command-bridge's aiohttp app. Additive only — the voice routes
     are untouched. The page's own URLs (/events, /switch, /placed, /inspected) live at the root; the
@@ -170,3 +179,4 @@ def setup(app: web.Application) -> None:
     app.router.add_post("/switch", handle_switch)
     app.router.add_post("/placed", handle_placed)
     app.router.add_post("/inspected", handle_inspected)
+    app.router.add_post("/reload", handle_reload)
