@@ -2844,17 +2844,21 @@
         // Re-assert both toggles on every connect. The server holds them in memory, so a
         // restart or a dropped socket would otherwise leave the page showing "Verbose" while
         // the agent reads false — a disagreement neither side can see.
-        // Mute is a fact about THIS device's microphone, so the client still asserts it — and so
-        // is whether the microphone is running at all, which must be re-asserted on every
-        // reconnect or a resumed session looks unstarted.
+        // Mute is a fact about THIS device's microphone, so the client still asserts it.
         // Verbose is NOT pushed — the server owns it and sends it on the ready frame, because a
         // preference about the agent must not be reverted by whichever page connected last.
         tellServer("muted", muted);
-        tellServer("capturing", running);
-        // The channel is a fact about this device too, and re-asserting it is what releases
-        // anything queued while the socket was down. Without it a reconnect leaves the server
-        // believing the channel is shut and the queue never drains.
-        tellServer("channel", channelOpen);
+        // 🔴 ONLY A PAGE THAT HAS ACTUALLY STARTED re-asserts the mic and the channel. A fresh page —
+        // a `shot`'s headless browser, or a tab just opened — has `running`/`channelOpen` false by
+        // default, and asserting those on connect CLOBBERS the live session: reported 2026-09-02, a
+        // shot turned his channel off "as if someone clicked the power button". An unstarted page has
+        // nothing to re-assert; it adopts what the server sends on the `ready` frame. A page that IS
+        // running still re-asserts on every reconnect — that is what releases anything queued while
+        // the socket was down, so the server does not sit on a drained-looking channel.
+        if (running) {
+          tellServer("capturing", running);
+          tellServer("channel", channelOpen);
+        }
         // Never resume a stale "he is talking". A socket that dropped mid-sentence would
         // otherwise leave the server holding every reply until the 15 s bound expired.
         speakingSignal = false;
