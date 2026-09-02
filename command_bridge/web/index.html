@@ -1190,9 +1190,11 @@
       <label class="pick output" id="spkpick" hidden>
         <select id="spk" aria-label="Speaker" title="Speaker — where replies are played"></select>
       </label>
-      <button id="verbose" class="orbbtn" role="switch" aria-checked="false" aria-label="Verbose narration">
-        <span class="emoji" aria-hidden="true">&#128172;</span>
-      </button>
+      <!-- VERBOSE TOGGLE RETIRED (JJ, 2026-09-02): "we should retire the Verbose toggle because I have
+           always used Voice Tunnel and now Command Bridge in Verbose mode … This mode should be the only
+           mode." Verbose is now pinned on (client default true + `.env VERBOSE=1`); there is no second,
+           quieter mode to offer, so the control is gone. The `verbose`/`paintVerbose` plumbing stays so
+           `command-bridge verbose …` and the server's ready frame still drive behaviour. -->
     </div>
     <!-- WHERE THE AUDIO IS GOING, when nothing on this page can move it. Spec 009 FR3.
          Reported live 2026-08-18, on a headset, with the speaker list offering only `default`:
@@ -1294,7 +1296,7 @@
   // lives here, in `clipQueue`, and only this page knows how much of it is left. So the count the
   // hand shows is the server's number plus what is still queued or playing locally.
   let playingLane = null;
-  let muted = false, verbose = false;
+  let muted = false, verbose = true;   // verbose is the only mode now (toggle retired 2026-09-02); the server's ready frame still confirms it
   // THE ORB MODEL. Every one of these is a separate fact, and the orb is a pure function of all
   // of them (see orbView). They used to be written straight to the DOM from four different
   // handlers, which is how the page ended up saying "Thinking" with no clock, and "Listening"
@@ -2303,7 +2305,10 @@
   // back would be a loop, so this deliberately does not call tellServer.
   function paintVerbose(next) {
     verbose = Boolean(next);
-    $verbose.setAttribute("aria-checked", String(verbose));
+    // The button is retired, so $verbose is null now — the value still drives behaviour, it just has
+    // no control to paint. Kept null-safe so the server's ready frame / `command-bridge verbose` echo
+    // does not throw.
+    if ($verbose) $verbose.setAttribute("aria-checked", String(verbose));
   }
 
   function setVerbose(next) {
@@ -2410,7 +2415,7 @@
   setCollapsed(localStorage.getItem("command-bridge.collapsed") === "1");
 
   $mute.addEventListener("click", () => setMuted(!muted));
-  $verbose.addEventListener("click", () => setVerbose(!verbose));
+  // Verbose has no toggle any more (retired 2026-09-02) — it is the only mode, pinned on.
 
   // Restores within this browser SESSION only. Verbose does not restore at all — it arrives
   // from the server on connect, because it is one preference he holds rather than one per

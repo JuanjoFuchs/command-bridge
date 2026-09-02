@@ -612,25 +612,19 @@ try:
               "the error line is hidden until there is an error")
 
         # ---------------------------------------------------------------- one row
+        # The verbose toggle was RETIRED 2026-09-02 (verbose is the only mode now), so the row's
+        # right-hand anchor is the mute button alone; the sameRow / muteFirst ordering checks that
+        # keyed off verbose are gone with it. What still matters is that the control row sits above
+        # the orb, in the header (spec 014 FR1), close under it and not overlapping.
         row = page.evaluate("""() => {
           const r = (id) => document.getElementById(id).getBoundingClientRect();
-          const m = r('mute'), v = r('verbose'), o = r('orbwrap');
-          return { sameRow: Math.abs(m.top - v.top) < 2,
-                   // 🔴 SPEC 014 FR1 PUT THE CONTROLS ABOVE THE ORB, not below it. The row used to
-                   // sit under the orb because the title had its own line at the top; folding
-                   // both into one header is what buys the transcript its space, and it inverts
-                   // this relationship by design. The claim worth keeping is that the controls and
-                   // the orb do not OVERLAP and stay in a predictable order — not which of the two
-                   // is lower, which was a consequence of the old layout rather than a rule.
-                   above: m.bottom <= o.top + 1,
-                   gap: o.top - m.bottom,
-                   muteFirst: m.left < v.left };
+          const m = r('mute'), o = r('orbwrap');
+          return { above: m.bottom <= o.top + 1,
+                   gap: o.top - m.bottom };
         }""")
-        check(row["sameRow"], "mute and verbose share one row with the picker")
         check(row["above"], "the control row sits above the orb, in the header (spec 014 FR1)",
               f"gap={row['gap']}")
         check(row["gap"] < 26, "close under the orb, not floating", f"gap={row['gap']:.0f}px")
-        check(row["muteFirst"], "in reading order: mute, picker, verbose")
         width = page.evaluate("""() => {
           const r = (id) => document.getElementById(id).getBoundingClientRect();
           return { mic: r('mic').width, controls: r('controls').width, orb: r('orbwrap').width };
