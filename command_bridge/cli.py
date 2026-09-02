@@ -3077,9 +3077,14 @@ def _apply_deixis(args, marked: str, result: Any) -> Any:
     # (reported live 2026-09-02: "the camera focus didn't trigger"). The cue's `look` travels WITH the
     # schedule: `fireArmed` brings the camera before the first mark when the held lane finally goes live.
     look = Path(args.show).stem if getattr(args, "show", None) else ""
+    # `lead` is 0, NOT `held_for`. Reported live 2026-09-02 on the first held demo: *"the deixis is a
+    # bit delayed."* On the armed path `fireArmed` delays the marks by `lead_ms`, and the measured word
+    # offsets (`at`) ALREADY include the clip's leading silence — so passing the speech-grace `held_for`
+    # (~0.9s) as the lead double-counted it and the highlights landed ~0.9s AFTER their word. The clock
+    # for both the audio and the marks starts when the held clip plays, so no extra lead is owed.
     cue = _canvas(args.session, "cue",
                   {"text": marked, "words": words, "seconds": None,
-                   "arm": held, "lead": float(result.get("held_for") or 0.0), "look": look},
+                   "arm": held, "lead": 0.0, "look": look},
                   getattr(args, "lane", "") or "")
     marks = _DEIXIS_MARK.findall(marked)
     if isinstance(cue, dict) and cue.get("error"):

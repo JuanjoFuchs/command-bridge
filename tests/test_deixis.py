@@ -74,7 +74,7 @@ def test_marks_speak_the_clean_text_and_cue_the_marked_text_on_the_measured_word
     assert out["deixis"]["marks"] == ["[point:#q3]", "[point:#q4]"]
 
 
-def test_a_held_off_lane_say_arms_the_cue_with_the_say_lead(monkeypatch):
+def test_a_held_off_lane_say_arms_the_cue_with_no_extra_lead(monkeypatch):
     cued = []
     _stub_say(monkeypatch, {"held_off_lane": True, "words": [{"w": "here", "t": 0.5}], "held_for": 3.0})
     _stub_cue(monkeypatch, {"ok": True}, cued)
@@ -82,7 +82,7 @@ def test_a_held_off_lane_say_arms_the_cue_with_the_say_lead(monkeypatch):
     out = cli.cmd_say(_args("look [point:#x]here"))
 
     assert cued[0][1]["arm"] is True, "held off-lane → the highlights start when the lane goes live"
-    assert cued[0][1]["lead"] == 3.0
+    assert cued[0][1]["lead"] == 0.0, "the marks self-sync from audio start; held_for is not the lead-in"
     assert out["deixis"]["armed"] is True
 
 
