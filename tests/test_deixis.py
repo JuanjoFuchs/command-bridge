@@ -130,12 +130,26 @@ def test_show_places_the_frame_then_speaks_then_cues(monkeypatch, tmp_path):
 
     out = cli.cmd_say(_args("see [point:#bar-0]Q3", show=str(f)))
 
-    # the frame op ran first, kind inferred from .json, then the cue
+    # the frame op ran first (kind inferred from .json), THEN the camera is brought to it (so the
+    # highlights are on-screen — the live-demo fix), then the cue
     assert ops[0][0] == "frame"
     assert ops[0][1]["kind"] == "vega"
     assert ops[0][1]["content"] == '{"mark": "bar"}'
-    assert ops[1][0] == "cue"
+    assert ops[1][0] == "look"
+    assert ops[1][1]["id"] == "chart"
+    assert ops[2][0] == "cue"
+    assert ops[2][1]["look"] == "chart", "the cue carries the camera move so it rides the schedule"
     assert out["deixis"]["fired"] is True
+
+
+def test_a_deixis_say_without_show_asks_the_cue_for_no_camera_move(monkeypatch):
+    cued = []
+    _stub_say(monkeypatch, {"running": True, "words": [{"w": "x", "t": 0.1}]})
+    _stub_cue(monkeypatch, {"ok": True}, cued)
+
+    cli.cmd_say(_args("point [point:#x]here"))
+
+    assert cued[0][1]["look"] == "", "no --show → no frame to travel to; the agent owns the view"
 
 
 def test_a_bad_show_source_refuses_before_a_word_is_spoken(monkeypatch):

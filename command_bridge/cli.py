@@ -3071,9 +3071,15 @@ def _apply_deixis(args, marked: str, result: Any) -> Any:
     # Held off-lane → arm the schedule so the highlights start when the lane goes live, riding the
     # say's own lead-in (`held_for`); live → fire now. Same marked text the `cue` verb takes.
     held = bool(result.get("held_off_lane"))
+    # When --show placed a frame, ride the camera move on the cue's `look`, not only on the eager
+    # `look` in `_show_frame`. That eager one moves the camera NOW — right for a live say, but a held
+    # say fires it while he is still on another lane, so it is gone by the time he switches over
+    # (reported live 2026-09-02: "the camera focus didn't trigger"). The cue's `look` travels WITH the
+    # schedule: `fireArmed` brings the camera before the first mark when the held lane finally goes live.
+    look = Path(args.show).stem if getattr(args, "show", None) else ""
     cue = _canvas(args.session, "cue",
                   {"text": marked, "words": words, "seconds": None,
-                   "arm": held, "lead": float(result.get("held_for") or 0.0), "look": ""},
+                   "arm": held, "lead": float(result.get("held_for") or 0.0), "look": look},
                   getattr(args, "lane", "") or "")
     marks = _DEIXIS_MARK.findall(marked)
     if isinstance(cue, dict) and cue.get("error"):
@@ -3100,10 +3106,17 @@ def _show_frame(args) -> dict[str, Any]:
         content = path.read_text(encoding="utf-8")
     except OSError as exc:
         return {"error": f"--show could not read {args.show}: {exc}", "code": "invalid_input"}
-    return _canvas(args.session, "frame",
-                   {"id": path.stem, "kind": _SHOW_KIND.get(path.suffix.lower(), "text"),
-                    "content": content, "title": "", "scale": None},
-                   getattr(args, "lane", "") or "")
+    lane = getattr(args, "lane", "") or ""
+    out = _canvas(args.session, "frame",
+                  {"id": path.stem, "kind": _SHOW_KIND.get(path.suffix.lower(), "text"),
+                   "content": content, "title": "", "scale": None}, lane)
+    # BRING THE CAMERA TO IT. A `frame` op places the frame but leaves the view where it was, so with
+    # other frames already on the lane the new one — and the highlights about to fire in it — can be
+    # off-screen. Reported live 2026-09-02, first demo: "nothing moved on the canvas." `--show` MEANS
+    # show, so it looks.
+    if isinstance(out, dict) and not out.get("error"):
+        _canvas(args.session, "look", {"id": path.stem, "all": False}, lane)
+    return out
 
 
 def cmd_say(args) -> dict[str, Any]:
