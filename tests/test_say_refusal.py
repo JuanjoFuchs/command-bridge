@@ -246,7 +246,11 @@ def test_no_flag_anywhere_on_say_disables_the_check():
     # the deixis on a refusal). The one honest note: on a refused clip a frame may already have been
     # placed — that is context for the re-say the refusal asks for, not a way past it; the words are
     # still refused.
-    assert flags == {"-h", "--help", "--session", "--voice", "--now", "--lane", "--timings", "--show"}, (
+    # `--intent` (spec 012) was given the same look — NOT a bypass. It only marks a clip as a
+    # supersedable announcement, which changes what the HELD-clip queue does with it AFTER it exists;
+    # an intent clip is refused by the unread check exactly like any other, and nothing is synthesized.
+    assert flags == {"-h", "--help", "--session", "--voice", "--now", "--lane", "--timings", "--show",
+                     "--intent"}, (
         "a new flag on `say` needs a deliberate look: is it a way around the refusal?"
     )
     for banned in ("--force", "--anyway", "--no-check", "--skip-unread", "--ignore-unread",

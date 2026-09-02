@@ -1012,7 +1012,12 @@ DESCRIBE: dict[str, Any] = {
                                "is on screen when the first `[point:]` highlight fires. Kind is "
                                "inferred from the extension (.json→chart, .md→markdown, .mmd→mermaid, "
                                ".svg/.html/else→that/text). For anything more particular, place it with "
-                               "`set` first and just target it with a mark."},
+                               "`set` first and just target it with a mark.",
+                     "--intent": "MARK THIS AS AN ANNOUNCEMENT of what you are about to do (spec 012). "
+                                 "While it is still HELD — he is on another lane and has not heard it — "
+                                 "your NEXT clip on this lane SUPERSEDES it: the stale 'about to' is "
+                                 "dropped so he hears the result, not the promise. No effect once he has "
+                                 "heard it, or if it played live. Mark only intents, never results."},
             "returns": {
                 "queued": "bool — the clip was synthesized and handed to the transport",
                 "id": "str — clip id",
@@ -1042,6 +1047,9 @@ DESCRIBE: dict[str, Any] = {
                           "`marks` the selectors used; `dropped` with a reason means the words were "
                           "still spoken but there was nothing to point at (no canvas shared, or no "
                           "measured schedule) — the audio is never held hostage to the visual half.",
+                "superseded": "int — how many of this agent's still-held `--intent` announcements this "
+                              "clip dropped as stale (spec 012). 0 when none, or when it played live. "
+                              "Non-zero means the earlier 'about to' is gone and he will hear only this.",
                 "delivered": "bool — whether it actually reached a listener. FALSE is not an "
                              "error: the clip is queued and plays when he reconnects or reopens "
                              "the channel. Check it before assuming he heard you.",
@@ -3150,6 +3158,8 @@ def cmd_say(args) -> dict[str, Any]:
         payload["async"] = True
     if getattr(args, "lane", None):
         payload["lane"] = args.lane
+    if getattr(args, "intent", False):
+        payload["intent"] = True   # spec 012: a supersedable announcement of what you're about to do
     # Deixis places each highlight on the word as it is spoken, so it needs the MEASURED schedule and
     # forces `--timings`; both are incompatible with `--now`, which returns before synthesis exists.
     if (getattr(args, "timings", False) or deixis) and payload.get("async"):
@@ -4821,6 +4831,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="deixis only: place this file as a canvas frame BEFORE speaking, so it is on "
                         "screen when the first [point:] highlight fires (kind inferred from the "
                         "extension). Use `set` for anything more particular")
+    y.add_argument("--intent", action="store_true",
+                   help="mark this as an ANNOUNCEMENT of what you are about to do. While it is still "
+                        "HELD (he is on another lane), your NEXT clip on this lane supersedes it — the "
+                        "stale 'about to' is dropped so he hears the result, not the promise")
     y.add_argument("text")
 
     sub.add_parser("voices", help="list installed piper voices")

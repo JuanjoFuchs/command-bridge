@@ -1261,6 +1261,7 @@ async def handle_say(request: web.Request) -> web.Response:
     voice = (body or {}).get("voice") or None
     fire_and_forget = bool((body or {}).get("async"))
     timings = bool((body or {}).get("timings"))
+    intent = bool((body or {}).get("intent"))   # spec 012: a supersedable announcement
     if not isinstance(text, str) or not text.strip():
         return web.json_response({"error": "text is required"}, status=400)
 
@@ -1454,11 +1455,11 @@ async def handle_say(request: web.Request) -> web.Response:
         # instead of the user waiting out a TTS round trip before anything else starts.
         # The lane travels on the fire-and-forget path too. `--now` is exactly the path an
         # agent takes when it is in a hurry, which is when it would otherwise talk over him.
-        asyncio.get_running_loop().create_task(_speak(state, text, voice, lane=lane))
+        asyncio.get_running_loop().create_task(_speak(state, text, voice, lane=lane, intent=intent))
         return web.json_response({"queued": True, "async": True, **unread})
 
     try:
-        result = await _speak(state, text, voice, lane=lane, timings=timings)
+        result = await _speak(state, text, voice, lane=lane, timings=timings, intent=intent)
     except tts.TTSError as exc:
         return web.json_response({"error": str(exc)}, status=500)
     return web.json_response({**result, **unread})
@@ -1487,7 +1488,8 @@ def record_spoken(session: str, clip_id: str, text: str, held_for: float) -> str
 
 
 async def _speak(state: TunnelState, text: str, voice: str | None,
-                 lane: str | None = None, timings: bool = False) -> dict[str, Any]:
+                 lane: str | None = None, timings: bool = False,
+                 intent: bool = False) -> dict[str, Any]:
     """Synthesize, hold if the speaker is mid-sentence, then push the audio.
 
     Shared by the blocking and fire-and-forget paths so the interruption guard cannot be
@@ -1602,6 +1604,9 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         # stand-in for it. With N agents the page cannot derive this from anything it holds, so
         # the clip has to carry it.
         "lane": lane or state.lanes.default,
+        # SPEC 012: an intent announcement — supersedable while still held. Carried on the clip so the
+        # held-queue append can recognise a stale one and the page could style it if it ever wanted.
+        "intent": intent,
     }
     # TWO ways to have nobody to talk to, and they queue identically. A dropped socket is an
     # accident; a closed orb is a decision. Either way the reply is held rather than played to an
@@ -1639,6 +1644,15 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         # wearing a different hat — and WRONG for a lane he is not on, which he has not
         # interrupted and is not listening to. Sharing the store would inherit the bug on purpose.
         held = state.lane_held.setdefault(str(lane), [])
+        # SUPERSEDE (spec 012). A newer clip from this agent makes any still-held INTENT announcement
+        # from it stale — by the time he comes back the thing is done, so *"I'm about to X"* is noise.
+        # Drop those held intents (every clip in this lane's queue is from this lane's agent) so he
+        # hears the current state, not a promise. Only intents — a result stands until he hears it.
+        superseded = sum(1 for c in held if (c.get("header") or {}).get("intent"))
+        if superseded:
+            held[:] = [c for c in held if not (c.get("header") or {}).get("intent")]
+            header["superseded"] = superseded
+            timing.stamp(state.session, "announcement_superseded", lane=lane, count=superseded)
         held.append({"header": header, "pcm": pcm, "at": time.time()})
         _prune_lane_held(state, str(lane))
         timing.stamp(state.session, "lane_held", clip=clip_id, lane=lane,
@@ -1690,6 +1704,9 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         # HELD BECAUSE HE IS TALKING TO SOMEBODY ELSE, which is not the same as undelivered. The
         # agent is not being told its reply failed; it is being told when he will hear it.
         "held_off_lane": off_lane,
+        # SPEC 012: how many of this agent's still-held INTENT announcements this clip superseded (0
+        # when none, or when it played live). Lets the agent see its "about to" was dropped as stale.
+        "superseded": header.get("superseded", 0),
         "lane": lane,
         # Say WHICH kind of not-delivered, so the agent can tell "his phone dropped" from "he
         # closed the channel deliberately" without a second call.

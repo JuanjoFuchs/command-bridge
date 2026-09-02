@@ -1,7 +1,7 @@
 ---
 id: "012"
 title: Supersede a stale announcement turn
-status: pending          # pending | in_progress | complete
+status: complete         # pending | in_progress | complete
 blocked_by: []           # builds on the held-clip queue (lane_held) that already ships
 blocks: []
 ---
@@ -137,6 +137,18 @@ command-bridge say --lane magnus "Suite's green, 847 passed."   # supersedes the
 - A heuristic that guesses which clips are announcements — the agent marks them (Key Decisions).
 - The expiry-by-time idea for held clips (a different lever); this is supersede-by-newer only.
 - Editing or merging clip audio — a superseded clip is dropped whole, not spliced.
+
+## Findings — implementer (2026-09-02)
+
+**Built and tested.** `say --intent` marks the clip (`intent` on the header); the off-lane held-append
+in `_speak` drops this agent's still-held intent clips before adding the new one, decrements the hand
+count, reports `superseded` on the say result, and stamps `announcement_superseded` to the timing log.
+Live playback and non-intent clips are untouched — the change lives entirely in the `off_lane` branch.
+All acceptance criteria verified by `tests/test_supersede.py` (6 cases, real `_speak` with TTS stubbed):
+newer-supersedes-intent, result-not-dropped, newer-intent-supersedes-older, no cross-lane leak, and a
+live intent never held. Describe documents `--intent` + the `superseded` field (contract test green);
+`say`'s flag-census guard given the deliberate look. Full say/lane/hold suite stays green. **Needs a
+server restart to deploy.**
 
 ## References
 
