@@ -168,6 +168,13 @@
     body.sharing #collapse { display:none; }
     body.sharing #sharecanvas { grid-row:3; grid-column:1; }
     body.sharing #log      { grid-row:3; grid-column:2; height:100%; margin:0; }
+    /* THE CANVAS IS THE FOCUS in the meeting layout, so the participants are a COMPACT TOP BAR — not
+       the full-height solo orb, which otherwise eats ~half the height and leaves the canvas a sliver
+       (reported live 2026-09-02). The solo orb and the per-lane discs are both capped; #stage tightens
+       its gaps so row 2 stays short and row 3 (the canvas) gets the space. */
+    body.sharing #stage    { gap:.4rem; justify-content:flex-start; }
+    body.sharing #orbwrap  { width:min(15dvh, 104px); }
+    body.sharing .laneorb .disc { width:min(100%, 12dvh, 92px); }
   }
   /* Keep the meeting grid even before the first turn lands (the empty-log rule would otherwise
      reclaim the rows). */
