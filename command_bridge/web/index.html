@@ -2122,9 +2122,6 @@
 
   // ONE painter, and the ONLY thing allowed to touch the orb row.
   function applyLaneOrbs() {
-    // Stamp the busy clocks BEFORE building the view, so a state that just changed is timed from
-    // the moment it changed rather than from the next repaint.
-    lanes.forEach((n) => noteLaneBusy(n, laneStates[n] || "idle"));
     const waiting = waitingCounts({ lanes, laneWaiting, clipQueue, playingLane, defaultLane });
     const view = laneOrbsView({
       lanes, live: liveLane, waiting, states: laneStates,
@@ -2133,6 +2130,15 @@
       sessionOff: !(running && channelOpen),
     });
     view.sessionOff = !(running && channelOpen);
+    // Stamp the busy clocks from the DERIVED state actually shown (row.state), NOT the raw reported
+    // `laneStates`. Reported 2026-09-02: *"some agents show thinking without the seconds counter."*
+    // The status WORD is derived — an unwatched lane reads "thinking" because we can see its watch
+    // closed — but the clock was fed `laneStates[n] || "idle"`, where a lane that never self-reported
+    // is "idle" and so never got timed. That split the word from the seconds. Feeding the same
+    // derived state clocks an INFERRED thinking too, from the moment we saw it stop listening — which
+    // we DO observe (the watch closing). Built after the view for that reason; still one repaint, one
+    // tick, so a state that just changed is still timed from now, not the next paint.
+    view.rows.forEach((r) => noteLaneBusy(r.name, r.state));
     diag.laneOrbs = view;
     if ($orbs) {
       $orbs.hidden = !view.shown;
@@ -3861,10 +3867,13 @@
   // exercise the shared layout. Guarded so it can never run in the real voice session.
   function mockFeed(m) { onMessage({ data: JSON.stringify(m) }); }
   const MOCK_SCENARIOS = {
-    // The wireframe state: four agents, kepler live and speaking, atlas thinking, a real transcript.
+    // The wireframe state: four agents, kepler live and speaking, atlas thinking (reported), a real
+    // transcript — and dexter is an UNWATCHED background agent, which the page infers as "thinking"
+    // (it went heads-down; we can only see its watch closed). That inferred-thinking lane must ALSO
+    // carry the seconds counter — the 2026-09-02 fix — so it stays in the scenario as the check.
     meeting: {
       lanes: ["magnus", "atlas", "kepler", "dexter"], live: "kepler", default: "magnus",
-      states: { kepler: "speaking", atlas: "thinking" }, watching: ["magnus", "dexter"],
+      states: { kepler: "speaking", atlas: "thinking" }, watching: ["magnus"],
       turns: [
         { id: 1, lane: "magnus", text: "Join the two tools into one product.", addressed: true },
         { id: 2, lane: "kepler", text: "It fits — the parts already exist.", addressed: false },
