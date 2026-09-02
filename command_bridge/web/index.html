@@ -3773,10 +3773,50 @@
   // microphone does — so making the page arrive already connected costs nothing and is what the owner
   // already believed was happening. It also means the transcript, cues and replies work the
   // moment the page opens, and the first tap has one job instead of three.
-  (async () => {
-    try { await openSocket(48000); } catch (e) { diag.errors.push("initial connect: " + e.message); }
-  })();
-  if (!token) setError("no token in URL — append ?token=…");
+  // ── MOCK RENDER · fully drive the page from a fixture (2026-09-02) ──────────────────────────────
+  // `?mock=<scenario>` renders the WHOLE page — several agents, their orb states, a populated
+  // transcript — with NO mic and NO live WebSocket, so any state can be fully rendered and
+  // screenshotted deterministically (JJ: "you can fake everything and do a full render"). It feeds the
+  // REAL `onMessage` handler the SAME messages the server sends, so there is no second copy of the
+  // render path to drift. The canvas is the live /canvas iframe; draw a frame on the live lane to
+  // exercise the shared layout. Guarded so it can never run in the real voice session.
+  function mockFeed(m) { onMessage({ data: JSON.stringify(m) }); }
+  const MOCK_SCENARIOS = {
+    // The wireframe state: four agents, kepler live and speaking, atlas thinking, a real transcript.
+    meeting: {
+      lanes: ["magnus", "atlas", "kepler", "dexter"], live: "kepler", default: "magnus",
+      states: { kepler: "speaking", atlas: "thinking" }, watching: ["magnus", "dexter"],
+      turns: [
+        { id: 1, lane: "magnus", text: "Join the two tools into one product.", addressed: true },
+        { id: 2, lane: "kepler", text: "It fits — the parts already exist.", addressed: false },
+        { id: 3, lane: "magnus", text: "Maximize the canvas, transcript on the right.", addressed: true },
+        { id: 4, lane: "atlas", text: "The transcript panel is nearly ready.", addressed: false },
+      ],
+    },
+    // A one-agent, idle scenario for the solo layout.
+    solo: { lanes: ["magnus"], live: "magnus", default: "magnus", states: {}, watching: ["magnus"],
+            turns: [{ id: 1, lane: "magnus", text: "What's the status of the roadmap?", addressed: true }] },
+  };
+  function renderMock(name) {
+    const s = MOCK_SCENARIOS[name] || MOCK_SCENARIOS.meeting;
+    channelOpen = true;
+    mockFeed({ type: "ready", verbose: 1, wake: "magnus", lanes: s.lanes, lane: s.live,
+               default_lane: s.default, lane_states: s.states || {},
+               watching_lanes: s.watching || [], waiting: {}, lane_consumed: {} });
+    mockFeed({ type: "channel", value: true });
+    (s.turns || []).forEach(t =>
+      mockFeed({ type: "turn", id: t.id, text: t.text, addressed: t.addressed, lane: t.lane }));
+  }
+
+  const MOCK = new URLSearchParams(location.search).get("mock");
+  if (MOCK) {
+    try { renderMock(MOCK); } catch (e) { setError("mock render failed: " + e.message); }
+  } else {
+    (async () => {
+      try { await openSocket(48000); } catch (e) { diag.errors.push("initial connect: " + e.message); }
+    })();
+    if (!token) setError("no token in URL — append ?token=…");
+  }
 })();
 </script>
 <script>
