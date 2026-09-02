@@ -158,7 +158,9 @@
   body.sharing #sharecanvas { display:block; }
   @media (min-width:760px) {
     body.sharing {
-      grid-template-columns:1fr minmax(300px,34%);
+      /* Transcript NARROWER — the canvas is the focus (JJ, 2026-09-02: "the transcript section
+         less wide so that we have more space for the canvas"). */
+      grid-template-columns:1fr minmax(220px,24%);
       grid-template-rows:auto auto minmax(0,1fr);
       justify-items:stretch;
       column-gap:1rem;
@@ -173,8 +175,12 @@
        (reported live 2026-09-02). The solo orb and the per-lane discs are both capped; #stage tightens
        its gaps so row 2 stays short and row 3 (the canvas) gets the space. */
     body.sharing #stage    { gap:.4rem; justify-content:flex-start; }
-    body.sharing #orbwrap  { width:min(15dvh, 104px); }
-    body.sharing .laneorb .disc { width:min(100%, 12dvh, 92px); }
+    body.sharing #orbwrap  { width:min(13dvh, 88px); }
+    /* Smaller participant discs in the meeting layout — the canvas is the focus, and the status now
+       sits below the name so the disc no longer has to be big enough to hold text. */
+    body.sharing .laneorb .disc { width:min(100%, 11dvh, 76px); }
+    body.sharing .laneorb .nm { font-size:.62rem; }
+    body.sharing #orbs { padding-bottom:0; }
   }
   /* Keep the meeting grid even before the first turn lands (the empty-log rule would otherwise
      reclaim the rows). */
@@ -273,7 +279,12 @@
        without a second copy of the sizing arithmetic drifting out of step with the first. */
     container-type:inline-size;
     border-radius:50%;
-    background:radial-gradient(circle at 38% 32%, #2a3340, #12161c 70%);
+    /* FILLED with the lane's own colour (JJ, 2026-09-02: match the wireframe's colour orbs, "the
+       icons/emojis you used in the render"). Was a flat dark gradient with only a hue ring; now the
+       disc IS the colour, brightening toward the top-left like the wireframe's radial orbs. */
+    background:radial-gradient(circle at 35% 30%,
+                 color-mix(in srgb, var(--lane-c) 78%, #ffffff),
+                 var(--lane-c) 52%, #14161c);
     /* IDENTITY AT ALL TIMES: the ring is the lane's hue whether it is live or not. Being live
        changes the ring's WEIGHT and adds the pulse — never its colour, which is the whole of
        FR5. */
@@ -290,26 +301,19 @@
      the word centres in the top half, the seconds in the bottom half, and the pair straddles the
      middle instead of sitting on it. With ONE child the single stretched row fills the disc and
      everything looks right, which is exactly why this appeared the day the timer did. */
-  .laneorb .disc { grid-auto-flow:row; gap:.1rem; place-content:center; }
-  /* SIZED OFF THE DISC, so a bigger orb gets bigger words. Both were pinned in rem and stayed
-     ~8px however large the circle grew: *"they're too small, barely readable."* */
+  /* STATUS + SECONDS now sit BELOW the name (the wireframe), not inside the disc — so they use
+     fixed sizes rather than the container-query sizes the in-disc version needed, and stack as one
+     small block: the status word, the seconds under it. */
   .laneorb .stat {
-    font-family:var(--mono);
-    font-size:clamp(.5rem, 10.5cqw, .74rem);
-    letter-spacing:.07em; line-height:1.25;
-    color:#9aa4b0; text-align:center; padding:0 .5rem;
+    font-family:var(--mono); font-size:.58rem; letter-spacing:.06em; line-height:1.3;
+    color:#8a94a0; text-align:center;
+    display:flex; flex-direction:column; align-items:center; gap:.02rem;
   }
-  /* THE SECONDS, UNDER THE WORD (reported 2026-08-24: the timer vanished with the single orb).
-     Tabular figures so a growing number does not make the orb twitch. */
   .laneorb .lanetimer {
-    font-family:var(--mono);
-    font-size:clamp(.48rem, 9.2cqw, .68rem);
-    font-variant-numeric:tabular-nums;
-    letter-spacing:.04em; color:color-mix(in srgb, var(--lane-c) 70%, #cfd6de);
+    font-family:var(--mono); font-size:.54rem; font-variant-numeric:tabular-nums;
+    letter-spacing:.03em; color:color-mix(in srgb, var(--lane-c) 65%, #cfd6de);
   }
-  /* The span is always in the DOM now so the tick can write into it without rebuilding the button
-     (see the interval). Empty it must occupy NOTHING — a grid row and its gap would push the
-     status word off the middle of the disc, which is the very complaint the centring fixed. */
+  /* Always in the DOM so the tick can write into it without a rebuild; empty it must take no space. */
   .laneorb .lanetimer:empty { display:none; }
   .laneorb.live .disc {
     border-color:var(--lane-c);
@@ -2084,19 +2088,6 @@
 
         const disc = document.createElement("span");
         disc.className = "disc";
-        const st = document.createElement("span");
-        st.className = "stat";
-        st.textContent = row.status;
-        disc.append(st);
-        // The seconds, under the word, and only while this lane is actually busy.
-        // ⚠ **ALWAYS APPENDED, even when empty.** It used to be created only while the lane was
-        // busy, which meant the seconds appearing or disappearing required a full rebuild of the
-        // row — and the rebuild is what broke tapping (see the tick below). An empty span occupies
-        // no height, and the tick can write into it without touching the button around it.
-        const t = document.createElement("span");
-        t.className = "lanetimer";
-        t.textContent = laneElapsed(row.name);
-        disc.append(t);
         if (row.waiting) {
           // A RAISED HAND WITH A COUNT (FR7), replacing the words "wants you". His words:
           // "instead of codex wants you, I would like to have a count or a raised hand, with the
@@ -2109,7 +2100,19 @@
         const nm = document.createElement("span");
         nm.className = "nm";
         nm.textContent = row.name;
-        b.append(disc, nm);
+        // NAME then STATUS+SECONDS, both BELOW the disc (JJ, 2026-09-02, matching the wireframe:
+        // "the name of the agent is always sitting below it, and the status with the seconds also
+        // sit below the name, not inside it"). The disc is now the pure colour orb.
+        const st = document.createElement("span");
+        st.className = "stat";
+        st.textContent = row.status;
+        // The seconds, appended to the status line. ⚠ ALWAYS APPENDED, even when empty, so the
+        // tick can write into it without rebuilding the row (the rebuild is what broke tapping).
+        const t = document.createElement("span");
+        t.className = "lanetimer";
+        t.textContent = laneElapsed(row.name);
+        st.append(t);
+        b.append(disc, nm, st);
         return b;
       }) : []));
     }
@@ -3799,6 +3802,9 @@
   };
   function renderMock(name) {
     const s = MOCK_SCENARIOS[name] || MOCK_SCENARIOS.meeting;
+    // Look like a live, connected session so the orbs render in their ON state (an off session
+    // greys the live disc — data-off — which is not the state we want to iterate against).
+    running = true;
     channelOpen = true;
     mockFeed({ type: "ready", verbose: 1, wake: "magnus", lanes: s.lanes, lane: s.live,
                default_lane: s.default, lane_states: s.states || {},
