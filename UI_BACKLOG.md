@@ -19,14 +19,19 @@ the mock-render harness exists. He will keep adding to this. Check items off as 
 - [ ] **Name BELOW the orb**, not inside it. *(turn 25–26)*
 - [ ] **Status + seconds BELOW the name**, not inside the orb. *(turn 25–26)*
 - [ ] Use the **icons / emoji look** from the wireframe render (the colored radial-gradient orbs). *(turn 27)*
-- [ ] Use the **color of the verbose button** he liked. *(turn 28)*
+- [ ] **The three right-side buttons (verbose, mic, speaker): use the EMOJIS + COLORS from the
+      wireframe render** — he liked those (the 🎤 / 🔊 / verbose pills). *(turns 28, 74–75)*
 - [ ] "**What you're showing me is different**" — the current single voice-orb must become the
       wireframe's per-agent participant orbs. *(turn 24)*
 
-## Interaction model
-- [ ] **Tapping the orb no longer turns the mic on/off** — that responsibility is the **power button's
-      only**. *(turn 29)*
-- [ ] **Tapping an orb switches lanes**, nothing else. *(turn 30)*
+## Interaction model  (REFINED 2026-09-02, turns 72–75 — my first summary was wrong)
+- [ ] **Power button = the two-way CHANNEL toggle**, NOT a mic control. Off → the UI plays nothing
+      back to him, but the agent's turns stay **queued**; on → the queued turns play, **per the lane
+      he's in**. *(turn 72)*
+- [ ] **Mic toggle (right) = MUTE the mic + select the mic device.** Speaker toggle = mute the speaker
+      + select the speaker device. **Muting only — neither turns the channel off.** *(turn 72)*
+- [ ] **Tapping an orb switches lanes**, nothing else. *(turn 30)* — the lane orbs already do this.
+- [ ] Verify the current power/mute behaviour matches the above and align it if not.
 
 ## Canvas
 - [ ] **Border the canvas in the live agent's color** (each agent has a wireframe color), so he knows
@@ -37,6 +42,20 @@ the mock-render harness exists. He will keep adding to this. Check items off as 
       push it like the canvas pushes frames. The `/events` SSE already carries a `version` event and
       the page now subscribes to it (the one-page merge), so wire the page to reload/hot-apply on a
       pushed version bump. *(turns 31–33)*
+
+## Bugs
+- [x] Interaction model was ALREADY correct in the code (verified 2026-09-02): #power owns the
+      two-way channel with queued replies, #mute mutes the mic (he still hears replies), the pickers
+      select devices. My earlier summary was wrong; no behaviour change needed — only the styling below.
+- [ ] **Flicker on lane switch**: switching agents briefly flashes "the vision tunnel lanes … below
+      them, just while it's switching" — a transient during the switch (likely the old `#lanes` chip
+      strip or the embedded canvas's own lane chips showing for a beat). Find and kill it. *(turns 78–79)*
+- [ ] **Only the orb should be clickable, not the whole row cell.** Hovering the orb row shows the hand
+      cursor across the full width — each `.laneorb` is `flex:1 1 0` so its hit area spans its share of
+      the row. Shrink the clickable/pointer area to the disc (+ its label), not the padding around it. *(turns 80–81)*
+- [ ] **Make "channel off" obvious.** The power button's own style should read more clearly as off, and
+      the WHOLE UI should visibly signal when the power button is off (dim/desaturate the room), so the
+      off state is unmistakable at a glance. *(turns 82–83)*
 
 ## The reference — check every fix against these
 - [ ] **Match the renders in the project notes project note** `Command Bridge.md` — the wireframe

@@ -228,6 +228,18 @@
   }
   #power[aria-pressed="true"] { color:var(--cool);
     border-color:color-mix(in srgb,var(--cool) 45%,transparent); box-shadow:none; }
+  /* CHANNEL OFF — dim the whole room (orbs, canvas, transcript) so "off" is unmistakable at a glance,
+     and leave the power button LIT as the one way back on (JJ, 2026-09-02). The header (power button)
+     sits outside #stage so it is not dimmed. */
+  html[data-off="true"] #stage,
+  html[data-off="true"] #log,
+  html[data-off="true"] #sharecanvas {
+    filter:grayscale(.55) brightness(.6); transition:filter .3s ease;
+  }
+  html[data-off="true"] #power {
+    box-shadow:0 0 0 4px color-mix(in srgb,var(--warm) 22%,transparent),
+               0 0 22px color-mix(in srgb,var(--warm) 45%,transparent);
+  }
 
   /* --- wordmark ---------------------------------------------------------- */
   h1 {
@@ -390,6 +402,13 @@
   /* The session being off is a fact about the SESSION, so it is said once, on every orb, rather
      than by each of them inventing a state. */
   #orbs[data-off="true"] .disc { filter:grayscale(1) brightness(.75); }
+  /* ONLY THE ORB IS CLICKABLE, not the empty width of its row cell (JJ, 2026-09-02: "I only want the
+     agent orbs to be the clickable ones … the clickable part should just be the orb"). The button
+     spans its cell for LAYOUT (flex:1 1 0), so pointer-events is off on the cell and back on for the
+     content; the delegated #orbs click handler still fires via closest(). */
+  .laneorb { pointer-events:none; cursor:default; }
+  .laneorb .disc, .laneorb .nm, .laneorb .stat { pointer-events:auto; }
+  .laneorb .disc, .laneorb .nm { cursor:pointer; }
 
   /* --- stage ------------------------------------------------------------- */
   #stage {
@@ -2175,6 +2194,10 @@
       $power.setAttribute("aria-label", on ? "Stop the conversation" : "Start the conversation");
       // The orb row states the SESSION once, rather than each orb inventing a state for it.
       if ($orbs) $orbs.dataset.off = String(!on);
+      // And the WHOLE ROOM dims when the channel is off, so "off" is unmistakable at a glance and the
+      // power button is the one lit thing to turn it back on (JJ, 2026-09-02: "the style of the whole
+      // UI to be more obvious when the power button is off").
+      document.documentElement.dataset.off = String(!on);
     }
     // The lane orbs' status word reads "off" while the session is down, so they repaint with the
     // orb and not only when the lane set changes — otherwise the row would keep claiming
