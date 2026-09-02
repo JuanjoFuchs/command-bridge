@@ -198,15 +198,6 @@ TURN_DETECT = True
 worth having as an A/B, since a silent fall back to the timer and a deliberate one look identical
 from the outside."""
 
-SWITCH_WHILE_TRANSCRIBING = True
-"""Spec 023's feature: he may switch lanes WHILE the thing he just said is still transcribing, and the
-in-flight utterance still routes to the lane he spoke it to. Powerful, but it opened a routing slip —
-a fresh utterance started right after a switch could inherit the wrong lane (reproduced 2026-09-02,
-under investigation via the `utterance_latch` timing stamps). Set COMMAND_BRIDGE_SWITCH_WHILE_TRANSCRIBING=0
-to turn the feature OFF: a switch made while he is still transcribing is REFUSED (the live lane does not
-move), so he waits for transcription to finish and then switches — no window for the slip. His call,
-per JJ 2026-09-02: *"toggle the feature … I'll just wait until transcription finishes before switching."*"""
-
 TURN_THRESHOLD = 0.5
 """Probability at or above which the utterance counts as finished. HuggingFace's default.
 
@@ -307,15 +298,6 @@ def turn_detect_enabled() -> bool:
     if raw:
         return raw not in ("0", "false", "no", "off")
     return TURN_DETECT
-
-
-def switch_while_transcribing_enabled() -> bool:
-    """When False, a lane switch made while he is still transcribing is refused rather than allowed —
-    the wait-mode toggle (see SWITCH_WHILE_TRANSCRIBING)."""
-    raw = _env("COMMAND_BRIDGE_SWITCH_WHILE_TRANSCRIBING")
-    if raw:
-        return raw not in ("0", "false", "no", "off")
-    return SWITCH_WHILE_TRANSCRIBING
 
 
 def turn_threshold() -> float:

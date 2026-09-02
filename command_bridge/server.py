@@ -913,19 +913,9 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
     spoke and a switch he tapped look identical in the state and mean different things when a
     transcript is read back later, or when he asks why the conversation moved.
     """
-    # 🔴 WAIT-MODE (spec 023 toggle, JJ 2026-09-02: *"toggle the feature … I'll just wait until
-    # transcription finishes before switching"*). With the feature OFF, a manual TAP made while he is
-    # still transcribing is refused — the live lane does not move, so he waits for transcription to
-    # finish and then taps, closing the window where a fresh utterance inherited the wrong lane.
-    # Only a `tap`: a spoken address (`wake`) names its target inside the utterance itself and must
-    # still land, and a CLI `switch` is an agent's own move, not his. `talking()` is the honest "still
-    # transcribing" test. A no-op tap onto the live lane stays a no-op.
-    if (why == "tap"
-            and lane != state.lanes.current
-            and not config.switch_while_transcribing_enabled()
-            and state.talking()):
-        timing.stamp(state.session, "tap_refused_transcribing", to=lane, live=state.lanes.current)
-        return
+    # (The wait-mode tap-refusal toggle that briefly lived here was removed with specs 023/027 —
+    # routing now follows the current lane, so there is no mid-transcription window to guard, and the
+    # toggle's friction — a tap to hear an agent's held clip was refused too — is gone with it.)
     # 🔴 A DELIBERATE SWITCH OUTRANKS A LATCH MADE BEFORE IT (spec 027).
     #
     # `utterance_lane` is latched on the silence→speech edge and cleared in exactly one place —
@@ -2863,25 +2853,27 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # verdict — before the window bookkeeping below, because a refusal has to wind the window back
     # exactly like any other unaddressed turn. A refused turn that left the window open would hold
     # the conversation on behalf of a summons nobody could route.
-    # 🔴 RESOLVED AGAINST THE LANE HE WAS SPEAKING TO, not the one live now (spec 023). The
-    # resolver is pure and takes `current` as an argument, so this is the whole fix: an utterance
-    # carries its own lane from the moment it began, and a tap made while ASR was still running
-    # no longer redirects words he had already finished saying.
+    # 🔴 RESOLVED AGAINST THE LANE HE IS ON WHEN TRANSCRIPTION FINISHES — the current live lane, NOT
+    # the one he started speaking to. **This REVERTS specs 023 and 027** at JJ's explicit direction,
+    # 2026-09-02: asked which he wanted, he said *"the latter, where I am at when transcription finishes.
+    # That was the behaviour before we broke it."*
     #
-    # An explicit leading summons still switches — `resolve` reads the transcript for that and
-    # only uses `current` to decide stay-versus-switch — because saying a name is him addressing
-    # someone ON PURPOSE, which is exactly the case that should still move.
-    # ⚠ Named `addressed_lane`, NOT `speaking_lane`: `state.speaking_lane` already exists in this
-    # file and means the OPPOSITE party — which agent is talking to him. One word, two opposite
-    # meanings, is how the next reader gets it backwards.
-    addressed_lane = state.utterance_lane or state.lanes.current
-    # 🔬 EVIDENCE: the lane this utterance ROUTES to, the latch it came from, and the lane live NOW.
-    # When `latched` differs from `live`, this is the switch-while-transcribing window (spec 023) doing
-    # its job; when `addressed` is neither the latch nor a name he spoke, the routing is the bug.
+    # 023 had latched the lane at the silence→speech edge (`utterance_lane`) so a tap made while ASR was
+    # still running would not redirect words he had already finished saying. That protected the wrong
+    # thing for how he actually works now — and its single-slot latch was the source of the recurring
+    # mis-route (a fresh utterance inheriting a stale lane, turns 124/241). The simpler model has no
+    # latch, no slot, no race: **your words follow you.** The cost, stated honestly so a future reader
+    # is not surprised: if he speaks to A and switches to B before the transcript lands, the A-utterance
+    # now goes to B — the exact thing 023 was built to stop (his 2026-08-26 complaint). He owns that
+    # trade: he waits for transcription before switching. The `utterance_latch` timing stamps stay as
+    # evidence but no longer drive routing.
+    #
+    # An explicit leading summons still switches — `resolve` reads the transcript for that and only uses
+    # the lane to decide stay-versus-switch — because saying a name is him addressing someone ON PURPOSE.
+    addressed_lane = state.lanes.current
     timing.stamp(state.session, "utterance_route",
                  addressed=addressed_lane, latched=state.utterance_lane, live=state.lanes.current)
     routing = lanes_mod.resolve(text, state.lanes.names, addressed_lane)
-    # The utterance is routed; the next one latches its own lane.
     state.utterance_lane = None
     if routing.action == "refuse":
         # He named somebody, and it was not exactly anybody. Deliver to NO ONE rather than to the
