@@ -19,8 +19,12 @@ the mock-render harness exists. He will keep adding to this. Check items off as 
 - [ ] **Name BELOW the orb**, not inside it. *(turn 25–26)*
 - [ ] **Status + seconds BELOW the name**, not inside the orb. *(turn 25–26)*
 - [ ] Use the **icons / emoji look** from the wireframe render (the colored radial-gradient orbs). *(turn 27)*
-- [ ] **The three right-side buttons (verbose, mic, speaker): use the EMOJIS + COLORS from the
-      wireframe render** — he liked those (the 🎤 / 🔊 / verbose pills). *(turns 28, 74–75)*
+- [x] **The three right-side buttons (verbose, mic, speaker): use the EMOJIS + COLORS from the
+      wireframe render** — he liked those (the 🎤 / 🔊 / verbose pills). *(turns 28, 74–75, 88)* —
+      DONE: `#mute` → 🎤, `#verbose` → 💬, `#spkpick` → 🔊, `#devpick` (grouped) → 🎧. State still lives
+      in the button tint (red = muted, amber = verbose on). Muted mic: turn 88 asked to "style it to
+      show it's muted" — the emoji can't carry the old SVG slash, so a red diagonal + fade overlays the
+      glyph. Emoji renders monochrome in headless capture; full colour on his Segoe-UI-Emoji browser.
 - [ ] "**What you're showing me is different**" — the current single voice-orb must become the
       wireframe's per-agent participant orbs. *(turn 24)*
 
@@ -56,6 +60,16 @@ the mock-render harness exists. He will keep adding to this. Check items off as 
 - [ ] **Make "channel off" obvious.** The power button's own style should read more clearly as off, and
       the WHOLE UI should visibly signal when the power button is off (dim/desaturate the room), so the
       off state is unmistakable at a glance. *(turns 82–83)*
+
+- [x] **Live-reload dropped the LIVE channel** (reported 2026-09-02, turns 92–94: "the power button
+      was toggled … because I was chatting with another agent"). A pushed `/reload` did an unconditional
+      `location.reload()`, which destroys the AudioContext + mic — a browser won't restart either without
+      a fresh tap — so it silently dropped him mid-turn and reset the power button to off. FIXED: the
+      reload handler now HOLDS while `data-off="false"` (running && channelOpen) and applies the pending
+      reload the instant he next toggles off (MutationObserver on `data-off`); a warm dot on the power
+      button (`data-update-waiting`) says an update is queued. ⚠ His *current* page still runs the old
+      unconditional reload, so this fix only takes effect after he refreshes once — do NOT push a reload
+      while he's live, it would drop him one last time.
 
 ## The reference — check every fix against these
 - [ ] **Match the renders in the project notes project note** `Command Bridge.md` — the wireframe

@@ -240,6 +240,14 @@
     box-shadow:0 0 0 4px color-mix(in srgb,var(--warm) 22%,transparent),
                0 0 22px color-mix(in srgb,var(--warm) 45%,transparent);
   }
+  /* A HELD UPDATE. Live-reload defers a pushed refresh while the channel is live rather than dropping
+     his mic mid-conversation; this dot says one is waiting and will apply the moment he toggles off. */
+  #power { position:relative; }
+  html[data-update-waiting] #power::after {
+    content:""; position:absolute; top:-3px; right:-3px; width:9px; height:9px; border-radius:50%;
+    background:var(--warm); pointer-events:none;
+    box-shadow:0 0 0 2px var(--bg), 0 0 8px color-mix(in srgb,var(--warm) 70%,transparent);
+  }
 
   /* --- wordmark ---------------------------------------------------------- */
   h1 {
@@ -707,6 +715,7 @@
   /* The round toggles. 44px is the platform minimum for a touch target. */
   .orbbtn {
     flex:0 0 auto;
+    position:relative;
     width:44px; height:44px; padding:0; border-radius:50%;
     display:grid; place-items:center;
     appearance:none; cursor:pointer; touch-action:manipulation;
@@ -746,6 +755,23 @@
     background-color:color-mix(in srgb, var(--warm) 13%, var(--card));
   }
   #verbose[aria-checked="true"], #mute[aria-checked="true"] { border-color:color-mix(in srgb, var(--warm) 50%, transparent); }
+
+  /* EMOJI GLYPHS on the toggles. Reported live 2026-09-02: "on the wireframes I liked the emojis
+     and the colours you used for these three buttons on the right — the verbose one and the
+     microphone and speaker one." The emoji carries the identity; the button's border/tint still
+     carries the STATE (red = muted, amber = verbose on), so nothing about "am I heard" is lost. */
+  .orbbtn .emoji { font-size:20px; line-height:1; }
+  /* Muted mic: an emoji can't hold the slash the old SVG drew on demand, so lay a red diagonal
+     across the glyph and fade it — the same red the button border and the orb already take when
+     you cannot be heard. "Let's try with the emojis and a way to style it to show that it's muted." */
+  #mute[aria-checked="true"] .emoji { opacity:.5; }
+  #mute[aria-checked="true"]::after {
+    content:""; position:absolute; left:50%; top:50%;
+    width:26px; height:2.5px; border-radius:2px; background:var(--err);
+    transform:translate(-50%,-50%) rotate(-45deg);
+    box-shadow:0 0 0 1.5px color-mix(in srgb, var(--card) 70%, transparent);
+    pointer-events:none;
+  }
 
   /* NOTE: the orb no longer carries mute at all. Reported 2026-08-07: "I want to remove the mute
      from the orb, the mute status, because the mute toggle is what represents the mute status...
@@ -818,6 +844,17 @@
     -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.4 15.4v-3a7.6 7.6 0 0 1 15.2 0v3'/%3E%3Crect x='2.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Crect x='17.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Cpath d='M19.5 19.6v.7a2.3 2.3 0 0 1-2.3 2.3H13'/%3E%3C/svg%3E");
             mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.4 15.4v-3a7.6 7.6 0 0 1 15.2 0v3'/%3E%3Crect x='2.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Crect x='17.6' y='13.6' width='3.8' height='6' rx='1.9'/%3E%3Cpath d='M19.5 19.6v.7a2.3 2.3 0 0 1-2.3 2.3H13'/%3E%3C/svg%3E");
   }
+  /* EMOJI glyphs on the visible pickers, so the speaker (and the grouped headset) match the 🎤 mic
+     and 💬 verbose toggles beside them. Reported live 2026-09-02: he liked the wireframe's emoji
+     pills for "the microphone and speaker one". These override the mask-image glyphs above by id
+     specificity — the closed pill still paints no device text, only the glyph and the caret. */
+  #spkpick::before, #devpick::before {
+    background-color:transparent; -webkit-mask-image:none; mask-image:none;
+    width:auto; height:auto; top:50%; transform:translateY(-50%);
+    font-size:15px; line-height:1;
+  }
+  #spkpick::before { content:"\1F50A"; }   /* 🔊 speaker */
+  #devpick::before { content:"\1F3A7"; }   /* 🎧 headset (paired input+output) */
 
   /* 🔴 A GLYPH AND A CARET, AND NOTHING ELSE. Asked for on 2026-08-24 and again on 2026-08-25
      after seeing the two pills side by side reading "Headset Microp…" and "Default – Head…":
@@ -1114,12 +1151,7 @@
          went. -->
     <div id="controls">
       <button id="mute" class="orbbtn" role="switch" aria-checked="false" aria-label="Mute my microphone">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="9" y="3" width="6" height="10.5" rx="3"/>
-          <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/>
-          <path d="M12 18v2.6"/>
-          <path class="slash" d="M4.8 19.2 19.2 4.8"/>
-        </svg>
+        <span class="emoji" aria-hidden="true">&#127908;</span>
       </button>
       <!-- Wrapped in a <label> so the glyph is part of the control rather than decoration beside
            it: tapping the icon focuses the select, and the accessible name lives on the select
@@ -1159,9 +1191,7 @@
         <select id="spk" aria-label="Speaker" title="Speaker — where replies are played"></select>
       </label>
       <button id="verbose" class="orbbtn" role="switch" aria-checked="false" aria-label="Verbose narration">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 7h16"/><path d="M4 12h11"/><path d="M4 17h7"/>
-        </svg>
+        <span class="emoji" aria-hidden="true">&#128172;</span>
       </button>
     </div>
     <!-- WHERE THE AUDIO IS GOING, when nothing on this page can move it. Spec 009 FR3.
@@ -3892,11 +3922,27 @@
   // LIVE-RELOAD (JJ, 2026-09-02: "you can push these changes like you do with the canvas" — no manual
   // refresh while iterating). A `reload` event pushed by POST /reload re-fetches this page. A short
   // delay lets an in-flight edit settle and avoids a reload storm if several fire at once.
-  var reloadT;
+  //
+  // ⚠ NEVER reload out from under a LIVE channel. A full `location.reload()` destroys the AudioContext
+  // and the microphone, and a browser will not restart either without a fresh user tap — so an
+  // auto-reload mid-conversation silently drops him and resets the power button to off. Reported live
+  // 2026-09-02: "the power button was toggled … because I was chatting with another agent" — a pushed
+  // reload had dropped his channel while he was mid-turn. So while `data-off="false"` (running &&
+  // channelOpen, written once by the orb painter) we HOLD the reload and apply it the instant he next
+  // goes off; a MutationObserver on that same attribute fires the pending reload at that natural break.
+  var reloadT, reloadPending = false;
+  function liveNow() { return document.documentElement.dataset.off === "false"; }
+  function doReload() {
+    if (liveNow()) { reloadPending = true; document.documentElement.dataset.updateWaiting = "1"; return; }
+    location.reload();
+  }
   es.addEventListener("reload", function () {
     clearTimeout(reloadT);
-    reloadT = setTimeout(function () { location.reload(); }, 250);
+    reloadT = setTimeout(doReload, 250);
   });
+  new MutationObserver(function () {
+    if (reloadPending && !liveNow()) location.reload();
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-off"] });
 })();
 </script>
 </body>
