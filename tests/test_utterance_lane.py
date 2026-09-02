@@ -209,3 +209,42 @@ def test_a_spoken_switch_clears_it_too_and_so_does_a_switch_to_the_live_lane(sta
     state.utterance_lane = "atlas"
     _switch(state, "magnus")                 # switching to the lane already live
     assert state.utterance_lane is None, "idempotent on the registry, not a no-op on the latch"
+
+
+# ==================================================== the WAIT-MODE toggle (JJ 2026-09-02)
+#
+# The routing slip (a fresh utterance inheriting the wrong lane after a switch) was reproduced but not
+# yet root-caused, so JJ asked for the feature to be TOGGLEABLE: turn spec 023 off and a TAP made
+# while he is still transcribing is refused, so he waits and then switches — no window for the slip.
+
+
+def test_wait_mode_off_refuses_a_tap_made_while_still_transcribing(state, monkeypatch):
+    monkeypatch.setenv("COMMAND_BRIDGE_SWITCH_WHILE_TRANSCRIBING", "0")
+    state.lanes.switch("magnus")
+    state.speech_pending = 1                  # an utterance closed and still in ASR → talking()
+    _switch(state, "atlas")                   # a TAP
+    assert state.lanes.current == "magnus", "the tap is refused; the live lane does not move"
+
+
+def test_wait_mode_off_lets_the_tap_through_once_transcription_is_done(state, monkeypatch):
+    monkeypatch.setenv("COMMAND_BRIDGE_SWITCH_WHILE_TRANSCRIBING", "0")
+    state.lanes.switch("magnus")
+    state.speech_pending = 0                  # nothing in flight → not talking
+    _switch(state, "atlas")
+    assert state.lanes.current == "atlas"
+
+
+def test_wait_mode_off_still_lets_a_SPOKEN_address_land_mid_transcription(state, monkeypatch):
+    """A wake names its target inside the utterance; refusing it would send his words to the old lane."""
+    monkeypatch.setenv("COMMAND_BRIDGE_SWITCH_WHILE_TRANSCRIBING", "0")
+    state.lanes.switch("magnus")
+    state.speech_pending = 1
+    _switch(state, "atlas", why="wake")
+    assert state.lanes.current == "atlas"
+
+
+def test_the_feature_on_is_the_default_and_spec_023_is_unchanged(state):
+    state.lanes.switch("magnus")
+    state.speech_pending = 1
+    _switch(state, "atlas")                   # a tap while transcribing — allowed by default
+    assert state.lanes.current == "atlas"

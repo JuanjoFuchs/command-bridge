@@ -913,6 +913,19 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
     spoke and a switch he tapped look identical in the state and mean different things when a
     transcript is read back later, or when he asks why the conversation moved.
     """
+    # 🔴 WAIT-MODE (spec 023 toggle, JJ 2026-09-02: *"toggle the feature … I'll just wait until
+    # transcription finishes before switching"*). With the feature OFF, a manual TAP made while he is
+    # still transcribing is refused — the live lane does not move, so he waits for transcription to
+    # finish and then taps, closing the window where a fresh utterance inherited the wrong lane.
+    # Only a `tap`: a spoken address (`wake`) names its target inside the utterance itself and must
+    # still land, and a CLI `switch` is an agent's own move, not his. `talking()` is the honest "still
+    # transcribing" test. A no-op tap onto the live lane stays a no-op.
+    if (why == "tap"
+            and lane != state.lanes.current
+            and not config.switch_while_transcribing_enabled()
+            and state.talking()):
+        timing.stamp(state.session, "tap_refused_transcribing", to=lane, live=state.lanes.current)
+        return
     # 🔴 A DELIBERATE SWITCH OUTRANKS A LATCH MADE BEFORE IT (spec 027).
     #
     # `utterance_lane` is latched on the silence→speech edge and cleared in exactly one place —
