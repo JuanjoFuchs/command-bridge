@@ -3903,7 +3903,15 @@ def cmd_shot(args) -> dict[str, Any]:
     rendered. It never touches the human's browser (its own throwaway context), and it returns
     the PNG path: open it, because a screenshot you did not look at verified nothing."""
     from . import shot as _shot
-    url = args.url or _client_url(args.session)
+    url = args.url
+    if not url:
+        rt = read_runtime(args.session)
+        if rt:
+            # A lane-scoped shot wants that agent's OWN canvas, pinned. The standalone `/canvas` page
+            # honours `?shot&?lane`; the merged page's embedded canvas follows the LIVE lane instead, so
+            # a background agent got the lane he was on, not its own (reported 2026-09-02). So `--lane`
+            # targets `/canvas`; a plain shot still gets the whole page.
+            url = _url_for(rt, "/canvas" if args.lane else "/")
     if not url:
         return {"error": "no running server for this session",
                 "code": "no_server",

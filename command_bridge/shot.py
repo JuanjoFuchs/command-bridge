@@ -44,7 +44,14 @@ def capture(url: str, out: str | Path, viewport: tuple[int, int] = (390, 844),
 
     out = Path(out).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
-    full_url = url + (("&" if "?" in url else "?") + "lane=" + lane) if lane else url
+    # `?shot` puts the canvas page in CAPTURE mode: it holds the load event until frames settle AND —
+    # the part that was missing — HONOURS the `?lane` pin. Without `?shot`, `?lane` did nothing and the
+    # capture rendered whoever holds the floor, so a background agent got the LIVE lane's canvas, not
+    # its own (reported 2026-09-02). The merged page forwards both to its embedded canvas iframe.
+    params = ["shot=" + str(int(settle_ms))]
+    if lane:
+        params.append("lane=" + lane)
+    full_url = url + (("&" if "?" in url else "?") + "&".join(params))
     w, h = viewport
 
     try:
