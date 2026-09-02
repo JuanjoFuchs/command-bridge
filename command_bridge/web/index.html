@@ -147,6 +147,32 @@
      the minute the rule existed. */
   body:has(#log:empty):not(:has(#log[hidden])) #collapse { display:none; }
 
+  /* --- the shared canvas · Command Bridge one-page merge (2026-09-02) ---------------------------
+     ADDITIVE and CLASS-GATED: nothing here touches the layout until a canvas is shared (`body.sharing`,
+     toggled by the /events SSE at the end of the file) AND the screen is wide. So the tuned phone/voice
+     column is unchanged when nobody is sharing or on a narrow screen. When an agent DOES share, a wide
+     screen reflows to the validated meeting wireframe: header + orbs across the top, the canvas
+     full-bleed in the centre, the transcript a column on the right. */
+  #sharecanvas { display:none; width:100%; height:100%; border:0; border-radius:14px;
+                 background:#191921; min-height:0; }
+  body.sharing #sharecanvas { display:block; }
+  @media (min-width:760px) {
+    body.sharing {
+      grid-template-columns:1fr minmax(300px,34%);
+      grid-template-rows:auto auto minmax(0,1fr);
+      justify-items:stretch;
+      column-gap:1rem;
+    }
+    body.sharing #head     { grid-row:1; grid-column:1 / 3; }
+    body.sharing #stage    { grid-row:2; grid-column:1 / 3; }
+    body.sharing #collapse { display:none; }
+    body.sharing #sharecanvas { grid-row:3; grid-column:1; }
+    body.sharing #log      { grid-row:3; grid-column:2; height:100%; margin:0; }
+  }
+  /* Keep the meeting grid even before the first turn lands (the empty-log rule would otherwise
+     reclaim the rows). */
+  body.sharing:has(#log:empty) { grid-template-rows:auto auto minmax(0,1fr); }
+
   /* --- header row: title left, controls right (spec 014 FR1) -------------- */
   #head {
     display:flex; align-items:center; gap:.55rem; width:100%;
@@ -1141,6 +1167,11 @@
   </button>
 
   <div id="log" role="log" aria-live="polite"></div>
+  <!-- The shared canvas (Command Bridge one-page merge, 2026-09-02): the same working /canvas,
+       embedded so an agent's frames appear on THIS page — no second page. Hidden until a canvas is
+       shared; on a wide screen the layout then reflows to orbs-top / canvas-centre / transcript-right
+       (the validated meeting wireframe), driven by the /events SSE at the end of the file. -->
+  <iframe id="sharecanvas" src="/canvas?embed=1" title="shared canvas" aria-label="shared canvas"></iframe>
 
 <script>
 (() => {
@@ -3739,6 +3770,31 @@
     try { await openSocket(48000); } catch (e) { diag.errors.push("initial connect: " + e.message); }
   })();
   if (!token) setError("no token in URL — append ?token=…");
+})();
+</script>
+<script>
+/* Command Bridge one-page merge (2026-09-02): watch the canvas's own /events SSE and toggle the
+   `sharing` class on <body> so the embedded canvas appears (and, on a wide screen, the layout reflows
+   to the meeting wireframe) the moment an agent draws a frame, and hides when the canvas is cleared.
+   Read-only — it never posts; a missing SSE just leaves the plain voice page standing. */
+(function () {
+  "use strict";
+  var frames = {};
+  function apply() {
+    var shared = false;
+    for (var k in frames) { if (frames[k] > 0) { shared = true; break; } }
+    document.body.classList.toggle("sharing", shared);
+  }
+  var es;
+  try { es = new EventSource("/events"); } catch (x) { return; }
+  function on(name, fn) {
+    es.addEventListener(name, function (e) { try { fn(JSON.parse(e.data)); } catch (x) {} });
+  }
+  on("sync",   function (d) { frames = {}; if (d.lanes) { for (var k in d.lanes) { frames[k] = (d.lanes[k] || []).length; } } apply(); });
+  on("frame",  function (d) { frames[d.lane] = (frames[d.lane] || 0) + 1; apply(); });
+  on("rows",   function (d) { frames[d.lane] = (frames[d.lane] || 1); apply(); });
+  on("remove", function (d) { frames[d.lane] = Math.max(0, (frames[d.lane] || 1) - 1); apply(); });
+  on("clear",  function (d) { frames[d.lane] = 0; apply(); });
 })();
 </script>
 </body>
