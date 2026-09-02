@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -975,7 +976,15 @@ DESCRIBE: dict[str, Any] = {
                      "`reason: ambiguous` and the candidates, so it can ask him which he meant.",
         },
         "say": {
-            "args": {"--session": "session id", "text": "positional; what to speak",
+            "args": {"--session": "session id",
+                     "text": "positional; what to speak. DEIXIS (spec 011): put an inline "
+                             "`[point:<selector>]` mark immediately before a word to point at that "
+                             "target on the canvas AS the word is spoken — one command that says AND "
+                             "shows. The mark is stripped from the audio and the transcript; the "
+                             "highlight rides this clip's own MEASURED schedule (so --now, which "
+                             "returns before synthesis, is refused when a mark is present). No canvas "
+                             "shared → it still speaks and reports the deixis dropped. `selector` is "
+                             "the `point`/`cue` vocabulary (frame id, CSS selector, mermaid node).",
                      "--now": "FIRE-AND-FORGET: return immediately while the clip synthesizes "
                               "and plays in the background. It does NOT interrupt playback — "
                               "only his voiceprint barge-in can do that — and the immediate "
@@ -1023,6 +1032,11 @@ DESCRIBE: dict[str, Any] = {
                             "question he has already moved past — WAIT AGAIN before you trust "
                             "it: `command-bridge watch --session <s> --since <cursor>` hands back "
                             "whatever he added.** `next` says so when it happens.",
+                "deixis": "obj — ONLY when the text carried `[point:]` marks (spec 011). `fired`/`armed` "
+                          "true means the highlights ran (or will, when a held lane goes live), with "
+                          "`marks` the selectors used; `dropped` with a reason means the words were "
+                          "still spoken but there was nothing to point at (no canvas shared, or no "
+                          "measured schedule) — the audio is never held hostage to the visual half.",
                 "delivered": "bool — whether it actually reached a listener. FALSE is not an "
                              "error: the clip is queued and plays when he reconnects or reopens "
                              "the channel. Check it before assuming he heard you.",
@@ -3021,6 +3035,51 @@ def _still_talking(live: Any) -> bool | None:
 # command surface that offers two ways to wait.
 
 
+# Spec 011 — SPEECH-SYNCED DEIXIS. An inline `[point:<selector>]` mark in the spoken text turns a plain
+# `say` into a say-and-point: the mark is stripped for synthesis and the transcript, and the SAME marked
+# text (plus the say's own MEASURED word schedule) is handed to the canvas `cue`, so the highlight lands
+# on the word as it is spoken. This reuses `cue`'s existing mark vocabulary rather than inventing a verb —
+# the point is that pointing-while-speaking is the say you already send, not a second discipline to remember.
+_DEIXIS_MARK = re.compile(r"\[point:[^\]]*\]")
+
+
+def _strip_deixis(text: str) -> str:
+    """The clean spoken text: the marks removed, and the double space they leave collapsed."""
+    return re.sub(r"\s{2,}", " ", _DEIXIS_MARK.sub("", text)).strip()
+
+
+def _apply_deixis(args, marked: str, result: Any) -> Any:
+    """Ride the say's MEASURED schedule into the canvas cue (spec 011). It NEVER fires on a clip that
+    was not spoken — a refusal, or an engine that returned no schedule, drops the deixis and says why,
+    and the say result's own audio branch is left exactly as `say` returned it (FR4: the audio is never
+    held hostage to the visual half)."""
+    if not isinstance(result, dict):
+        return result
+    if result.get("error") or result.get("code") == config.UNREAD_REFUSAL_CODE:
+        result["deixis"] = {"dropped": "the clip was not spoken, so there was nothing to point along"}
+        return result
+    words = result.get("words")
+    if not words:
+        result["deixis"] = {"dropped": "no measured word schedule — the engine returned none, and a "
+                                       "highlight is never fired at a guessed time (spec 011 FR2)"}
+        return result
+    # Held off-lane → arm the schedule so the highlights start when the lane goes live, riding the
+    # say's own lead-in (`held_for`); live → fire now. Same marked text the `cue` verb takes.
+    held = bool(result.get("held_off_lane"))
+    cue = _canvas(args.session, "cue",
+                  {"text": marked, "words": words, "seconds": None,
+                   "arm": held, "lead": float(result.get("held_for") or 0.0), "look": ""},
+                  getattr(args, "lane", "") or "")
+    marks = _DEIXIS_MARK.findall(marked)
+    if isinstance(cue, dict) and cue.get("error"):
+        # Nothing to point at — no canvas shared, or the selector matched nothing. The words were
+        # still spoken; only the highlights are dropped, and the reason is named.
+        result["deixis"] = {"dropped": cue.get("error"), "marks": marks}
+    else:
+        result["deixis"] = {("armed" if held else "fired"): True, "marks": marks, "canvas": cue}
+    return result
+
+
 def cmd_say(args) -> dict[str, Any]:
     """Speak, then say what to do about the two facts the server just measured.
 
@@ -3035,25 +3094,37 @@ def cmd_say(args) -> dict[str, Any]:
     them, so an agent obeying the stated tie-break ("`describe` wins") never checked either. The
     fix is both halves: document them, and hand back the branch at the moment it applies.
     """
-    payload: dict[str, Any] = {"text": args.text}
+    # DEIXIS (spec 011): an inline `[point:...]` mark makes this a say-and-point. The clean text (marks
+    # removed) is what is synthesized and transcribed; the ORIGINAL marked text rides to the canvas cue
+    # after, with the measured schedule.
+    marked = args.text
+    deixis = bool(_DEIXIS_MARK.search(marked))
+    payload: dict[str, Any] = {"text": _strip_deixis(marked) if deixis else marked}
     if getattr(args, "voice", None):
         payload["voice"] = args.voice
     if getattr(args, "now", False):
         payload["async"] = True
     if getattr(args, "lane", None):
         payload["lane"] = args.lane
-    if getattr(args, "timings", False):
+    # Deixis places each highlight on the word as it is spoken, so it needs the MEASURED schedule and
+    # forces `--timings`; both are incompatible with `--now`, which returns before synthesis exists.
+    if (getattr(args, "timings", False) or deixis) and payload.get("async"):
         # REFUSED RATHER THAN SILENTLY EMPTY. `--now` returns before synthesis runs, so there is
         # no schedule to report — and a `--now --timings` call that came back without `words`
         # would read as "this engine cannot do timings" when the real answer is "you asked for
         # them on the one path that returns too early to have them".
-        if payload.get("async"):
-            return {"error": "--timings cannot be combined with --now",
-                    "code": "bad_request",
-                    "remedy": "drop --now: the schedule only exists once the clip is synthesized, "
-                              "and --now returns before that happens"}
+        return {"error": ("a [point:] mark needs measured timing; drop --now" if deixis
+                          else "--timings cannot be combined with --now"),
+                "code": "bad_request",
+                "remedy": "the schedule only exists once the clip is synthesized, and --now returns "
+                          "before that happens"}
+    if getattr(args, "timings", False) or deixis:
         payload["timings"] = True
     result = _request(args.session, "/say", payload)
+    # Fire (live) or arm (held off-lane) the highlights on the same measured schedule the say just
+    # returned; never on a clip that was refused. Attaches a `deixis` report to the say result.
+    if deixis:
+        result = _apply_deixis(args, marked, result)
     if isinstance(result, dict) and result.get("held_off_lane"):
         # HELD, NOT LOST AND NOT REFUSED. He is talking to somebody else, so this reply is waiting
         # rather than playing over that conversation, and it goes out on its own the moment he

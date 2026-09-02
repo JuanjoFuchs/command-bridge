@@ -1,7 +1,7 @@
 ---
 id: "011"
 title: Speech-synced deixis — one command that says, shows, and points
-status: pending          # pending | in_progress | complete
+status: in_progress      # pending | in_progress | complete
 blocked_by: []           # 005 (canvas verbs under the one CLI) and the `cue`/`say --timings` contract already shipped
 blocks: []
 ---
@@ -195,6 +195,26 @@ command-bridge say --lane magnus "On it."
   does not define the consent gate; it degrades correctly whatever that gate decides.
 - Any change to synthesis, voiceprint, wake, or the turn model.
 - Multi-lane / broadcast deixis — one lane per invocation, as `say` already is.
+
+## Findings — implementer (2026-09-02)
+
+**Core built and tested (`command_bridge/cli.py`, `tests/test_deixis.py`).** `say` detects inline
+`[point:<selector>]` marks, synthesizes the clean stripped text, forces `--timings`, and — on a clip
+that was actually spoken — drives the canvas `cue` with the ORIGINAL marked text and the say's own
+measured `words`, arming it (`held_for` as lead) when the say was held off-lane and firing it live
+otherwise. It attaches a `deixis` object and degrades honestly (no canvas / no schedule / refused →
+dropped-with-reason, audio untouched). `--now` + a mark is refused (measured timing can't exist yet).
+Documented in `describe` (the `text` arg and the `deixis` return).
+
+- **Verified:** AC1, AC4, AC5, AC7 by `tests/test_deixis.py` (7 cases, driving the real `cmd_say` with
+  only the HTTP boundary stubbed); AC2 to the seam (the measured `words` reach the cue unchanged) — the
+  server-side *firing* of each mark at its word is the existing canvas-cue suite. Full say/cue/canvas/
+  describe suites stay green (220 + describe-contract).
+- **Remaining:** **AC3** (skip an unaligned mark) leans on the canvas cue's own alignment — confirm it
+  reports the skip through the `deixis.canvas` passthrough, and add a case if not. **AC6** (headless
+  snapshot showing the target lit at the anchor word) not yet written. **FR3 `--show`** (set the frame
+  in the same call) not yet built — today a mark targets a frame already on the canvas; the flag is the
+  next slice.
 
 ## References
 
