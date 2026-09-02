@@ -154,8 +154,14 @@
      screen reflows to the validated meeting wireframe: header + orbs across the top, the canvas
      full-bleed in the centre, the transcript a column on the right. */
   #sharecanvas { display:none; width:100%; height:100%; border:0; border-radius:14px;
-                 background:#191921; min-height:0; }
-  body.sharing #sharecanvas { display:block; }
+                 background:#191921; min-height:0; box-sizing:border-box; }
+  /* BORDERED IN THE LIVE AGENT'S COLOUR (JJ, 2026-09-02: "that colour to be the border around the
+     canvas, so I know what agent has the canvas"). `--canvas-c` is set by applyLaneOrbs to the live
+     lane's hue. */
+  body.sharing #sharecanvas { display:block;
+    border:2px solid var(--canvas-c, transparent);
+    box-shadow:0 0 0 1px color-mix(in srgb, var(--canvas-c, transparent) 30%, transparent),
+               0 0 18px color-mix(in srgb, var(--canvas-c, transparent) 22%, transparent); }
   @media (min-width:760px) {
     body.sharing {
       /* Transcript NARROWER — the canvas is the focus (JJ, 2026-09-02: "the transcript section
@@ -2122,6 +2128,9 @@
     // The chip strip said exactly what the orbs now say, in less space and with less meaning.
     // Two controls for one fact is how a page starts disagreeing with itself.
     if ($lanes) $lanes.hidden = view.shown || lanes.length < 2;
+    // BORDER THE SHARED CANVAS IN THE LIVE AGENT'S COLOUR (JJ, 2026-09-02) — the #sharecanvas rule
+    // reads --canvas-c, so a glance says whose screen is on the canvas.
+    document.documentElement.style.setProperty("--canvas-c", laneHue(lanes, liveLane) || "transparent");
   }
 
   // A TAP SWITCHES THE LANE AND NOTHING ELSE (FR9). The session moved to the power button, so an
