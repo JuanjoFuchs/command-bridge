@@ -938,8 +938,14 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
     # `talking()` already composes the three signals — speech active, his client's own report, and
     # `speech_pending` for an utterance closed and still in transcription — and exists precisely
     # because "both speech signals read false while he has in fact just spoken."
+    # 🔬 EVIDENCE: did this switch CLEAR the latch (he was between utterances — the next one re-latches
+    # to `lane`) or KEEP it (he is mid-transcription, so the in-flight turn stays with the lane it was
+    # spoken to)? A kept latch that then blocks the NEXT utterance's re-latch is the reported bug.
     if not state.talking():
         state.utterance_lane = None
+        timing.stamp(state.session, "latch_cleared_on_switch", to=lane)
+    else:
+        timing.stamp(state.session, "latch_kept_talking", held=state.utterance_lane, to=lane)
     state.lanes.current = lane
     # Spec 004 — the voice lane IS the canvas lane. This is the ONE place the live lane moves (the
     # wake gate, the tap, and an explicit switch all reach it), so driving the canvas here, in
@@ -2709,8 +2715,18 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
     # TO, which is an agent he was never talking to and cannot un-hear them.
     speaking_before = bool(state.buffer.speech_active)
     completed = state.buffer.feed(samples)
-    if not speaking_before and state.buffer.speech_active and state.utterance_lane is None:
-        state.utterance_lane = state.lanes.current
+    if not speaking_before and state.buffer.speech_active:
+        # 🔬 EVIDENCE (2026-09-02): a turn routed to a lane he had not tapped, and the logs could not
+        # say why because the latch was never stamped. Now the silence→speech edge records which lane
+        # it latched — or, when the slot is STILL OCCUPIED, that this fresh utterance could NOT re-latch
+        # (the `is None` guard held a stale lane, which is the spec-027 failure) and will therefore route
+        # to `held`, not to the lane that is live NOW. That single line is the whole diagnosis.
+        if state.utterance_lane is None:
+            state.utterance_lane = state.lanes.current
+            timing.stamp(state.session, "utterance_latch", lane=state.utterance_lane)
+        else:
+            timing.stamp(state.session, "utterance_latch_stale",
+                         held=state.utterance_lane, live=state.lanes.current)
     if completed is None:
         _maybe_partial(state, loop)
         return
@@ -2846,6 +2862,11 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # file and means the OPPOSITE party — which agent is talking to him. One word, two opposite
     # meanings, is how the next reader gets it backwards.
     addressed_lane = state.utterance_lane or state.lanes.current
+    # 🔬 EVIDENCE: the lane this utterance ROUTES to, the latch it came from, and the lane live NOW.
+    # When `latched` differs from `live`, this is the switch-while-transcribing window (spec 023) doing
+    # its job; when `addressed` is neither the latch nor a name he spoke, the routing is the bug.
+    timing.stamp(state.session, "utterance_route",
+                 addressed=addressed_lane, latched=state.utterance_lane, live=state.lanes.current)
     routing = lanes_mod.resolve(text, state.lanes.names, addressed_lane)
     # The utterance is routed; the next one latches its own lane.
     state.utterance_lane = None
