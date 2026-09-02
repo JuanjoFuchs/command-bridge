@@ -409,6 +409,12 @@
   .laneorb { pointer-events:none; cursor:default; }
   .laneorb .disc, .laneorb .nm, .laneorb .stat { pointer-events:auto; }
   .laneorb .disc, .laneorb .nm { cursor:pointer; }
+  /* KILL THE SWITCH FLICKER (JJ, 2026-09-02: "whenever I switch, I see the vision tunnel lanes show
+     up below them, just while switching"). The legacy chip strip #lanes is superseded by the orb row
+     and is hidden by JS on every repaint — but applyLanes un-hides it a beat before applyLaneOrbs
+     re-hides it, and a switch can let that beat paint. Force it hidden in CSS whenever the orb row is
+     shown, so no JS-timing gap can flash it. (#orbs precedes #lanes as siblings in #stage.) */
+  #orbs:not([hidden]) ~ #lanes { display:none !important; }
 
   /* --- stage ------------------------------------------------------------- */
   #stage {
