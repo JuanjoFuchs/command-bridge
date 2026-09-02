@@ -8,10 +8,9 @@ blocks: []
 
 # Speech-synced deixis — one command that says, shows, and points
 
-> **Strategist metaspec (the project notes agent).** This is the leaner, high-level draft per
-> Spec Writing Rules for Agents. It fixes the *contract* and the *decisions*;
-> the repo implementer refines the Implementation Tasks, Test Cases and any remaining Acceptance
-> Criteria against the actual codebase before building. Project node: Command Bridge.
+> **Implementer spec.** Drafted strategist-side and then, at JJ's direction 2026-09-02 (*"you are the
+> implementing agent"*), refined against the codebase into the full spec below — concrete command
+> contract, implementation tasks and test cases. Project node: Command Bridge.
 
 ## Overview
 
@@ -95,9 +94,46 @@ something, and when the say is played does the [deixis] on it."*
 - **Anchor by word/phrase in the text, not by absolute time.** The agent writes what it will say and
   what to point at *as it says it* ("highlight the Q3 bar on the word Q3"); the command resolves the
   time from the measured schedule. The agent never computes a timestamp.
-- **Shape is deferred to the implementer, but the seam is fixed:** whether this is `say` gaining
-  deixis flags or a sibling verb that wraps `say`+`cue` is the implementer's call against the codebase
-  (spec rule 6, "what not how"). What is fixed: one invocation, measured timing, honest degradation.
+- **Shape (chosen against the codebase): `say` gains the deixis, reusing `cue`'s existing inline-mark
+  syntax.** The canvas `cue` already takes `--text` carrying inline `[point:<selector>]` marks placed
+  where each highlight belongs, plus `--words` (measured). So `say` accepts the **same** marked text:
+  it strips the marks for synthesis, speaks the clean text with timings, then drives the canvas `cue`
+  with the marked text and those measured `words`. One text, one command, and an agent who already
+  knows `cue`'s marks knows this. A sibling verb was rejected — it would fork the mark vocabulary and
+  make "always leverage deixis" a *different* command instead of the say you already send.
+
+## Command contract
+
+The plain form is unchanged. Deixis is present exactly when the spoken text carries one or more inline
+`[point:<selector>]` marks (the `cue` vocabulary):
+
+```
+command-bridge say --lane magnus \
+  "Revenue climbed in [point:#bar-q3]Q3 and dipped in [point:#bar-q4]Q4." [--show <frame-source>]
+```
+
+- The mark sits **immediately before the word it names**, so the highlight fires as that word is spoken.
+- `--show <frame-source>` (optional) sets/replaces the shown frame first, reusing `set`'s sources, so
+  "show this and point at it while I say this" is one call; marks may also target a frame already shown.
+- The clean text (marks removed) is what is synthesized and what appears in the transcript.
+- The result adds a `deixis` object: the marks fired with their measured offsets, any skipped (with the
+  reason), and whether a canvas was shown — on top of the normal `say` result.
+
+## Implementation Tasks
+
+- [ ] Detect inline `[point:<selector>]` marks in `say`'s text; when none are present, the path is the
+      existing `say` untouched (NFR1).
+- [ ] Strip the marks to the clean spoken text (synthesis + transcript), keeping each mark's position
+      so it can be re-anchored to the measured word after synthesis.
+- [ ] Speak the clean text with timings (the existing `say --timings` measurement), and drive the canvas
+      `cue` with the marked text + the measured `words`, carrying the say's lead (`held_for`) so a
+      **held** clip's highlights fire when the lane goes live, not at issue time.
+- [ ] Resolve each mark to its measured word; a mark that cannot be aligned is skipped and recorded, no
+      highlight fired (FR2).
+- [ ] Read whether a canvas is shared for the lane; when it is not, speak and drop the deixis, recording
+      why (FR4). Never block the audio on the canvas.
+- [ ] Extend the `say` result with the `deixis` object (FR5); document every new flag/field in
+      `describe` and keep the describe-contract test green.
 
 ## Acceptance Criteria
 
@@ -115,6 +151,38 @@ something, and when the say is played does the [deixis] on it."*
       against an approved baseline (a shot at the moment the anchor word is spoken shows the target lit). *(kittest-snapshot)*
 - [ ] **AC7** — Every new flag/field is documented in `command-bridge describe`, and the describe
       contract test stays green. *(unit)*
+
+## Testing Approach
+
+### Validation Steps
+1. Drive the real command path (as the existing say/cue suites do — not a re-implemented helper) with a
+   marked text against a fixture canvas that owns its frame; assert the emitted cue schedule.
+2. Assert each fired mark's offset equals the measured word offset from the same utterance's `words`.
+3. Toggle the canvas-shared state off and assert the audio still speaks and the `deixis` result names
+   the drop.
+4. Headless shot at the anchor word's moment shows the target lit (kittest-snapshot against a baseline).
+
+### Test Cases
+| Input | Expected |
+|-------|----------|
+| `say "climbed in [point:#q3]Q3 and [point:#q4]Q4"`, canvas shown | speaks "climbed in Q3 and Q4"; two cue marks fire at the measured `t` of "Q3" and "Q4" |
+| Same, but `#q4` mark's word never aligns | `#q3` fires; result lists `#q4` skipped with reason; no guessed fire |
+| Same text, **no** canvas shared | speaks the clean text; `deixis.dropped` names "no canvas shared"; audio unaffected |
+| `say "just a plain turn"` (no marks) | identical to pre-spec `say`; no `deixis` object mutation of behaviour |
+
+## Usage Examples
+
+```bash
+# Show a chart and point at two bars as you name them — one command.
+command-bridge say --lane magnus \
+  "Revenue climbed in [point:#bar-q3]Q3 then dipped in [point:#bar-q4]Q4." --show chart.json
+
+# Point at something already on the canvas.
+command-bridge say --lane kepler "The bug is in [point:#node-auth]the auth step."
+
+# No marks → ordinary say, unchanged.
+command-bridge say --lane magnus "On it."
+```
 
 ## Out of Scope
 
