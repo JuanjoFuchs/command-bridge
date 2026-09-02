@@ -240,7 +240,13 @@ def test_no_flag_anywhere_on_say_disables_the_check():
     # guard, and only chooses WHICH synthesis function runs once every refusal has already been
     # passed. It cannot reach a branch the check does not sit above, and it adds no branch of its
     # own. What it changes is the SHAPE OF THE RESPONSE after a clip exists.
-    assert flags == {"-h", "--help", "--session", "--voice", "--now", "--lane", "--timings"}, (
+    # `--show` (spec 011, deixis) was given the same look. It is NOT a bypass: it places a CANVAS frame,
+    # which is orthogonal to the audio refusal — no value of it reaches synthesis or the unread check,
+    # and the highlights it enables only fire on a clip that was actually spoken (`_apply_deixis` drops
+    # the deixis on a refusal). The one honest note: on a refused clip a frame may already have been
+    # placed — that is context for the re-say the refusal asks for, not a way past it; the words are
+    # still refused.
+    assert flags == {"-h", "--help", "--session", "--voice", "--now", "--lane", "--timings", "--show"}, (
         "a new flag on `say` needs a deliberate look: is it a way around the refusal?"
     )
     for banned in ("--force", "--anyway", "--no-check", "--skip-unread", "--ignore-unread",

@@ -13,7 +13,8 @@ from command_bridge import cli
 
 
 def _args(text, **kw):
-    d = {"session": "t", "text": text, "voice": None, "now": False, "lane": "magnus", "timings": False}
+    d = {"session": "t", "text": text, "voice": None, "now": False, "lane": "magnus",
+         "timings": False, "show": None}
     d.update(kw)
     return types.SimpleNamespace(**d)
 
@@ -116,6 +117,63 @@ def test_a_refused_clip_points_at_nothing(monkeypatch):
     out = cli.cmd_say(_args("point [point:#x]there"))
 
     assert out["deixis"]["dropped"]
+
+
+# ============================================================ --show places the frame first (FR3)
+
+def test_show_places_the_frame_then_speaks_then_cues(monkeypatch, tmp_path):
+    f = tmp_path / "chart.json"
+    f.write_text('{"mark": "bar"}', encoding="utf-8")
+    ops = []
+    _stub_say(monkeypatch, {"running": True, "words": [{"w": "Q3", "t": 1.0}]})
+    _stub_cue(monkeypatch, {"ok": True}, ops)
+
+    out = cli.cmd_say(_args("see [point:#bar-0]Q3", show=str(f)))
+
+    # the frame op ran first, kind inferred from .json, then the cue
+    assert ops[0][0] == "frame"
+    assert ops[0][1]["kind"] == "vega"
+    assert ops[0][1]["content"] == '{"mark": "bar"}'
+    assert ops[1][0] == "cue"
+    assert out["deixis"]["fired"] is True
+
+
+def test_a_bad_show_source_refuses_before_a_word_is_spoken(monkeypatch):
+    monkeypatch.setattr(cli, "_request",
+                        lambda *a, **k: pytest.fail("a bad --show must refuse before speaking"))
+
+    out = cli.cmd_say(_args("see [point:#x]this", show="/no/such/file.json"))
+
+    assert out.get("code") == "invalid_input"
+
+
+# ============================================================ the measured schedule (AC3) — pure
+
+def test_schedule_places_each_mark_on_its_measured_word():
+    from command_bridge.canvas import cue as canvas_cue
+    words = [{"w": "Revenue", "t": 0.0}, {"w": "climbed", "t": 0.5},
+             {"w": "in", "t": 0.9}, {"w": "Q3", "t": 1.2}]
+    out = canvas_cue.schedule("[point:#a]Revenue climbed in [point:#b]Q3", words=words)
+    assert out["timing"] == "measured"
+    at = {m["selector"]: m["at"] for m in out["marks"]}
+    assert at["#a"] == 0.0     # before word 0
+    assert at["#b"] == 1.2     # before word 3 (Q3)
+
+
+def test_a_mark_past_the_last_word_clamps_to_the_last_measured_word_not_a_guess():
+    from command_bridge.canvas import cue as canvas_cue
+    words = [{"w": "done", "t": 0.0}, {"w": "now", "t": 0.4}]
+    out = canvas_cue.schedule("done now [point:#end]", words=words)
+    assert out["timing"] == "measured"
+    assert out["marks"][0]["at"] == 0.4, "the last measured word — never an estimated split"
+
+
+def test_no_words_degrades_to_estimated_then_immediate_never_a_measured_claim():
+    from command_bridge.canvas import cue as canvas_cue
+    assert canvas_cue.schedule("a [point:#m]b c", seconds=3.0)["timing"] == "estimated"
+    imm = canvas_cue.schedule("a [point:#m]b c")
+    assert imm["timing"] == "immediate"
+    assert imm["marks"][0]["at"] == 0.0
 
 
 # ============================================================ --now is incompatible with measured timing

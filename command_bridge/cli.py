@@ -1007,7 +1007,12 @@ DESCRIBE: dict[str, Any] = {
                                   "with the timestamped model only — anywhere else you get "
                                   "`timings_unavailable` and a reason, NEVER an estimate wearing "
                                   "the same shape. Cannot be combined with --now, which returns "
-                                  "before the clip exists"},
+                                  "before the clip exists",
+                     "--show": "DEIXIS only: place this FILE as a canvas frame before speaking, so it "
+                               "is on screen when the first `[point:]` highlight fires. Kind is "
+                               "inferred from the extension (.json→chart, .md→markdown, .mmd→mermaid, "
+                               ".svg/.html/else→that/text). For anything more particular, place it with "
+                               "`set` first and just target it with a mark."},
             "returns": {
                 "queued": "bool — the clip was synthesized and handed to the transport",
                 "id": "str — clip id",
@@ -3080,6 +3085,27 @@ def _apply_deixis(args, marked: str, result: Any) -> Any:
     return result
 
 
+# --show places a frame in the same say call (spec 011 FR3), inferring the kind from the file so the
+# common "show me this chart and point at it" is one command. The `set` verb's full source menu stays
+# the way to place anything more particular first.
+_SHOW_KIND = {".json": "vega", ".md": "markdown", ".markdown": "markdown", ".mmd": "mermaid",
+              ".mermaid": "mermaid", ".svg": "svg", ".html": "html", ".htm": "html"}
+
+
+def _show_frame(args) -> dict[str, Any]:
+    """Place the frame named by --show before the say, so it is on screen when the first highlight
+    fires. A bad source is a user error (refused before speaking), NOT a runtime canvas-absent drop."""
+    path = Path(args.show)
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"error": f"--show could not read {args.show}: {exc}", "code": "invalid_input"}
+    return _canvas(args.session, "frame",
+                   {"id": path.stem, "kind": _SHOW_KIND.get(path.suffix.lower(), "text"),
+                    "content": content, "title": "", "scale": None},
+                   getattr(args, "lane", "") or "")
+
+
 def cmd_say(args) -> dict[str, Any]:
     """Speak, then say what to do about the two facts the server just measured.
 
@@ -3120,6 +3146,12 @@ def cmd_say(args) -> dict[str, Any]:
                           "before that happens"}
     if getattr(args, "timings", False) or deixis:
         payload["timings"] = True
+    # --show places the frame first (FR3), so it is on screen when the first highlight fires. A bad
+    # source refuses before anything is spoken.
+    if deixis and getattr(args, "show", None):
+        shown = _show_frame(args)
+        if isinstance(shown, dict) and shown.get("error"):
+            return shown
     result = _request(args.session, "/say", payload)
     # Fire (live) or arm (held off-lane) the highlights on the same measured schedule the say just
     # returned; never on a clip that was refused. Attaches a `deixis` report to the say result.
@@ -4767,6 +4799,10 @@ def build_parser() -> argparse.ArgumentParser:
              "timestamped model only; anywhere else it reports that it cannot rather than "
              "estimating. Cannot be combined with --now, which returns before synthesis happens",
     )
+    y.add_argument("--show", default=None, metavar="FILE",
+                   help="deixis only: place this file as a canvas frame BEFORE speaking, so it is on "
+                        "screen when the first [point:] highlight fires (kind inferred from the "
+                        "extension). Use `set` for anything more particular")
     y.add_argument("text")
 
     sub.add_parser("voices", help="list installed piper voices")

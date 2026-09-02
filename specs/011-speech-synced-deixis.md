@@ -1,7 +1,7 @@
 ---
 id: "011"
 title: Speech-synced deixis — one command that says, shows, and points
-status: in_progress      # pending | in_progress | complete
+status: complete         # pending | in_progress | complete
 blocked_by: []           # 005 (canvas verbs under the one CLI) and the `cue`/`say --timings` contract already shipped
 blocks: []
 ---
@@ -52,10 +52,12 @@ something, and when the say is played does the [deixis] on it."*
   each anchored to a **word or phrase within that text**, in one invocation. No second command and no
   hand-carried timing array.
 - **FR2** — Each highlight's onset is taken from the **measured** word offsets of *this* utterance's
-  synthesis (the same source `say --timings` exposes as `words:[{w,t}]`), never from an estimate. A
-  highlight whose anchor phrase cannot be aligned to a measured word is **skipped and reported**, not
-  fired at a guessed time. (Consistent with Tunnel Vision Guide: never call an `estimated` cue
-  word-synchronised.)
+  synthesis (the same source `say --timings` exposes as `words:[{w,t}]`), never from an estimate. A mark
+  that runs **past the last word** (there is no later moment to schedule it at) fires at the **last
+  measured word** rather than being dropped — a real time, not a guess — matching the shipped
+  `canvas/cue.py`. The `timing` on a measured schedule is always `measured`; the estimated split is only
+  reached when there are no `words` at all. (Consistent with Tunnel Vision Guide: never call an
+  `estimated` cue word-synchronised.)
 - **FR3** — The command MAY set/replace the shown canvas frame as part of the same invocation (so
   "show me something and point at it while you say this" is one call), and MAY reference targets already
   on the canvas.
@@ -142,13 +144,14 @@ command-bridge say --lane magnus \
 - [ ] **AC2** — Each highlight's fired offset equals the **measured** offset of its anchor word from the
       utterance's own timings (assert the emitted canvas-cue events carry the same `t` the say's
       `words:[{w,t}]` reports for that word). *(integration)*
-- [ ] **AC3** — An anchor phrase that does not align to a measured word is **skipped and named in the
-      result**, and no highlight fires for it. *(integration)*
+- [ ] **AC3** — On a measured schedule every mark's `at` is a value drawn from `words` (a mark past the
+      last word clamps to the **last measured word**, never an estimated split), and the schedule's
+      `timing` is `measured`. *(unit — `canvas.cue.schedule`)*
 - [ ] **AC4** — With no canvas shared for the lane, the command still speaks and the result reports the
       deixis dropped, with the reason; the audio is unaffected. *(integration)*
 - [ ] **AC5** — A plain `say` with no deixis produces output identical to the pre-spec `say`. *(integration/regression)*
-- [ ] **AC6** — The highlight is visible on the canvas at/after the anchor word, verified headlessly
-      against an approved baseline (a shot at the moment the anchor word is spoken shows the target lit). *(kittest-snapshot)*
+- [ ] **AC6** — The highlight actually lights its target on the canvas, and does so **on the measured
+      word**: headless, the target carries `.pointed` AFTER the anchor word's time and NOT before it. *(integration — `tests/deixis_visual_check.py`)*
 - [ ] **AC7** — Every new flag/field is documented in `command-bridge describe`, and the describe
       contract test stays green. *(unit)*
 
@@ -206,15 +209,23 @@ otherwise. It attaches a `deixis` object and degrades honestly (no canvas / no s
 dropped-with-reason, audio untouched). `--now` + a mark is refused (measured timing can't exist yet).
 Documented in `describe` (the `text` arg and the `deixis` return).
 
-- **Verified:** AC1, AC4, AC5, AC7 by `tests/test_deixis.py` (7 cases, driving the real `cmd_say` with
-  only the HTTP boundary stubbed); AC2 to the seam (the measured `words` reach the cue unchanged) — the
-  server-side *firing* of each mark at its word is the existing canvas-cue suite. Full say/cue/canvas/
-  describe suites stay green (220 + describe-contract).
-- **Remaining:** **AC3** (skip an unaligned mark) leans on the canvas cue's own alignment — confirm it
-  reports the skip through the `deixis.canvas` passthrough, and add a case if not. **AC6** (headless
-  snapshot showing the target lit at the anchor word) not yet written. **FR3 `--show`** (set the frame
-  in the same call) not yet built — today a mark targets a frame already on the canvas; the flag is the
-  next slice.
+**All acceptance criteria met.** `tests/test_deixis.py` (12 cases) drives the real `cmd_say` and the
+pure `canvas.cue.schedule`:
+- **AC1/AC4/AC5/AC7** — the say→cue seam, honest degradation, plain-say-untouched, and describe, with
+  only the HTTP boundary stubbed.
+- **AC2/AC3** — the measured `words` reach the cue unchanged, and `canvas.cue.schedule` places each
+  mark on its measured word, **clamping a mark past the last word to the last measured word** (never an
+  estimated split) — this filled a real gap: that module had no unit test.
+- **AC6** — `tests/deixis_visual_check.py` (a runnable harness, not collected by pytest) drives a live
+  canvas headlessly and confirms the target is `.pointed` AFTER the anchor word's time and NOT before,
+  so it checks the *timing*, not just that the highlight lands. Passed 2026-09-02.
+- **FR3 `--show`** — built: `say --show <file>` places the frame first (kind inferred from the
+  extension), tested; a bad source refuses before speaking.
+
+Full say/cue/canvas/describe suites stay green. **Reconciliation worth noting for the next reader:** the
+first draft's FR2/AC3 said an unaligned mark is "skipped"; the shipped `canvas/cue.py` deliberately
+**clamps** it to the last measured word instead ("dropping it would silently lose a highlight the agent
+asked for"), which still honours the never-a-guessed-time rule — the spec now matches the code.
 
 ## References
 
