@@ -125,7 +125,7 @@ PAGE = """<!doctype html>
      box, so the packer and the camera measure the scaled size and everything
      downstream just works. A transform would leave a card claiming its
      unscaled footprint and overlapping its neighbour. */
-  .card > .body { padding: 1.1rem; }
+  .card > .body { padding: .4rem; }
   .card svg { max-width: none !important; }
   .card pre { white-space: pre-wrap; font: 13px/1.5 ui-monospace, "Cascadia Code", monospace; }
   /* Markdown. Deliberately narrow: a measure wider than about 70 characters is
@@ -430,13 +430,16 @@ PAGE = """<!doctype html>
     flight = requestAnimationFrame(step);
   }
 
-  function frameBox(box, animate, margin = 40) {
+  function frameBox(box, animate, margin = 16) {
     // Scale to FILL the viewport, up as well as down. A small drawing sitting
     // at 100% in the middle of a big window is the bug, not the safe default.
+    // Margin is tight and the cap is 8× (raised from 4×): a small diagram should
+    // use the canvas, not float in it (JJ, 2026-09-03: "the frame does not take
+    // the full available canvas").
     const port = view.getBoundingClientRect();
     if (!box || !box.w || !box.h) return;
     const k = Math.max(0.05, Math.min(
-      (port.width - margin) / box.w, (port.height - margin) / box.h, 4));
+      (port.width - margin) / box.w, (port.height - margin) / box.h, 8));
     cam = {
       k,
       x: port.width / 2 - (box.x + box.w / 2) * k,
@@ -463,7 +466,7 @@ PAGE = """<!doctype html>
   // read" stop being the same thing and the camera has to choose.
   const READABLE = 0.62;
 
-  function zoomTo(el, margin = 80, fly = false) {
+  function zoomTo(el, margin = 24, fly = false) {
     const box = boxOf(el);
     const port = view.getBoundingClientRect();
     if (!box.w || !box.h) return;
@@ -475,7 +478,7 @@ PAGE = """<!doctype html>
     }
     // Too tall to show whole AND read. Fit the width and park at the top —
     // reading position. He pans down with the canvas, which is the scrollbar.
-    const k = Math.min((port.width - margin) / box.w, 4);
+    const k = Math.min((port.width - margin) / box.w, 8);
     const target = { k, x: port.width / 2 - (box.x + box.w / 2) * k,
                      y: margin / 2 - box.y * k };
     if (fly) flyTo(target); else { cam = target; apply(true); }
@@ -484,7 +487,7 @@ PAGE = """<!doctype html>
   function camFor(box, margin) {
     const port = view.getBoundingClientRect();
     const k = Math.max(0.05, Math.min((port.width - margin) / box.w,
-                                      (port.height - margin) / box.h, 4));
+                                      (port.height - margin) / box.h, 8));
     return { k, x: port.width / 2 - (box.x + box.w / 2) * k,
              y: port.height / 2 - (box.y + box.h / 2) * k };
   }
