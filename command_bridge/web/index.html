@@ -3937,6 +3937,23 @@
   on("rows",   function (d) { frames[d.lane] = (frames[d.lane] || 1); apply(); });
   on("remove", function (d) { frames[d.lane] = Math.max(0, (frames[d.lane] || 1) - 1); apply(); });
   on("clear",  function (d) { frames[d.lane] = 0; apply(); });
+  // spec 013 papercut (2026-09-03): after a `stop`+`serve`, THIS parent EventSource auto-reconnects
+  // but the CANVAS IFRAME's own /events stream does not always come back — measured with
+  // `status.canvas.clients` stuck at 1 of 2, the canvas showing "Nothing drawn yet" though every
+  // frame was still on the server (a fresh load rendered them all), and only a HARD refresh healed
+  // it. The parent's reconnect is the reliable "server is back" signal, so use it: on an open that
+  // FOLLOWS an error (a reconnect, never the first connect), re-point the iframe to a fresh URL. A
+  // new URL bypasses the http cache AND the bfcache, so the iframe's stream and its render come back
+  // with no manual refresh. Harmless if the iframe was already fine (one extra reload); the camera
+  // resets, which is the known spec-013 TC2 limit and the right trade for not needing a hard refresh.
+  var canvasWasDown = false;
+  es.onerror = function () { canvasWasDown = true; };
+  es.onopen = function () {
+    if (!canvasWasDown) return;                 // first connect, or never dropped — nothing to heal
+    canvasWasDown = false;
+    var f = document.getElementById("sharecanvas");
+    if (f) f.src = "/canvas?embed=1&r=" + Date.now();
+  };
   // LIVE-RELOAD (JJ, 2026-09-02: "you can push these changes like you do with the canvas" — no manual
   // refresh while iterating). A `reload` event pushed by POST /reload re-fetches a page. A short
   // delay lets an in-flight edit settle and avoids a reload storm if several fire at once.
