@@ -2738,6 +2738,7 @@ def cmd_watch(args) -> dict[str, Any]:
     lane_baseline = _lane_signal(status0)
     default_lane = status0.get("default_lane") if isinstance(status0, dict) else None
     talking = _still_talking(status0)
+    talking_to_me = _talking_to_me(talking, status0, my_lane)
     ack: Any = None
     while True:
         remaining = deadline - time.monotonic()
@@ -2755,7 +2756,7 @@ def cmd_watch(args) -> dict[str, Any]:
             # THE PRE-REPLY CHECK, and it does not wait at all: one read of the log, one look at
             # the speech signals, an answer. This is the case he timed and called slow.
             slice_s = 0.0
-        elif collected or talking:
+        elif collected or talking_to_me:
             slice_s = WATCH_POLL_SPEECH_S
         else:
             slice_s = max(0.0, min(WATCH_POLL_IDLE_S, remaining))
@@ -2790,6 +2791,7 @@ def cmd_watch(args) -> dict[str, Any]:
         if now is None and unattended and baseline is not None:
             break
         talking = _still_talking(live)
+        talking_to_me = _talking_to_me(talking, live, my_lane)
         if baseline is not None and now is not None and now != baseline:
             # The EVENT is named, not merely implied by a diff, because "he unmuted" and "he
             # muted" call for opposite responses and an agent should not have to reconstruct
@@ -2808,7 +2810,7 @@ def cmd_watch(args) -> dict[str, Any]:
         # THE ONE RULE. Everything above gathers; this decides. A return is only permitted at a
         # quiet moment, whatever it is returning — and after the FR1 fix a muted, released or
         # disconnected microphone reads as quiet at the source, so none of those can wedge it.
-        if not talking:
+        if not talking_to_me:
             if collected or changed or lane_event:
                 break
             # HE IS NOT SPEAKING AND THERE IS NOTHING TO REPORT. His own design statement is the
@@ -2824,6 +2826,13 @@ def cmd_watch(args) -> dict[str, Any]:
             # itself become the hang that stops it answering. Reported as itself rather than
             # disguised as silence: `finished: false` says he was STILL TALKING when time ran
             # out, which is not the same fact as him having stopped.
+            #
+            # ONLY REACHED WHEN HE IS TALKING TO ME — the `if` above gates on `talking_to_me`, not
+            # the combined `talking`. Before that, an off-addressed lane's watch hit this ceiling
+            # every ~2 min while he spoke to ANOTHER agent (the speech signal is session-wide),
+            # burning a turn per idle agent; now an off-lane watch falls through to the idle backoff
+            # above and this ceiling guards only the case it was written for — HIS conversation with
+            # THIS agent running long. Root-caused live 2026-09-03. See `_talking_to_me`.
             _set_empty_streak(args.session, 0, _my_lane)
             _watch_closed(args.session, empty=False, lane=_my_lane)
             return _watch_payload(
@@ -3064,6 +3073,29 @@ def _still_talking(live: Any) -> bool | None:
     if not keys:
         return None
     return any(bool(live[k]) for k in keys)
+
+
+def _talking_to_me(talking: Any, live: Any, my_lane: str | None) -> bool:
+    """Narrow the COMBINED speech signal to "is he talking to MY lane" — the ceiling's real question.
+
+    `_still_talking` reads `user_speaking`/`speech_active`/`speech_pending`, which the server
+    publishes COMBINED across every lane (see the `user_speaking` field doc). On a multi-lane session
+    that made an off-addressed lane's watch treat his conversation with ANOTHER agent as "talking":
+    it never reached the not-talking branch, so it sat out the `WATCH_SPEECH_MAX_S` speech ceiling
+    and re-armed every ~2 min — a wasted turn per idle agent while he worked with one of them
+    (root-caused live 2026-09-03). The LIVE lane is who he is talking to: if it is not mine, his
+    speech is not to me, so this returns False and the wait falls through to the idle backoff instead
+    — which still catches a switch TO my lane on the next poll (~1 s), so there is no latency cost.
+
+    Only the ceiling and poll-rate CONTROL FLOW use this; the payload keeps reporting the true
+    combined `talking` as `user_speaking`, so the fact of him speaking is never hidden. Backward
+    compatible: a single-lane watch (`my_lane` None/empty) or a server that does not publish `lane`
+    treats any speech as to me — unchanged. `talking` may be None (server publishes no speech
+    fields); that coerces to False here exactly as `not talking` did before."""
+    if not talking or not my_lane:
+        return bool(talking)
+    live_lane = live.get("lane") if isinstance(live, dict) else None
+    return live_lane is None or live_lane == my_lane
 
 
 # THE ALIAS TABLE IS GONE, AND SO IS THE SECOND NAME IT MAPPED.
