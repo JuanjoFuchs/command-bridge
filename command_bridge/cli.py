@@ -2361,6 +2361,28 @@ def _lane_signal(live: Any) -> dict[str, Any] | None:
     return {"lane": live.get("lane"), "ambiguous": live.get("ambiguous")}
 
 
+def _lane_event_for(baseline: Any, now: Any, my_lane: str | None) -> dict[str, Any] | None:
+    """A live-lane change worth waking THIS lane for — not every switch in the room.
+
+    The live-lane signal moves on EVERY switch, and breaking on all of them woke every off-lane
+    agent each time JJ moved between two OTHER lanes: a bystander wake, one re-armed watch per idle
+    agent per switch (measured live 2026-09-03 — kepler's watch resolving every 1-2 min as he bounced
+    between magnus and atlas, lanes that are not kepler's). What actually concerns an agent is a
+    switch that CROSSED ITS LANE — he came to it, so it now gets turns, or he left it, so it should
+    raise a hand — or (implied by the same test) an ambiguous summons on the lane it was already
+    holding. A switch between two lanes that are neither leaves it exactly where it was, off-lane, so
+    it must not wake.
+
+    Single-agent / no `my_lane`: any change is relevant, unchanged. Absent signals return None, so a
+    server predating lanes never fires this — the same absent-is-not-false rule the rest of the loop
+    keeps."""
+    if baseline is None or now is None or now == baseline:
+        return None
+    if my_lane and baseline.get("lane") != my_lane and now.get("lane") != my_lane:
+        return None   # a bystander switch: neither the lane he left nor the one he moved to is mine
+    return {k: now[k] for k in now if now[k] != baseline.get(k)}
+
+
 # `_ignored_flags` LIVED HERE AND IS GONE WITH THE COMMAND IT SERVED.
 #
 # It reported `--waits` and `--max-seconds` back to a caller as configuring nothing — accepted so
@@ -2805,10 +2827,10 @@ def cmd_watch(args) -> dict[str, Any]:
         # from `_controls` only because that helper coerces every fact to a bool, which would make
         # every lane name compare equal to every other.
         lane_now = _lane_signal(live)
-        if lane_baseline is not None and lane_now is not None and lane_now != lane_baseline:
-            lane_event = {
-                k: lane_now[k] for k in lane_now if lane_now[k] != lane_baseline[k]
-            }
+        # ONLY A SWITCH THAT CROSSES MY LANE WAKES ME — a bystander switch between two other lanes
+        # does not (2026-09-03). `_lane_event_for` returns None for a switch that neither left nor
+        # reached `my_lane`, so an off-lane agent stops re-arming on every move he makes elsewhere.
+        lane_event = _lane_event_for(lane_baseline, lane_now, my_lane)
         # THE ONE RULE. Everything above gathers; this decides. A return is only permitted at a
         # quiet moment, whatever it is returning — and after the FR1 fix a muted, released or
         # disconnected microphone reads as quiet at the source, so none of those can wedge it.
