@@ -1017,11 +1017,13 @@ DESCRIBE: dict[str, Any] = {
                                "inferred from the extension (.json→chart, .md→markdown, .mmd→mermaid, "
                                ".svg/.html/else→that/text). For anything more particular, place it with "
                                "`set` first and just target it with a mark.",
-                     "--intent": "MARK THIS AS AN ANNOUNCEMENT of what you are about to do (spec 012). "
-                                 "While it is still HELD — he is on another lane and has not heard it — "
-                                 "your NEXT clip on this lane SUPERSEDES it: the stale 'about to' is "
-                                 "dropped so he hears the result, not the promise. No effect once he has "
-                                 "heard it, or if it played live. Mark only intents, never results."},
+                     "--intent": "USE IT ON EVERY announcement of what you are ABOUT to do — the "
+                                 "say-before-you-act clip (spec 012). It marks the clip an announcement, "
+                                 "so while it is HELD — he is on another lane and has not heard it — your "
+                                 "NEXT clip on this lane SUPERSEDES it: the stale 'about to' is dropped and "
+                                 "he hears the result, not the promise. No effect once he has heard it, or "
+                                 "if it played live — so it is free to add and only ever helps. Mark ONLY "
+                                 "announcements, never results: a result must stand until he hears it."},
             "returns": {
                 "queued": "bool — the clip was synthesized and handed to the transport",
                 "id": "str — clip id",
@@ -3261,13 +3263,26 @@ def cmd_say(args) -> dict[str, Any]:
         # comes back to this lane. The agent does not have to do anything about it — which is
         # exactly why it has to be TOLD, or it will assume it was heard and carry on.
         mine = getattr(args, "lane", "") or ""
+        # WHY --intent IS NUDGED HERE (spec 012 built it; agents were not reaching for it). THIS is
+        # the exact moment the staleness it prevents occurs: a clip held off-lane while he is with
+        # someone else. If this clip ANNOUNCED what you were about to do, the thing is done by the
+        # time he comes back and the announcement is noise — `--intent` lets your NEXT clip supersede
+        # it. Nudged only when the clip was NOT already marked, and phrased for announcements only,
+        # because a RESULT must never be marked (it has to stand until he hears it). "next time",
+        # because this clip is already held — the lesson is for the next announcement, not this one.
+        intent_nudge = (
+            "" if getattr(args, "intent", False) else
+            " If this clip ANNOUNCED what you are about to do (not a result), send that kind with "
+            "`--intent` next time: while it is held, your next clip on this lane supersedes it, so "
+            "he hears the result and never the stale 'about to'."
+        )
         _emit_next(
             result, args.session, "say", "held_off_lane",
             f"run `command-bridge watch --session {args.session} --lane {mine} --since <cursor>`",
             "HELD, NOT SPOKEN — he is talking to another agent right now, so this is waiting and "
             "plays by itself when he comes back to you. He can see that you have something to "
             "say. Do not repeat it and do not say it another way: keep waiting on the watch "
-            "above, which returns the moment his attention is back on this lane.",
+            "above, which returns the moment his attention is back on this lane." + intent_nudge,
         )
         return result
     if isinstance(result, dict) and result.get("code") == config.UNREAD_REFUSAL_CODE:
