@@ -187,7 +187,14 @@ PAGE = """<!doctype html>
     outline-offset: 3px; border-radius: 3px;
     animation: pulse 1.1s ease-out 2;
   }
-  .pointed rect, .pointed polygon, .pointed circle, .pointed path {
+  /* A mermaid node (g.node) is a self-contained box: the `.pointed` outline above
+     already IS the pointer rectangle. Recolouring its own border on top drew a
+     SECOND orange line 3px inside the outline — "two orange lines next to each
+     other" (JJ, 2026-09-03). So exclude `.node` from the descendant recolour and
+     let the outline stand alone; non-node containers (a hand-authored group, a
+     sequence step's parts) still get their inner shapes marked. */
+  .pointed:not(.node) rect, .pointed:not(.node) polygon,
+  .pointed:not(.node) circle, .pointed:not(.node) path {
     stroke: var(--glow) !important; stroke-width: 2.5px !important;
   }
   /* A sequence STEP is pointed at as three separate elements, and two of them
@@ -196,7 +203,7 @@ PAGE = """<!doctype html>
      which is what "only the number was highlighted" looked like. Text takes a
      fill; a line takes a stroke. */
   line.pointed { stroke: var(--glow) !important; stroke-width: 2.5px !important; }
-  text.pointed, .pointed text, .pointed tspan {
+  text.pointed, .pointed:not(.node) text, .pointed:not(.node) tspan {
     fill: var(--glow) !important; font-weight: 600;
   }
   /* When the thing being pointed at is SEVERAL elements — a sequence step is a
@@ -228,11 +235,35 @@ PAGE = """<!doctype html>
 </main>
 
 <script>
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: "loose",
-    theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default",
-  });
+  // A built-in Command Bridge mermaid theme so an agent writes a plain diagram and it
+  // matches the canvas with no hand-styling (JJ, 2026-09-03). The load-bearing rule:
+  // NO orange anywhere in here — orange is the deixis POINTER's colour (var(--glow)), and
+  // a node painted the pointer's colour reads as permanently pointed-at, so a real point at
+  // it barely shows ("that is confusing"). Nodes stay uniform + neutral; focus comes from the
+  // pointer, and any deliberate accent an agent adds must be a COOL hue, never the glow.
+  (function initMermaid() {
+    var dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    var vars = dark ? {
+      darkMode: true, background: "transparent",
+      fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+      primaryColor: "#242a36", primaryBorderColor: "#5a6478", primaryTextColor: "#eef0f4",
+      secondaryColor: "#2b3240", tertiaryColor: "#20242e",
+      mainBkg: "#242a36", nodeBorder: "#5a6478", nodeTextColor: "#eef0f4",
+      lineColor: "#8791a3", textColor: "#eef0f4",
+      clusterBkg: "#1a1e27", clusterBorder: "#3a4150", titleColor: "#eef0f4",
+      edgeLabelBackground: "#1a1e27",
+    } : {
+      darkMode: false, background: "transparent",
+      fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+      primaryColor: "#eef1f5", primaryBorderColor: "#8a93a5", primaryTextColor: "#2d3142",
+      secondaryColor: "#e3e7ee", tertiaryColor: "#f3f5f8",
+      mainBkg: "#eef1f5", nodeBorder: "#8a93a5", nodeTextColor: "#2d3142",
+      lineColor: "#6b7280", textColor: "#2d3142",
+      clusterBkg: "#f3f5f8", clusterBorder: "#c7cdd8", titleColor: "#2d3142",
+      edgeLabelBackground: "#f3f5f8",
+    };
+    mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "base", themeVariables: vars });
+  })();
 
   const stage = document.getElementById("stage");
   const view = document.getElementById("view");
