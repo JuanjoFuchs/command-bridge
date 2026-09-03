@@ -905,8 +905,15 @@ PAGE = """<!doctype html>
              || nodes.find(n => (n.id || "").includes(bare));
     if (hit) return hit;
 
+    // Exclude EDGES so a subgraph CONTAINER wins its name. Mermaid v11 prefixes
+    // every id with `mermaid-<ts>-`, so the edge `gate-->kept` is
+    // `mermaid-<ts>-L_gate_kept_0` (doesn't start with "L") with class
+    // `flowchart-link` (not `edgePath`) — it slipped BOTH old filters, sat earlier
+    // in the DOM than the `...-kept` cluster, and `point kept` hit the arrow, not
+    // the box (JJ, 2026-09-03). Drop `flowchart-link` and any `L_`-segment id too.
     const rest = [...root.querySelectorAll("[id]")].filter(
-      n => !/^L[-_]/.test(n.id) && !n.classList.contains("edgePath"));
+      n => !/^L[-_]/.test(n.id) && !/(?:^|[-_])L[-_]/.test(n.id)
+        && !n.classList.contains("edgePath") && !n.classList.contains("flowchart-link"));
 
     // Sequence diagrams name their parts differently: a participant's id is
     // `actor0` / `root-0`, and the ALIAS you wrote lives in `data-id` and
