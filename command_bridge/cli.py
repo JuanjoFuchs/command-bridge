@@ -686,10 +686,14 @@ DESCRIBE: dict[str, Any] = {
                 "--session": "session id",
                 "--lane": "WHICH AGENT YOU ARE. Returns only the turns addressed to this lane, "
                           "plus broadcasts; another agent's turns still advance your cursor, so "
-                          "they are consumed rather than re-read forever. Only needed once a "
-                          "second agent has joined (`command-bridge lane add <name>`) -- omit it in "
-                          "a single-agent session and you get every turn, exactly as before. It "
-                          "changes WHICH turns come back and never WHEN this call returns.",
+                          "they are consumed rather than re-read forever. In a single-agent "
+                          "session it is optional -- omit it and you get every turn, exactly as "
+                          "before. Once a SECOND agent has joined (`command-bridge lane add "
+                          "<name>`) it is REQUIRED and a laneless watch is REFUSED with `no_lane`: "
+                          "without it the wait would resolve the DEFAULT lane and hand back "
+                          "another agent's turns, racing that agent's cursor -- the same guard "
+                          "`say` has, for the same reason. It changes WHICH turns come back and "
+                          "never WHEN this call returns.",
                 "--since": "cursor; use -1 for 'from the beginning'. **IT IS A CEILING, NOT AN "
                            "ORDER.** This command resumes from the LOWER of your `--since` and "
                            "the server's `consumed_cursor`, so a cursor that has run ahead of "
@@ -789,7 +793,7 @@ DESCRIBE: dict[str, Any] = {
                             "may speak. Nothing else in this payload answers that question. It is "
                             "false for `ceiling`, `no_server` and `watch_open`.",
                 "reason": "turns | control | lane | ambiguous | quiet | ceiling | no_server | "
-                          "watch_open",
+                          "watch_open | no_lane",
                 "live_lane": "str — WHO HE IS TALKING TO, present whenever the lane moved or a "
                              "summons could not be routed. Only ever set on a `--lane` watch",
                 "on_lane": "bool — present and FALSE when he has switched to another agent. This "
@@ -2572,15 +2576,40 @@ def cmd_watch(args) -> dict[str, Any]:
     # Refused rather than reported, because the caller here is usually a watchdog following a
     # rule, and a rule that returns a warning gets followed anyway.
     status_pre = _request(args.session, "/status")
-    # THE GUARD IS PER LANE, NOT PER SESSION (spec 012 TC7). The reason for it is unchanged and
-    # still right: two waits on one log race for the same turns, so one cursor silently falls
-    # behind. But N agents watching N lanes is the NORMAL case now, and a session-wide flag would
-    # refuse every agent after the first — the feature would not work at all for its second user.
+    my_lane = getattr(args, "lane", None)
+    # 🔴 REFUSE A LANELESS WATCH ON A MULTI-LANE SESSION — the mirror of `say`'s `no_lane` guard
+    # (server.py). A watch with no `--lane` resolves to the DEFAULT lane and hands back its turns,
+    # so on a multi-agent session an agent that forgot `--lane` silently CONSUMES another lane's
+    # turns and leaves that lane's cursor behind. Measured live 2026-09-03: a laneless magnus watch
+    # returned three `atlas` turns, and the atlas agent's cursor was left behind. `say` already
+    # refuses exactly this shape, for exactly this reason — the tool cannot tell which agent is
+    # invoking it, so it must not GUESS which lane to resolve. The predicate is `say`'s verbatim:
+    # only when a SECOND lane exists (a one-lane session has one place the turns could go, so the
+    # flag would be ceremony — `say`'s NFR1 carve-out). NOT bypassable by `--force`: force overrides
+    # the stale-wait LOCK, never lane routing — a forced laneless watch is the very bug this closes.
+    # `lanes` ABSENT means a server predating lanes; absent is not multi-lane, so an old server
+    # never trips this (the same absent-is-not-true lesson `watch_open` had to learn).
+    lanes_known = status_pre.get("lanes") if isinstance(status_pre, dict) else None
+    if my_lane is None and isinstance(lanes_known, list) and len(lanes_known) > 1:
+        return {
+            "turns": [], "cursor": args.since, "count": 0,
+            "finished": False, "reason": "no_lane", "code": "no_lane",
+            "error": "refusing to watch without a lane: several agents share this session, and a "
+                     "laneless watch would resolve another agent's turns and race its cursor",
+            "remedy": f"command-bridge watch --session {args.session} --lane <yours> "
+                      f"--since {args.since}",
+            "lanes": list(lanes_known),
+            "live_lane": status_pre.get("lane"),
+        }
+    # THE CONCURRENT-WAIT GUARD IS PER LANE, NOT PER SESSION (spec 012 TC7). The reason for it is
+    # unchanged and still right: two waits on one log race for the same turns, so one cursor
+    # silently falls behind. But N agents watching N lanes is the NORMAL case now, and a
+    # session-wide flag would refuse every agent after the first — the feature would not work at
+    # all for its second user.
     #
     # `watching_lanes` ABSENT means a server that predates lanes, which is NOT the same as a
     # server reporting nobody is waiting. Fall back to the session-wide flag there, the same
     # distinction `watch_open` itself had to learn.
-    my_lane = getattr(args, "lane", None)
     watching_lanes = status_pre.get("watching_lanes") if isinstance(status_pre, dict) else None
     if my_lane and isinstance(watching_lanes, list):
         already = my_lane in watching_lanes
