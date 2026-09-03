@@ -83,8 +83,8 @@ def test_a_missing_or_corrupt_file_reads_as_zero(tmp_path, monkeypatch):
 
 def test_a_disconnected_watch_does_not_ladder():
     """The same empty streak that would be waiting 30 s connected waits hours with nobody there."""
-    quiet = cli._watch_ceiling(30.0, 0, reachable=True, unattended=False, explicit=False)
-    gone = cli._watch_ceiling(30.0, 0, reachable=False, unattended=True, explicit=False)
+    quiet = cli._watch_ceiling(30.0, 0, reachable=True, unattended=False, off_lane=False, explicit=False)
+    gone = cli._watch_ceiling(30.0, 0, reachable=False, unattended=True, off_lane=False, explicit=False)
 
     assert quiet == 30.0
     assert gone == cli.WATCH_DISCONNECTED_MAX_S
@@ -94,7 +94,7 @@ def test_a_disconnected_watch_does_not_ladder():
 def test_the_disconnected_wait_is_flat_rather_than_growing():
     """There is no evidence to accumulate. Every rung would be the same guaranteed-empty result,
     so the ceiling does not depend on how many of them have already been spent."""
-    waits = {cli._watch_ceiling(30.0, s, reachable=False, unattended=True, explicit=False)
+    waits = {cli._watch_ceiling(30.0, s, reachable=False, unattended=True, off_lane=False, explicit=False)
              for s in range(6)}
 
     assert waits == {cli.WATCH_DISCONNECTED_MAX_S}
@@ -107,19 +107,19 @@ def test_there_is_still_a_hard_ceiling():
     thing to be waiting on — a working day, or a night — so a six-hour absence costs ONE watch."""
     assert cli.WATCH_DISCONNECTED_MAX_S == 28800.0
     assert cli._watch_ceiling(30.0, 99, reachable=False, unattended=True,
-                              explicit=False) == 28800.0
+                              off_lane=False, explicit=False) == 28800.0
 
 
 def test_an_explicit_timeout_still_wins_over_the_long_wait():
     """A caller that names a number knows something the tool does not — usually its harness's
     maximum tool timeout. Silently handing it eight hours is the same defect as silently handing
     it nine minutes when it asked for eight, which broke the caller twice in ten minutes."""
-    assert cli._watch_ceiling(45.0, 3, reachable=False, unattended=True, explicit=True) == 45.0
+    assert cli._watch_ceiling(45.0, 3, reachable=False, unattended=True, off_lane=False, explicit=True) == 45.0
 
 
 def test_the_ceiling_is_overridable_without_editing_the_code(monkeypatch):
     monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", "600")
-    assert cli._watch_ceiling(30.0, 0, reachable=False, unattended=True, explicit=False) == 600.0
+    assert cli._watch_ceiling(30.0, 0, reachable=False, unattended=True, off_lane=False, explicit=False) == 600.0
     monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", "not a number")
     assert cli._disconnected_ceiling() == cli.WATCH_DISCONNECTED_MAX_S
 
@@ -148,10 +148,11 @@ def test_describe_states_the_long_wait_where_an_agent_reads_it():
 # ------------------------------------------------ and the escapes, which are what make it safe
 
 
-def _run(monkeypatch, tmp_path, first, later, ceiling):
+def _run(monkeypatch, tmp_path, first, later, ceiling, lane=None):
     """Drive `cmd_watch` against a scripted `/status`: `first` answers the two setup reads, `later`
     every poll inside the loop. The disconnected ceiling is shrunk to seconds — the branch under
-    test is which ceiling gets chosen, not how long eight hours is."""
+    test is which ceiling gets chosen, not how long eight hours is. `lane` sets --lane, so the
+    off-lane branch can be exercised by scripting a status whose live `lane` is something else."""
     monkeypatch.setattr(cli.config, "session_dir", lambda: str(tmp_path))
     monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", str(ceiling))
     calls = {"n": 0}
@@ -171,7 +172,61 @@ def _run(monkeypatch, tmp_path, first, later, ceiling):
 
     monkeypatch.setattr(cli.store, "watch", watch)
     return cli.cmd_watch(types.SimpleNamespace(
-        session="s", since=6, timeout=None, force=False, all_turns=False))
+        session="s", since=6, timeout=None, force=False, all_turns=False, lane=lane))
+
+
+# ------------------------------------------------- off-lane is a long-wait state too (2026-09-03)
+#
+# Connected, orb on, but he is talking to ANOTHER agent: nothing addressed to THIS lane can arrive
+# until he switches back, and a switch wakes the poll within ~1s regardless of the ceiling. So the
+# 9-minute ladder has nothing to pace — the wait holds long and detached and resolves the instant he
+# returns, exactly like the disconnected case. Before this, an off-lane agent re-armed every ~9 min.
+
+
+def test_the_ceiling_picks_the_long_hold_when_off_lane():
+    """The arithmetic: off-lane reuses the disconnected ceiling, not the ladder's 30 s."""
+    off = cli._watch_ceiling(30.0, 0, reachable=True, unattended=False, off_lane=True, explicit=False)
+    on = cli._watch_ceiling(30.0, 0, reachable=True, unattended=False, off_lane=False, explicit=False)
+    assert off == cli._disconnected_ceiling()
+    assert on == 30.0, "on-lane and quiet is still the ladder"
+
+
+def test_cmd_watch_holds_long_when_he_is_on_another_lane(monkeypatch, tmp_path):
+    """The report, at the call site: magnus is off-lane (he is on kepler), so its watch takes the
+    long hold, not the 30 s rung it would take if this were its own quiet lane."""
+    on_kepler = {"clients": 1, "channel_open": True, "capturing": True, "muted": False,
+                 "lane": "kepler"}
+    result = _run(monkeypatch, tmp_path, on_kepler, on_kepler, 0.5, lane="magnus")
+    assert result["waited"] == 0.5, "it laddered instead of holding — 30.0 means the off-lane path did not run"
+    assert result["next_wait"] == 0.5
+
+
+def test_a_switch_back_to_my_lane_ends_the_long_off_lane_wait_immediately(monkeypatch, tmp_path):
+    """THE PATH THAT MAKES THE LONG OFF-LANE HOLD SAFE — the analogue of a page reconnecting. He is on
+    kepler, then switches to magnus, and magnus's long wait returns within a poll rather than sitting
+    out its ceiling."""
+    on_kepler = {"clients": 1, "channel_open": True, "capturing": True, "muted": False,
+                 "lane": "kepler"}
+    to_magnus = {**on_kepler, "lane": "magnus"}
+
+    started = time.monotonic()
+    result = _run(monkeypatch, tmp_path, on_kepler, to_magnus, 20.0, lane="magnus")
+
+    assert result["reason"] == "lane"
+    assert time.monotonic() - started < 5.0, "it waited out the ceiling instead of waking on the switch"
+
+
+def test_a_dead_server_ends_a_long_off_lane_wait_too(monkeypatch, tmp_path):
+    """The same escape the disconnected wait relies on: with nothing answering there is no
+    lane-switch path left to end the long hold early, so it must end here rather than hold for hours."""
+    on_kepler = {"clients": 1, "channel_open": True, "capturing": True, "muted": False,
+                 "lane": "kepler"}
+
+    started = time.monotonic()
+    result = _run(monkeypatch, tmp_path, on_kepler, None, 20.0, lane="magnus")
+
+    assert time.monotonic() - started < 5.0, "it blocked on a dead server"
+    assert result["listening"] is False
 
 
 def test_cmd_watch_picks_the_long_ceiling_when_nobody_is_connected(monkeypatch, tmp_path):

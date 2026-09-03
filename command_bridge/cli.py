@@ -330,10 +330,10 @@ def _backoff_ladder_text(base: float = WATCH_BASE_S) -> str:
 
 
 def _watch_ceiling(base: float, streak: int, *, reachable: bool, unattended: bool,
-                   explicit: bool) -> float:
+                   off_lane: bool, explicit: bool) -> float:
     """How long ONE watch is willing to wait before returning empty. The whole decision, once.
 
-    THREE STATES, and they are not degrees of the same thing:
+    FOUR STATES, and they are not degrees of the same thing:
 
     * `explicit` — the caller named a number, so it gets that number. A caller who names one knows
       something the tool does not (usually its harness's maximum tool timeout), and silently
@@ -342,7 +342,14 @@ def _watch_ceiling(base: float, streak: int, *, reachable: bool, unattended: boo
     * `unattended` — nobody is connected, OR the orb is off and the microphone is released, so no
       turn can arrive and the ladder has nothing to pace. See `WATCH_DISCONNECTED_MAX_S` and
       `_no_turn_possible`, which is the test.
-    * otherwise — connected and quiet, which is the case the ladder was actually designed for.
+    * `off_lane` — connected and the orb is on, but he is talking to ANOTHER agent, so nothing
+      addressed to THIS lane can arrive until he switches back. A switch wakes the poll within ~1s
+      regardless of the ceiling, so the 9-minute ladder has nothing to pace here either: the wait
+      holds long and detached and resolves the instant he returns to this lane. Reuses the
+      disconnected ceiling deliberately — it is the same shape, a working day's wait for him to come
+      back — so one env var tunes both. Added 2026-09-03 after off-lane agents re-armed every ~9 min.
+    * otherwise — connected, on-lane and quiet, which is the case the ladder was actually designed
+      for.
 
     Both `waited` and `next_wait` are read from this function rather than each recomputing the
     arithmetic beside itself. Three hand-written copies of the last such number drifted three
@@ -350,7 +357,7 @@ def _watch_ceiling(base: float, streak: int, *, reachable: bool, unattended: boo
     """
     if explicit:
         return base
-    if unattended:
+    if unattended or off_lane:
         return _disconnected_ceiling()
     return _backoff_ceiling(base, streak, reachable)
 
@@ -723,10 +730,15 @@ DESCRIBE: dict[str, Any] = {
                              f"{_backoff_ladder_text()}. (Stated rather than implied because "
                              f"'30s doubling to 9min' was read as '30 -> 60 -> 9min', which skips "
                              f"three rungs.) "
-                             "THAT LADDER IS ONLY FOR CONNECTED-AND-LISTENING-BUT-QUIET. With NO "
-                             "PAGE CONNECTED, or with the ORB SWITCHED OFF, the wait is a flat "
-                             f"{_human_seconds(WATCH_DISCONNECTED_MAX_S)} — see `notes` — because "
-                             "a wake in either state can never return anything. "
+                             "THAT LADDER IS ONLY FOR CONNECTED-AND-LISTENING-BUT-QUIET-AND-ON-YOUR-"
+                             "LANE. With NO PAGE CONNECTED, or with the ORB SWITCHED OFF, the wait "
+                             f"is a flat {_human_seconds(WATCH_DISCONNECTED_MAX_S)} — see `notes` — "
+                             "because a wake in either state can never return anything. And when "
+                             "he is on ANOTHER agent's lane (OFF-LANE with `--lane`), the wait is "
+                             "the same long detached hold and returns the instant he switches back "
+                             "to you — nothing addressed to you can arrive until he does, so "
+                             "DETACH it rather than re-arm the 9-minute ladder every couple of "
+                             "minutes. "
                              "PASS IT only to impose a hard ceiling, honoured exactly. NOTE: "
                              "pinning it DISABLES the backoff AND the long disconnected wait, "
                              "which is easy to do by accident "
@@ -2720,6 +2732,14 @@ def cmd_watch(args) -> dict[str, Any]:
     # Requires a live baseline — with no server answering, the control-change path is disabled and
     # a long wait would have no way to end early. `_no_turn_possible` enforces that itself.
     unattended = baseline is not None and _no_turn_possible(status0)
+    # OFF-LANE IS A LONG-WAIT STATE TOO (2026-09-03). Connected, orb on, but he is talking to ANOTHER
+    # agent — so nothing addressed to THIS lane arrives until he switches back, and a switch wakes the
+    # poll within ~1s regardless of the ceiling. So this lane's watch holds long and detached (the
+    # disconnected ceiling) instead of re-arming the 9-min ladder every couple of minutes. Only when
+    # the live lane is KNOWN and is not mine (absent lane = a server predating lanes = not off-lane)
+    # and only while reachable — a closed orb is `unattended`, which already wins.
+    _live_lane0 = status0.get("lane") if isinstance(status0, dict) else None
+    off_lane = bool(my_lane) and reachable and _live_lane0 is not None and _live_lane0 != my_lane
     # IS THIS A PRE-REPLY CHECK OR A LISTEN? Same command, same arguments, same tunnel state —
     # and they want opposite things, so the answer has to come from something the tunnel can see
     # for itself. It does: an agent that has been handed turns and has not yet spoken is holding
@@ -2750,7 +2770,7 @@ def cmd_watch(args) -> dict[str, Any]:
             holding_reply = bool(status_pre.get("agent_holds_turns"))
     streak = _empty_streak(args.session, _my_lane)
     waited_ceiling = _watch_ceiling(base, streak, reachable=reachable,
-                                    unattended=unattended, explicit=explicit)
+                                    unattended=unattended, off_lane=off_lane, explicit=explicit)
     started = time.monotonic()
     deadline = started + waited_ceiling
     turns: list[dict[str, Any]] = []
@@ -2807,12 +2827,13 @@ def cmd_watch(args) -> dict[str, Any]:
         live = _request(args.session, "/status")
         now = _controls(live)
         # THE ESCAPE THAT MAKES AN EIGHT-HOUR WAIT SAFE. A wait nobody can speak into is held
-        # open only because the server will tell us when a page arrives; if the server itself
-        # stops answering, that promise is gone and there is nothing left to wait for. Ending
-        # here drops through to the payload below, which reports `listening: false` and the
-        # remedy. Scoped to `unattended` because that is the only branch whose ceiling can
-        # exceed the nine minutes a dead server used to cost.
-        if now is None and unattended and baseline is not None:
+        # open only because the server will tell us when a page arrives — or, off-lane, when he
+        # switches back; if the server itself stops answering, that promise is gone and there is
+        # nothing left to wait for. Ending here drops through to the payload below, which reports
+        # `listening: false` and the remedy. Scoped to the two LONG-ceiling branches (`unattended`
+        # and `off_lane`), because those are the only ones whose ceiling can exceed the nine minutes
+        # a dead server used to cost.
+        if now is None and (unattended or off_lane) and baseline is not None:
             break
         talking = _still_talking(live)
         talking_to_me = _talking_to_me(talking, live, my_lane)
@@ -2931,7 +2952,9 @@ def cmd_watch(args) -> dict[str, Any]:
                     f"held for this lane and raises a hand on your orb with the count, and that "
                     f"hand is what brings him back. Waiting for him to return first is a deadlock, "
                     f"because the only reason he returns is that you spoke. Then wait on this "
-                    f"same watch; it returns when he comes back to you"
+                    f"same watch — DETACH it and keep the long ceiling: off-lane it now holds for "
+                    f"up to {_human_seconds(_disconnected_ceiling())} and returns the instant he "
+                    f"switches back to you, instead of re-arming the 9-minute ladder"
                 )
     if changed:
         # The EVENT is named, not merely implied by a diff, because "he unmuted" and "he muted"
@@ -3041,9 +3064,13 @@ def cmd_watch(args) -> dict[str, Any]:
         # was blocking, and reporting the ladder's next rung then would understate the real wait
         # by hours.
         next_unattended = _no_turn_possible(live)
+        next_off_lane = (
+            bool(my_lane) and not next_unattended and isinstance(live, dict)
+            and live.get("lane") is not None and live.get("lane") != my_lane)
         result["next_wait"] = round(
             _watch_ceiling(base, streak + 1, reachable=reachable,
-                           unattended=bool(next_unattended), explicit=explicit), 1)
+                           unattended=bool(next_unattended), off_lane=bool(next_off_lane),
+                           explicit=explicit), 1)
         result["quiet_rounds"] = streak + 1
     else:
         # Speech or a button resets the ladder, because both are evidence that the silence the
