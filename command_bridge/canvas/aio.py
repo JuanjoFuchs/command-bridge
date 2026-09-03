@@ -160,12 +160,26 @@ def init_canvas(session: str = "dev", fresh: bool = False, follow: bool = True) 
 
 
 async def handle_reload(request: web.Request) -> web.Response:
-    """Push a live-reload to every open page (JJ, 2026-09-02: "push these changes like you do with the
-    canvas" — no manual browser refresh while iterating on the UI). Fans a `reload` event out on the
-    /events SSE, which the page listens for and calls location.reload(). Carries no data — it only
-    tells browsers to re-fetch a page they already have — so it is unauthenticated like the page."""
+    """Hot-reload the UI WITHOUT dropping the session (JJ, 2026-09-03: "can't we auto-reload the
+    server part... for the UI at least?"). The page's HTML/CSS/JS are baked into `PAGE` at import, so
+    a code edit used to need a full `stop`+`serve` — which drops the audio, the lanes and every
+    other agent. Instead: re-import the page module IN PLACE, re-bind the running server's view of it,
+    then fan a `reload` event so every open tab re-fetches the regenerated page (its own JS logic
+    changed, so a DOM morph won't do — the client has to re-run it). The voice WebSocket, the lanes
+    and the turn log are never touched. Content/state updates already stream live over `/events`;
+    this is only for changes to the page's own code. Unauthenticated like the page it reloads."""
+    import importlib
+    from . import page as _page
+    try:
+        importlib.reload(_page)
+    except Exception as exc:                       # noqa: BLE001 — a broken edit must not kill the server
+        return web.json_response(
+            {"reloaded": 0, "error": "page module failed to re-import; the old UI is still serving",
+             "detail": str(exc)[:300]}, status=500)
+    canvas.PAGE_VERSION = _page.PAGE_VERSION        # re-bind the names server.py imported at startup
+    canvas.render = _page.render
     n = canvas.publish("reload", {})
-    return web.json_response({"reloaded": n})
+    return web.json_response({"reloaded": n, "version": _page.PAGE_VERSION})
 
 
 def setup(app: web.Application) -> None:

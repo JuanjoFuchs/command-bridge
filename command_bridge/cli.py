@@ -1414,6 +1414,11 @@ DESCRIBE: dict[str, Any] = {
                    "notes": "Deletes one frame (positional `id`); the rest stay."},
         "clear": {"args": {"--session": "session id", "--lane": "which agent you are"},
                   "notes": "Empties the canvas and resets the camera — ask first."},
+        "reload": {"args": {"--session": "session id"},
+                   "notes": "Hot-reload the page UI (`page.py`) in the RUNNING server, no stop+serve: "
+                            "re-imports the page, re-binds it, reloads every open tab. Audio, lanes and "
+                            "the turn log keep running. Use this after editing the canvas page instead of "
+                            "restarting. A broken edit keeps the old UI serving and reports the import error."},
         "zoom": {"args": {"--session": "session id", "--lane": "which agent you are",
                           "--scale": "a number (1 = actual size) or 'fit'"},
                  "notes": "The low-level camera (positional `selector`); prefer `look`."},
@@ -3664,6 +3669,15 @@ def cmd_clear(args) -> dict[str, Any]:
     return _canvas(args.session, "clear", {}, args.lane)
 
 
+def cmd_reload(args) -> dict[str, Any]:
+    """Hot-reload the page UI in the RUNNING server — re-import page.py, re-bind it, and reload every
+    open tab — with no stop+serve. Reach for this after editing the canvas page (`page.py`) instead
+    of restarting: the audio, the lanes and the turn log keep running untouched, and the tab
+    auto-reloads. Content/state already streams live over the canvas; this is only for a change to the
+    page's OWN html/css/js. A broken edit leaves the old UI serving and reports the import error."""
+    return _request(args.session, "/reload", {})
+
+
 def cmd_zoom(args) -> dict[str, Any]:
     return _canvas(args.session, "zoom", {"selector": args.selector, "scale": args.scale}, args.lane)
 
@@ -4958,6 +4972,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_switch.add_argument("--session", default="dev")
     p_switch.add_argument("to")
 
+    p_reload = sub.add_parser(
+        "reload",
+        help="hot-reload the page UI (page.py) without a stop+serve; audio and lanes keep running")
+    p_reload.add_argument("--session", default="dev")
+
     vpp = sub.add_parser(
         "voiceprint", help="who the tunnel has learned to recognise by voice"
     )
@@ -5180,6 +5199,7 @@ def main(argv=None) -> int:
         "inspect": cmd_inspect,
         "remove": cmd_remove,
         "clear": cmd_clear,
+        "reload": cmd_reload,
         "zoom": cmd_zoom,
         "raise": cmd_raise,
         "chart": cmd_chart,
