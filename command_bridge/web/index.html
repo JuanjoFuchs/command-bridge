@@ -3938,8 +3938,14 @@
   on("remove", function (d) { frames[d.lane] = Math.max(0, (frames[d.lane] || 1) - 1); apply(); });
   on("clear",  function (d) { frames[d.lane] = 0; apply(); });
   // LIVE-RELOAD (JJ, 2026-09-02: "you can push these changes like you do with the canvas" — no manual
-  // refresh while iterating). A `reload` event pushed by POST /reload re-fetches this page. A short
+  // refresh while iterating). A `reload` event pushed by POST /reload re-fetches a page. A short
   // delay lets an in-flight edit settle and avoids a reload storm if several fire at once.
+  //
+  // spec 013: A CANVAS (page.py) CHANGE NEVER REACHES HERE. The #sharecanvas iframe owns its own
+  // reload and reloads only itself, because THIS document holds the AudioContext and the voice
+  // socket — reloading it for a canvas edit is the exact audio-drop the spec closes. So this
+  // handler acts ONLY on a `page`-targeted event: a change to the PARENT document (index.html)
+  // itself, which genuinely needs a full reload.
   //
   // ⚠ NEVER reload out from under a LIVE channel. A full `location.reload()` destroys the AudioContext
   // and the microphone, and a browser will not restart either without a fresh user tap — so an
@@ -3954,7 +3960,10 @@
     if (liveNow()) { reloadPending = true; document.documentElement.dataset.updateWaiting = "1"; return; }
     location.reload();
   }
-  es.addEventListener("reload", function () {
+  es.addEventListener("reload", function (e) {
+    var target = "canvas";
+    try { target = (JSON.parse(e.data || "{}").target) || "canvas"; } catch (_) {}
+    if (target !== "page") return;   // canvas change -> the iframe handles it; this document stays put
     clearTimeout(reloadT);
     reloadT = setTimeout(doReload, 250);
   });

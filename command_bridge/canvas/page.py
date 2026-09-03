@@ -1089,6 +1089,17 @@ PAGE = """<!doctype html>
   es.addEventListener("version", e => {
     if (JSON.parse(e.data).version !== PAGE_VERSION) location.reload();
   });
+  // A pushed `reload` (POST /reload, spec 013) re-runs THIS iframe's JS in place. The canvas owns
+  // its own reload the same way it owns the version self-reload above — because the PARENT page
+  // holds the AudioContext and the voice socket and must NEVER reload for a canvas change, or the
+  // audio blips. `location.reload()` here reloads only this iframe; the parent stays put, so a
+  // page.py edit costs nothing audible. Only a `canvas`-targeted (or untyped) event is ours; a
+  // `page`-targeted change is the parent's — it full-reloads and recreates this iframe anyway.
+  es.addEventListener("reload", e => {
+    let target = "canvas";
+    try { target = (JSON.parse(e.data || "{}").target) || "canvas"; } catch (_) {}
+    if (target === "canvas") location.reload();
+  });
   es.addEventListener("frame", async e => {
     const msg = JSON.parse(e.data);
     const lane = msg.lane || "main";

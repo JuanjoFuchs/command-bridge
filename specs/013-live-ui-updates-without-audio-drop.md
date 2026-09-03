@@ -69,10 +69,22 @@ these UI updates to not mess with the audio ... do the whole thing."*
 
 ## Implementation Tasks
 
-- [ ] Route the canvas-update signal to an iframe-only reload rather than the parent's full reload.
-- [ ] Confirm the iframe's `/events` re-subscription restores frames + live lane after the reload.
-- [ ] Suppress the deferred-hold (amber dot) for the canvas-only path; keep it for parent changes.
-- [ ] Distinguish a canvas (`page.py`) change from a parent (`web/index.html`) change so FR5 holds.
+- [x] Route the canvas-update signal to an iframe-only reload rather than the parent's full reload.
+      *(page.py: the canvas listens for `reload` and reloads its own iframe on a `canvas` target.)*
+- [x] Confirm the iframe's `/events` re-subscription restores frames + live lane after the reload.
+      *(The iframe reload re-runs page.py, which re-opens `/events` and replays version→sync→cues→
+      backlog — the same restore path the version self-reload already relies on.)*
+- [x] Suppress the deferred-hold (amber dot) for the canvas-only path; keep it for parent changes.
+      *(A `canvas` reload never reaches the parent handler, so the amber hold is only ever set on a
+      `page` target.)*
+- [x] Distinguish a canvas (`page.py`) change from a parent (`web/index.html`) change so FR5 holds.
+      *(aio.py `_reload_target` hashes index.html; `page` only on a real parent change, else `canvas`.)*
+
+> **Deployment note:** because this change touches `web/index.html` (parent) and `canvas/aio.py`
+> (the server), activating it needs ONE `stop`+`serve` — a page.py hot-reload cannot swap the server
+> module or re-serve the parent doc. That single restart drops the audio once; every canvas reload
+> AFTER it is audio-safe. The deterministic ACs (AC4/AC6 mechanism + unit tests) pass now; AC1/AC3/AC5
+> (integration) and AC2 (manual-audio) are verified in that first post-restart session.
 
 ## Acceptance Criteria
 

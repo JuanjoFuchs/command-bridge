@@ -1420,9 +1420,13 @@ DESCRIBE: dict[str, Any] = {
                   "notes": "Empties the canvas and resets the camera — ask first."},
         "reload": {"args": {"--session": "session id"},
                    "notes": "Hot-reload the page UI (`page.py`) in the RUNNING server, no stop+serve: "
-                            "re-imports the page, re-binds it, reloads every open tab. Audio, lanes and "
-                            "the turn log keep running. Use this after editing the canvas page instead of "
-                            "restarting. A broken edit keeps the old UI serving and reports the import error."},
+                            "re-imports the page, re-binds it, pushes a `reload`. Audio, lanes and the "
+                            "turn log keep running. spec 013: a CANVAS (`page.py`) change reloads only the "
+                            "canvas iframe — the voice audio in the parent page never blips (`target: "
+                            "canvas`, `full_reload: false`); a change to the PARENT doc (`web/index.html`) "
+                            "returns `target: page` / `full_reload: true` and does the full parent reload, "
+                            "held while the channel is live. Use this after editing the canvas page instead "
+                            "of restarting. A broken edit keeps the old UI serving and reports the import error."},
         "zoom": {"args": {"--session": "session id", "--lane": "which agent you are",
                           "--scale": "a number (1 = actual size) or 'fit'"},
                  "notes": "The low-level camera (positional `selector`); prefer `look`."},

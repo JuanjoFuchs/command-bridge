@@ -18,7 +18,9 @@ contract holds by construction (spec 003 NFR1).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
 import queue
 
 from aiohttp import web
@@ -28,6 +30,40 @@ from . import server as canvas
 
 def _sse(event: str, payload: dict) -> bytes:
     return ("event: %s\ndata: %s\n\n" % (event, json.dumps(payload))).encode()
+
+
+# THE PARENT DOCUMENT'S SIGNATURE, so a `reload` can tell a canvas change from a parent change
+# (spec 013 FR5). `web/index.html` is the PARENT — it holds the AudioContext and the voice socket —
+# and the canvas is an iframe inside it. A page.py edit reloads only the iframe (audio untouched); an
+# index.html edit is the one that still needs a full parent reload. This tracks what the parent was
+# last known to hold so `handle_reload` can spot when index.html itself moved. Seeded in `setup()`.
+_index_sig: str | None = None
+
+
+def _index_signature() -> str | None:
+    """SHA-256 of the parent document on disk, or None if it cannot be read.
+
+    Kept in this module (not imported from server.WEB_DIR) so the canvas shell has no load-time
+    dependency on the voice server; the path is the same `command_bridge/web/index.html`."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "index.html")
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _reload_target(prev_sig: str | None, cur_sig: str | None) -> str:
+    """Which document a pushed reload is for: `page` (a full PARENT reload — spec 013 FR5) only when
+    the parent document actually changed since it was last hashed, else `canvas` (the iframe reloads
+    itself, audio untouched — FR1).
+
+    Biased to `canvas` on any uncertainty — a first-ever hash (`prev` None) or an unreadable file
+    (`cur` None). `page` is the expensive verdict: it drops the audio, so it is returned only on
+    positive evidence that the parent moved, never on a guess."""
+    if prev_sig is None or cur_sig is None:
+        return "canvas"
+    return "page" if cur_sig != prev_sig else "canvas"
 
 
 async def handle_events(request: web.Request) -> web.StreamResponse:
@@ -161,15 +197,23 @@ def init_canvas(session: str = "dev", fresh: bool = False, follow: bool = True) 
 
 async def handle_reload(request: web.Request) -> web.Response:
     """Hot-reload the UI WITHOUT dropping the session (JJ, 2026-09-03: "can't we auto-reload the
-    server part... for the UI at least?"). The page's HTML/CSS/JS are baked into `PAGE` at import, so
-    a code edit used to need a full `stop`+`serve` — which drops the audio, the lanes and every
-    other agent. Instead: re-import the page module IN PLACE, re-bind the running server's view of it,
-    then fan a `reload` event so every open tab re-fetches the regenerated page (its own JS logic
-    changed, so a DOM morph won't do — the client has to re-run it). The voice WebSocket, the lanes
-    and the turn log are never touched. Content/state updates already stream live over `/events`;
-    this is only for changes to the page's own code. Unauthenticated like the page it reloads."""
+    server part... for the UI at least?" / "I want these UI updates to not mess with the audio").
+
+    The page's HTML/CSS/JS are baked into `PAGE` at import, so a code edit used to need a full
+    `stop`+`serve` — which drops the audio, the lanes and every other agent. Instead: re-import the
+    page module IN PLACE, re-bind the running server's view of it, then fan a `reload` event.
+
+    spec 013 — WHICH document reloads. The parent document (`web/index.html`) holds the AudioContext
+    and the voice socket; the canvas is an `<iframe>` inside it. So a `reload` carries a `target`:
+    `canvas` (the default) tells the iframe to reload ITSELF while the parent — and the audio — is
+    never touched; `page` tells the parent to do the full, defer-while-live reload it always did.
+    The target is `page` only when `index.html` itself changed (FR5); a page.py edit is `canvas`, so
+    iterating on the canvas costs nothing audible. The voice WebSocket, the lanes and the turn log
+    are never touched. Content/state updates already stream live over `/events`; this is only for
+    changes to a page's own code. Unauthenticated like the page it reloads."""
     import importlib
     from . import page as _page
+    global _index_sig
     try:
         importlib.reload(_page)
     except Exception as exc:                       # noqa: BLE001 — a broken edit must not kill the server
@@ -178,14 +222,20 @@ async def handle_reload(request: web.Request) -> web.Response:
              "detail": str(exc)[:300]}, status=500)
     canvas.PAGE_VERSION = _page.PAGE_VERSION        # re-bind the names server.py imported at startup
     canvas.render = _page.render
-    n = canvas.publish("reload", {})
-    return web.json_response({"reloaded": n, "version": _page.PAGE_VERSION})
+    cur_sig = _index_signature()
+    target = _reload_target(_index_sig, cur_sig)
+    _index_sig = cur_sig
+    n = canvas.publish("reload", {"target": target})
+    return web.json_response({"reloaded": n, "version": _page.PAGE_VERSION, "target": target,
+                              "full_reload": target == "page"})
 
 
 def setup(app: web.Application) -> None:
     """Register the canvas routes on command-bridge's aiohttp app. Additive only — the voice routes
     are untouched. The page's own URLs (/events, /switch, /placed, /inspected) live at the root; the
     CLI ops live under /canvas/ so /cue does not collide with the voice cue."""
+    global _index_sig
+    _index_sig = _index_signature()  # spec 013: baseline the parent doc so the first reload can spot an index.html change
     app.router.add_get("/events", handle_events)
     app.router.add_get("/canvas", handle_canvas_page)
     app.router.add_get("/canvas/status", handle_canvas_status)
