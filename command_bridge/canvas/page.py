@@ -193,8 +193,8 @@ PAGE = """<!doctype html>
      other" (JJ, 2026-09-03). So exclude `.node` from the descendant recolour and
      let the outline stand alone; non-node containers (a hand-authored group, a
      sequence step's parts) still get their inner shapes marked. */
-  .pointed:not(.node) rect, .pointed:not(.node) polygon,
-  .pointed:not(.node) circle, .pointed:not(.node) path {
+  .pointed:not(.node):not(.cluster) rect, .pointed:not(.node):not(.cluster) polygon,
+  .pointed:not(.node):not(.cluster) circle, .pointed:not(.node):not(.cluster) path {
     stroke: var(--glow) !important; stroke-width: 2.5px !important;
   }
   /* A sequence STEP is pointed at as three separate elements, and two of them
@@ -203,7 +203,7 @@ PAGE = """<!doctype html>
      which is what "only the number was highlighted" looked like. Text takes a
      fill; a line takes a stroke. */
   line.pointed { stroke: var(--glow) !important; stroke-width: 2.5px !important; }
-  text.pointed, .pointed:not(.node) text, .pointed:not(.node) tspan {
+  text.pointed, .pointed:not(.node):not(.cluster) text, .pointed:not(.node):not(.cluster) tspan {
     fill: var(--glow) !important; font-weight: 600;
   }
   /* When the thing being pointed at is SEVERAL elements — a sequence step is a
