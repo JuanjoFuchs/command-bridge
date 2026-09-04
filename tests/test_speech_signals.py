@@ -193,6 +193,33 @@ def test_speech_pending_counts_and_is_published(state):
     assert state.snapshot()["speech_pending"] == 1
 
 
+def test_the_say_hold_signal_ignores_the_microphone_level(state):
+    """The say-hold half of the amplitude fix (2026-09-04). `talking(amplitude=False)` drops
+    `user_speaking` — the client's raw microphone LEVEL, which any room sound raises — and keeps
+    only the segmenter (`speech_active` + `speech_pending`). So a finished clip is held while he is
+    actually being segmented as speech, and NOT held out by mere noise. The default keeps amplitude,
+    for the lane-latch and `status`, where the earliest possible warning is what matters."""
+    state.clients.add(object())
+    state.capturing = True
+    state.last_audio_at = time.monotonic()
+
+    # 1) Amplitude alone — microphone level up, no utterance open, nothing transcribing.
+    state.user_speaking = True
+    assert state.speaking_now()["speech_active"] is False
+    assert state.talking() is True, "the default still counts the microphone level"
+    assert state.talking(amplitude=False) is False, "the say-hold ignores raw room noise"
+
+    # 2) Speech closed and still being transcribed — the segmenter's own, still holds the clip.
+    state.user_speaking = False
+    state.speech_pending = 1
+    assert state.talking(amplitude=False) is True, "an utterance in transcription still holds it"
+
+    # 3) A live utterance in the segmenter holds it too.
+    state.speech_pending = 0
+    _talking(state)
+    assert state.talking(amplitude=False) is True, "segmented speech still holds the clip"
+
+
 def test_pending_is_raised_before_the_first_await():
     """The ordering is the whole point. `_emit` awaits the recognizer, so `/status` IS served
     between the buffer emptying and the turn reaching the log; counting after the await would
@@ -220,7 +247,9 @@ def test_the_status_snapshot_publishes_all_three_from_one_place(state):
 
 
 def test_the_hold_loop_reads_the_same_answer_as_status():
-    """The two copies are what produced the caveat. `_speak` must go through `state.talking()`."""
+    """The two copies are what produced the caveat. `_speak` must go through `state.talking()` —
+    and specifically its `amplitude=False` variant (2026-09-04), so a FINISHED clip is held only by
+    the segmenter, never by raw microphone level / room noise. The lane-latch keeps the default."""
     src = SERVER.read_text(encoding="utf-8")
     # SLICED TO THE STAGE NAME, not to a whole call. The end marker used to be the literal
     # `await _set_agent_state(state, "speaking")`, and spec 016 added the owner argument — so a
@@ -228,7 +257,12 @@ def test_the_hold_loop_reads_the_same_answer_as_status():
     # actually delimits the hold loop.
     speak = src[src.index("    waited = 0.0"):src.index('_set_agent_state(state, "speaking"')]
 
-    assert "state.talking()" in speak
+    assert "state.talking(amplitude=False)" in speak, (
+        "the say-hold must trust the segmenter, not the microphone level — room noise is not speech"
+    )
+    assert "state.talking()" not in speak, (
+        "the amplitude-inclusive default belongs to the lane-latch, not to holding a finished clip"
+    )
     assert "state.user_speaking or state.buffer.speech_active" not in speak, (
         "that is the second copy of the test, and it is the one that did not know about mute"
     )

@@ -611,15 +611,27 @@ class TunnelState:
             "speech_pending": max(0, int(self.speech_pending)),
         }
 
-    def talking(self) -> bool:
+    def talking(self, *, amplitude: bool = True) -> bool:
         """Is he mid-sentence right now — EITHER signal, additively.
 
         A false positive costs a moment of delay; a false negative costs interrupting him, and the
         two are not worth the same. `speech_pending` counts too: an utterance already closed and
         still being transcribed is speech that has not reached anyone yet.
+
+        `amplitude=False` DROPS `user_speaking` and trusts the segmenter alone (`speech_active` +
+        `speech_pending`). `user_speaking` is the client reading its own microphone LEVEL, which
+        rises on any room sound — a fan, a door, another voice — while `speech_active` is energy
+        above an ADAPTIVE noise floor and absorbs steady noise instead of firing on it. The SAY-HOLD
+        passes this so a synthesized clip stops being held back by ambient noise the segmenter never
+        called speech: nothing here knows in real time that a sound is HIM (the voiceprint scores an
+        utterance only after it closes), so for a clip already protected by barge-in the honest hold
+        is the noise-robust one. Live 2026-09-04: *"are we just checking amplitude?"* — the hold was.
+        Left ON (the default) for the lane-latch and everywhere else, where the amplitude lead is the
+        earliest warning and a moment's over-hold costs nothing.
         """
         s = self.speaking_now()
-        return bool(s["speech_active"] or s["user_speaking"] or s["speech_pending"])
+        speech = s["speech_active"] or s["speech_pending"]
+        return bool(speech or s["user_speaking"]) if amplitude else bool(speech)
 
     def capture(self, samples) -> None:
         """Append to the failsafe WAV, opening it on first audio."""
@@ -1548,18 +1560,25 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
     # finish speaking who has physically switched their microphone off. Live, 2026-08-01:
     # "whenever I mute, you say that you're listening and you're waiting for me to finish, but
     # I'm muted."
-    # EITHER signal holds the clip. The client's is faster — it reads the microphone level
-    # directly, while the server's is derived from audio that has already crossed the network and
-    # been segmented, so it lags by a buffer plus a hop. That lag is what let a reply land on top
-    # of him. Additive on purpose: a false positive costs a moment of delay, a false negative
-    # costs interrupting him.
+    # THE SEGMENTER HOLDS THE CLIP, NOT THE MICROPHONE LEVEL. `state.talking(amplitude=False)`
+    # drops `user_speaking` in this loop: it is the client's raw microphone level and rises on any
+    # room sound, and holding a FINISHED clip on it made him wait out noise for whatever he wanted
+    # to hear — live 2026-09-04, *"are we just checking amplitude?"*, and *"I'm sitting here waiting
+    # for the agent to say whatever it needs to say."* `speech_active` (energy above an ADAPTIVE
+    # noise floor) and `speech_pending` still hold it, so real speech is never talked over; the
+    # sub-second the segmenter lags his first syllable is covered by BARGE-IN, which cuts the clip
+    # on his voiceprint. The CLI's pre-say check took the same narrowing first; this is its other
+    # half, because `--now` runs THIS loop in a background task, so noise held the audible clip even
+    # when the agent did not block. Everywhere else `talking()` keeps amplitude: the lane-latch and
+    # `status` want the earliest possible warning, and a moment's over-hold there costs nothing.
     #
-    # NOW READ FROM `state.talking()` rather than computed here. Two copies of this test existed —
-    # this one, which knew about mute, and `status`, which did not — so the CLI carried a caveat
-    # telling every reader to apply the exception by hand. One place, one answer. It also picks up
-    # `speech_pending`: an utterance closed and still in transcription is speech nobody has heard.
+    # STILL ONE PLACE, ONE ANSWER: it goes through `state.talking(...)` rather than re-deriving the
+    # test inline. Two copies once existed — this one, which knew about mute, and `status`, which
+    # did not — so the CLI carried a caveat telling every reader to apply the exception by hand. It
+    # picks up `speech_pending` too: an utterance closed and still in transcription is speech nobody
+    # has heard.
     while waited < 15.0 and not state.muted:
-        if state.talking():
+        if state.talking(amplitude=False):
             if not announced:
                 await _set_agent_state(state, "waiting", owner)
                 announced = True
@@ -1573,9 +1592,9 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
             await asyncio.sleep(0.1)
             grace += 0.1
             waited += 0.1
-            if state.talking():
+            if state.talking(amplitude=False):
                 break
-        if not state.talking():
+        if not state.talking(amplitude=False):
             break
     # ⚠ **`speaking` IS NOT SET HERE ANY MORE.** It used to be, and it was a claim made before the
     # clip's fate was known: the deliverability test is thirty lines below, and a clip for a lane
