@@ -2386,17 +2386,26 @@ def _lane_signal(live: Any) -> dict[str, Any] | None:
     return {"lane": live.get("lane"), "ambiguous": live.get("ambiguous")}
 
 
-def _lane_event_for(baseline: Any, now: Any, my_lane: str | None) -> dict[str, Any] | None:
+def _lane_event_for(baseline: Any, now: Any, my_lane: str | None,
+                    *, holding_reply: bool = False) -> dict[str, Any] | None:
     """A live-lane change worth waking THIS lane for — not every switch in the room.
 
     The live-lane signal moves on EVERY switch, and breaking on all of them woke every off-lane
     agent each time JJ moved between two OTHER lanes: a bystander wake, one re-armed watch per idle
     agent per switch (measured live 2026-09-03 — kepler's watch resolving every 1-2 min as he bounced
     between magnus and atlas, lanes that are not kepler's). What actually concerns an agent is a
-    switch that CROSSED ITS LANE — he came to it, so it now gets turns, or he left it, so it should
-    raise a hand — or (implied by the same test) an ambiguous summons on the lane it was already
-    holding. A switch between two lanes that are neither leaves it exactly where it was, off-lane, so
-    it must not wake.
+    switch that CROSSED ITS LANE — he came to it, so it now gets turns — or (implied by the same
+    test) an ambiguous summons on the lane it was already holding. A switch between two lanes that
+    are neither leaves it exactly where it was, off-lane, so it must not wake.
+
+    🔴 A SILENT SWITCH-AWAY COSTS NO TURN (2026-09-04). JJ, moving off a lane without a word:
+    *"your watch just resolved when I moved away from you without saying anything … I think we just
+    caught a bug."* The spec wakes a lost-floor agent so it can RAISE A HAND (voice-tunnel spec 012
+    FR8) — but a hand is a HELD REPLY, and an agent that is only listening has none to raise, so
+    waking it spends a turn to tell it something it can do nothing with. So a switch AWAY from my
+    lane wakes me ONLY when I am `holding_reply`; pure-listen, it stays asleep and catches the switch
+    BACK to me (which always wakes) on the next poll. This narrows the FR to the case it was written
+    for and leaves the hand-raise intact.
 
     Single-agent / no `my_lane`: any change is relevant, unchanged. Absent signals return None, so a
     server predating lanes never fires this — the same absent-is-not-false rule the rest of the loop
@@ -2405,6 +2414,9 @@ def _lane_event_for(baseline: Any, now: Any, my_lane: str | None) -> dict[str, A
         return None
     if my_lane and baseline.get("lane") != my_lane and now.get("lane") != my_lane:
         return None   # a bystander switch: neither the lane he left nor the one he moved to is mine
+    if (my_lane and not holding_reply
+            and baseline.get("lane") == my_lane and now.get("lane") != my_lane):
+        return None   # a silent switch AWAY, and nothing held to raise a hand with — cost him no turn
     return {k: now[k] for k in now if now[k] != baseline.get(k)}
 
 
@@ -2873,7 +2885,7 @@ def cmd_watch(args) -> dict[str, Any]:
         # ONLY A SWITCH THAT CROSSES MY LANE WAKES ME — a bystander switch between two other lanes
         # does not (2026-09-03). `_lane_event_for` returns None for a switch that neither left nor
         # reached `my_lane`, so an off-lane agent stops re-arming on every move he makes elsewhere.
-        lane_event = _lane_event_for(lane_baseline, lane_now, my_lane)
+        lane_event = _lane_event_for(lane_baseline, lane_now, my_lane, holding_reply=holding_reply)
         # THE ONE RULE. Everything above gathers; this decides. A return is only permitted at a
         # quiet moment, whatever it is returning — and after the FR1 fix a muted, released or
         # disconnected microphone reads as quiet at the source, so none of those can wedge it.
@@ -2906,8 +2918,8 @@ def cmd_watch(args) -> dict[str, Any]:
                 args, "ceiling", collected, cursor, rounds, started, talking, live,
                 next=f"run `command-bridge watch --since {cursor}` again — "
                      f"the {_human_seconds(WATCH_SPEECH_MAX_S)} ceiling ended this, not silence, "
-                     f"so it is NOT permission to reply. `command-bridge cue --session "
-                     f"{args.session} heard` tells him you are there without talking over him.",
+                     f"so it is NOT permission to reply. `command-bridge cue heard` "
+                     f"tells him you are there without talking over him.",
                 **clamped)
     turns = collected
     # ONE PAYLOAD BUILDER FOR EVERY EXIT. Five different ways out of the old pre-reply loop was

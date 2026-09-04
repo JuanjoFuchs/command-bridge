@@ -4,8 +4,11 @@ The live-lane signal moves on every switch, and the watch used to break on all o
 JJ moved between two lanes every OTHER agent's watch resolved too — one re-armed watch per idle agent
 per switch. Measured live: with JJ bouncing between magnus and atlas, the kepler agent's watch
 resolved every 1-2 minutes though nothing about kepler had changed. `_lane_event_for` gates it: a
-switch only wakes a lane it left or reached (or an ambiguous summons on the lane it was holding); a
-switch between two other lanes leaves an off-lane agent off-lane, so it does not wake.
+switch only wakes a lane it REACHED (or one it LEFT while that agent is holding a reply — the
+hand-raise), or an ambiguous summons on the lane it was holding; a switch between two other lanes —
+or a SILENT switch away from a pure-listen agent (2026-09-04) — leaves it off-lane, so it does not
+wake. JJ, on the silent switch-away: *"your watch just resolved when I moved away from you without
+saying anything … I think we just caught a bug."*
 """
 import time
 import types
@@ -23,8 +26,17 @@ def test_a_switch_to_my_lane_wakes_me():
     assert cli._lane_event_for(_sig("magnus"), _sig("kepler"), "kepler") == {"lane": "kepler"}
 
 
-def test_a_switch_away_from_my_lane_wakes_me():
-    assert cli._lane_event_for(_sig("kepler"), _sig("magnus"), "kepler") == {"lane": "magnus"}
+def test_a_silent_switch_away_does_not_wake_a_pure_listen_lane():
+    """2026-09-04: he left my lane and I hold no reply — no hand to raise, so no wake. This is the
+    bug JJ named: the watch resolving when he moved away without saying anything."""
+    assert cli._lane_event_for(_sig("kepler"), _sig("magnus"), "kepler") is None
+
+
+def test_a_switch_away_wakes_me_when_i_am_holding_a_reply():
+    """The case voice-tunnel spec 012 FR8 was written for: I have something held, so leaving my lane
+    wakes me to raise the hand."""
+    assert cli._lane_event_for(_sig("kepler"), _sig("magnus"), "kepler",
+                               holding_reply=True) == {"lane": "magnus"}
 
 
 def test_a_bystander_switch_does_not_wake_me():
@@ -101,10 +113,21 @@ def test_a_switch_to_my_lane_still_resolves_my_watch(monkeypatch, tmp_path):
     assert result["reason"] == "lane"
 
 
-def test_a_switch_away_from_my_lane_still_resolves_my_watch(monkeypatch, tmp_path):
-    """The other necessary case: he leaves kepler, so kepler wakes to raise a hand."""
+def test_a_silent_switch_away_does_not_resolve_a_pure_listen_watch(monkeypatch, tmp_path):
+    """2026-09-04. He leaves kepler and kepler holds no reply — nothing to raise a hand with — so its
+    watch does NOT resolve on `lane`; it backs off. The bug JJ named: *"your watch just resolved
+    when I moved away from you without saying anything."*"""
     on_kepler = {**_IDLE, "lane": "kepler"}
     to_magnus = {**_IDLE, "lane": "magnus"}
+    result = _run(monkeypatch, tmp_path, on_kepler, to_magnus, "kepler")
+    assert result["reason"] == "quiet", "a silent switch-away woke a pure-listen watch"
+
+
+def test_a_switch_away_still_resolves_a_watch_that_is_holding_a_reply(monkeypatch, tmp_path):
+    """The case FR8 was written for survives: kepler holds a reply, so leaving its lane wakes it to
+    raise the hand. `agent_holds_turns` on the setup status is what makes it holding-a-reply."""
+    on_kepler = {**_IDLE, "lane": "kepler", "agent_holds_turns": True}
+    to_magnus = {**_IDLE, "lane": "magnus", "agent_holds_turns": True}
     result = _run(monkeypatch, tmp_path, on_kepler, to_magnus, "kepler", timeout=5.0)
     assert result["reason"] == "lane"
-    assert result.get("on_lane") is False, "he left my lane — I should be told I am off-lane"
+    assert result.get("on_lane") is False, "he left my lane — a holding-reply agent is told"

@@ -409,21 +409,29 @@ def test_a_server_too_old_to_report_lanes_falls_back_to_the_session_flag(monkeyp
 
 
 # ------------------------------------------------------------------ AC-11: told it went off-lane
+#
+# 🔴 NARROWED 2026-09-04 to the case AC-11 was written for. The wake exists so a lost-floor agent can
+# RAISE A HAND — and a hand is a HELD REPLY. An agent that lost the lane holding NOTHING has no hand
+# to raise, and waking it spent a turn to tell it something it could do nothing with. JJ named it a
+# bug: *"your watch just resolved when I moved away from you without saying anything."* So a switch
+# AWAY now wakes only an agent that is holding a reply; a pure-listen agent stays asleep and catches
+# the switch BACK to it (which always wakes). The two tests below pin both halves.
 
-def test_a_lane_switch_ends_the_wait_of_the_agent_that_lost_it(monkeypatch):
-    """AC-11. An agent that simply stopped receiving turns could not tell 'he is not talking' from
-    'he is talking to someone else', and the whole operating discipline here is that an agent must
-    never leave him talking to nobody."""
+def test_a_lane_switch_ends_the_wait_of_a_holding_agent_that_lost_it(monkeypatch):
+    """AC-11, for the holding-a-reply agent it now applies to. Such an agent could not otherwise
+    tell 'he is not talking' from 'he is talking to someone else', and the operating discipline is
+    that an agent holding an answer must never leave him talking to nobody — it raises a hand."""
     polls = {"n": 0}
 
     def fake_request(_session, path, _payload=None):
         if path != "/status":
             return {}
         polls["n"] += 1
-        # He starts on claude, then says "hey codex" and the live lane moves.
+        # He starts on claude, then says "hey codex" and the live lane moves. `agent_holds_turns`
+        # is what makes claude a holding-a-reply agent, the case the wake is now scoped to.
         return {"running": True, "clients": 1, "consumed_cursor": -1, "watch_open": False,
                 "watching_lanes": [], "default_lane": "claude", "ambiguous": 0,
-                "capturing": True, "channel_open": True, "muted": False,
+                "capturing": True, "channel_open": True, "muted": False, "agent_holds_turns": True,
                 "lane": "claude" if polls["n"] < 3 else "codex"}
 
     monkeypatch.setattr(cli, "_request", fake_request)
@@ -440,6 +448,29 @@ def test_a_lane_switch_ends_the_wait_of_the_agent_that_lost_it(monkeypatch):
         "reported as him being unhearable, or the agent tells him to check his orb"
     )
     assert "codex" in out["hint"]
+
+
+def test_a_lane_switch_does_not_wake_a_pure_listen_agent_that_lost_it(monkeypatch):
+    """The 2026-09-04 fix. Same switch, but claude holds NO reply — no hand to raise — so its watch
+    does NOT resolve on `lane`; it backs off to its idle heartbeat. The bug JJ named directly."""
+    polls = {"n": 0}
+
+    def fake_request(_session, path, _payload=None):
+        if path != "/status":
+            return {}
+        polls["n"] += 1
+        return {"running": True, "clients": 1, "consumed_cursor": -1, "watch_open": False,
+                "watching_lanes": [], "default_lane": "claude", "ambiguous": 0,
+                "capturing": True, "channel_open": True, "muted": False,
+                "lane": "claude" if polls["n"] < 3 else "codex"}
+
+    monkeypatch.setattr(cli, "_request", fake_request)
+    monkeypatch.setattr(cli.store, "watch",
+                        lambda _s, cursor, **k: ([], cursor))
+    out = cli.cmd_watch(_watch_args(lane="claude", timeout=0.6))
+
+    assert out["reason"] == "quiet", "a silent switch-away woke a pure-listen watch"
+    assert out.get("event") != "lane"
 
 
 def test_an_unroutable_summons_ends_the_live_lanes_wait(monkeypatch):
