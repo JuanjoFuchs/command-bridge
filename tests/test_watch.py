@@ -181,6 +181,30 @@ def test_a_muted_microphone_does_not_wedge_the_wait():
     assert cli._still_talking(None) is None
 
 
+def test_amplitude_false_gates_on_the_segmenter_not_the_microphone_level():
+    """The pre-say gate (2026-09-04). `amplitude=False` drops `user_speaking` — the client's raw
+    microphone LEVEL, which trips on any room sound — and keeps only the segmenter's judgement,
+    so steady noise no longer holds a reply. On a CURRENT server both segmenter fields are present,
+    so amplitude-only sound reads as not-talking."""
+    live = {"user_speaking": True, "speech_active": False, "speech_pending": 0}
+    assert cli._still_talking(live) is True, "default still counts the mic level"
+    assert cli._still_talking(live, amplitude=False) is False, "the gate ignores it"
+    assert cli._still_talking({"user_speaking": False, "speech_active": True, "speech_pending": 0},
+                              amplitude=False) is True, "real segmented speech still holds"
+    assert cli._still_talking({"user_speaking": False, "speech_active": False, "speech_pending": 3},
+                              amplitude=False) is True, "speech still transcribing still holds"
+
+
+def test_amplitude_false_falls_back_to_the_microphone_on_a_pre_segmenter_server():
+    """NEVER GO BLIND. A server too old to publish `speech_active`/`speech_pending` would give the
+    gate nothing, and reading that as quiet could let the pre-say talk over him. So when no
+    segmenter signal exists at all, the gate falls back to amplitude — exactly the old behaviour.
+    A current server always carries the segmenter fields, so the fallback never fires there."""
+    assert cli._still_talking({"user_speaking": True}, amplitude=False) is True
+    assert cli._still_talking({"user_speaking": False}, amplitude=False) is False
+    assert cli._still_talking({}, amplitude=False) is None
+
+
 def test_turns_arriving_do_not_end_the_wait_while_he_is_still_going(monkeypatch):
     """RULE_2: one thought arrives as several turns, and returning on the first answers the wrong
     question. Every round comes back, not just the last — nothing else will replay the earlier
@@ -498,18 +522,41 @@ def test_a_pre_reply_check_returns_immediately_when_he_is_quiet(monkeypatch):
     assert "next_wait" not in out, "there is no next rung; nothing is being scheduled"
 
 
-def test_a_pre_reply_check_still_holds_while_he_is_talking(monkeypatch):
+def test_a_pre_reply_check_holds_while_the_segmenter_hears_speech(monkeypatch):
     """Immediate means immediate ONLY when he is quiet. The whole point of checking before
-    speaking is the case where he is not."""
+    speaking is the case where he is not — and for a pre-reply check "not quiet" means the
+    SEGMENTER hears speech (`speech_active`/`speech_pending`), not that the microphone caught a
+    sound. The room-noise test below pins the other half."""
     fake = Fake([_quiet(agent_holds_turns=True),
-                 _quiet(agent_holds_turns=True, user_speaking=True),
-                 _quiet(agent_holds_turns=True, user_speaking=True),
+                 _quiet(agent_holds_turns=True, speech_active=True),
+                 _quiet(agent_holds_turns=True, speech_active=True),
                  _quiet(agent_holds_turns=True)]).install(monkeypatch)
     out = cli.cmd_watch(_args(timeout=30.0))
 
-    assert fake.polls >= 2, "it must hold while he is speaking, however urgent the reply"
+    assert fake.polls >= 2, "it must hold while the segmenter hears him, however urgent the reply"
     assert fake.timeouts[1] == cli.WATCH_POLL_SPEECH_S
     assert out["finished"] is True
+
+
+def test_a_pre_reply_check_ignores_room_noise(monkeypatch):
+    """The fix, 2026-09-04. `user_speaking` is the client's raw MICROPHONE LEVEL — it trips on a
+    fan, a door, someone else talking. A pre-reply check that held on it made him *"sit here
+    waiting for the agent to say whatever it needs to say"* while the room was noisy but he was
+    silent. So the pre-reply gate drops amplitude and trusts the segmenter; barge-in (his
+    voiceprint alone) covers the sub-second the segmenter may lag behind him. Amplitude with NO
+    segmented speech now resolves as instantly as silence does.
+
+    Every OTHER watch keeps amplitude — `test_the_leading_signal_alone_may_not_end_the_wait` is a
+    plain (not holding-a-reply) watch and still holds on `user_speaking`, unchanged."""
+    fake = Fake([_quiet(agent_holds_turns=True, user_speaking=True)]).install(monkeypatch)
+    t0 = time.monotonic()
+    out = cli.cmd_watch(_args(timeout=30.0))
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 0.1, "amplitude-only noise must not delay a held reply"
+    assert fake.timeouts == [0.0], "it takes the same fast path as silence — no blocking poll"
+    assert out["reason"] == "quiet" and out["finished"] is True
+    assert out["user_speaking"] is True, "the noise is still REPORTED honestly, just not held on"
 
 
 def test_listening_still_blocks_rather_than_spinning(monkeypatch):

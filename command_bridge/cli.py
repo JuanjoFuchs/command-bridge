@@ -2795,7 +2795,13 @@ def cmd_watch(args) -> dict[str, Any]:
     lane_baseline = _lane_signal(status0)
     default_lane = status0.get("default_lane") if isinstance(status0, dict) else None
     talking = _still_talking(status0)
-    talking_to_me = _talking_to_me(talking, status0, my_lane)
+    # THE HOLD GATE IS NARROWER THAN THE REPORT. `talking` (combined, amplitude included) is what
+    # the payload publishes as `user_speaking` — the true fact of any sound, never hidden. But an
+    # agent HOLDING A REPLY must not be held by room noise, so its pre-say gate drops raw amplitude
+    # and trusts the segmenter (`_still_talking(amplitude=...)`); barge-in covers the segmenter's
+    # lag. Every other watch keeps amplitude, so `talking_gate` equals `talking` there — unchanged.
+    talking_gate = _still_talking(status0, amplitude=not holding_reply)
+    talking_to_me = _talking_to_me(talking_gate, status0, my_lane)
     ack: Any = None
     while True:
         remaining = deadline - time.monotonic()
@@ -2809,9 +2815,11 @@ def cmd_watch(args) -> dict[str, Any]:
         # history, and it bounds the measurement error rather than the wait. That is what keeps
         # NFR2 honest — 200 ms of resolution on top of the segmenter's own delay, not another
         # ladder.
-        if holding_reply and not collected and not talking:
+        if holding_reply and not collected and not talking_gate:
             # THE PRE-REPLY CHECK, and it does not wait at all: one read of the log, one look at
-            # the speech signals, an answer. This is the case he timed and called slow.
+            # the speech signals, an answer. This is the case he timed and called slow. It gates on
+            # `talking_gate`, not `talking`, so amplitude-only room noise no longer denies the fast
+            # path — the check the pre-say exists for is "is he SPEAKING", not "is there sound".
             slice_s = 0.0
         elif collected or talking_to_me:
             slice_s = WATCH_POLL_SPEECH_S
@@ -2849,7 +2857,8 @@ def cmd_watch(args) -> dict[str, Any]:
         if now is None and (unattended or off_lane) and baseline is not None:
             break
         talking = _still_talking(live)
-        talking_to_me = _talking_to_me(talking, live, my_lane)
+        talking_gate = _still_talking(live, amplitude=not holding_reply)
+        talking_to_me = _talking_to_me(talking_gate, live, my_lane)
         if baseline is not None and now is not None and now != baseline:
             # The EVENT is named, not merely implied by a diff, because "he unmuted" and "he
             # muted" call for opposite responses and an agent should not have to reconstruct
@@ -3095,7 +3104,7 @@ def cmd_watch(args) -> dict[str, Any]:
 
 
 
-def _still_talking(live: Any) -> bool | None:
+def _still_talking(live: Any, *, amplitude: bool = True) -> bool | None:
     """Is he mid-sentence RIGHT NOW — None when this server cannot say.
 
     EITHER SIGNAL COUNTS, which is the same additive test `_speak` runs before it lets a clip
@@ -3122,6 +3131,21 @@ def _still_talking(live: Any) -> bool | None:
     there hands the agent nothing while he waits for an answer, which is the same failure as
     interrupting him wearing different clothes. His own words are the requirement: *"the gist is
     making sure that there's any speech drained before you speak."*
+
+    `amplitude=False` DROPS `user_speaking` and keeps only the segmenter's judgement
+    (`speech_active` + `speech_pending`). `user_speaking` is the client reading its own microphone
+    LEVEL — it trips on any sound in the room, a fan, a door, someone else talking — while
+    `speech_active` is energy above an ADAPTIVE noise floor (`asr.speech_active`), which absorbs
+    steady room noise instead of firing on it. The PRE-SAY hold passes this so that ambient noise
+    stops delaying a reply it should never have delayed: nothing here can know in real time that a
+    sound is HIM (the voiceprint only scores an utterance after it closes), so the honest choice
+    for a reply already protected by barge-in is to trust the noise-robust signal and let his own
+    voice interrupt if the segmenter was a beat behind. This is the spec-005 asymmetry stated as
+    code — the leading amplitude signal may only EXTEND a genuine speech wait, never manufacture
+    one from noise. Live 2026-09-04: *"whenever I speak, it's transcribing live … isn't that what
+    we should check on the presay? Are we just checking amplitude?"* Left ON everywhere else,
+    where a false positive costs only a moment and the amplitude lead is the earliest warning that
+    keeps an agent from talking over him.
     """
     if not isinstance(live, dict):
         return None
@@ -3132,7 +3156,18 @@ def _still_talking(live: Any) -> bool | None:
     # installable and an old one is exactly what an agent meets after a partial upgrade.
     if live.get("muted"):
         return False
-    keys = [k for k in ("user_speaking", "speech_active", "speech_pending") if k in live]
+    if amplitude:
+        signals: tuple[str, ...] = ("user_speaking", "speech_active", "speech_pending")
+    else:
+        # Prefer the segmenter, but NEVER GO BLIND. If a server publishes no segmenter signal at
+        # all — one older than these fields — dropping amplitude too would leave nothing, and this
+        # would read as quiet while he actually speaks: the pre-say could then talk over him. So on
+        # such a server the gate falls back to amplitude, exactly as before. On a current server
+        # both segmenter fields are present, so this fallback never fires.
+        signals = ("speech_active", "speech_pending")
+        if not any(k in live for k in signals):
+            signals = ("user_speaking",)
+    keys = [k for k in signals if k in live]
     if not keys:
         return None
     return any(bool(live[k]) for k in keys)
