@@ -400,11 +400,15 @@
      background lanes came out as pale grey circles — a different object, not a quieter one.
      SIZE is the channel that survives both themes, because it does not touch the palette at all.
      The live orb keeps its full diameter, its identity ring, its glow and its pulse; the others
-     step back and desaturate slightly while staying the same dark lens. */
+     step back and desaturate slightly while staying the same dark lens.
+     🔴 STEP BACK FURTHER — a .86 disc read as "barely different" across the room. JJ, 2026-09-04:
+     *"there is not much difference between the size of the active lane versus the inactive ones."*
+     The delta was ~14%; at .72 it is ~28%, so the live orb is unmistakably the biggest object in the
+     row, and the deeper desaturation reinforces it on the one channel that survives both themes. */
   #orbs[data-multi="true"] .laneorb:not(.live) .disc {
-    transform:scale(.86); filter:saturate(.6);
+    transform:scale(.72); filter:saturate(.5);
   }
-  #orbs[data-multi="true"] .laneorb:not(.live) .nm { opacity:.45; }
+  #orbs[data-multi="true"] .laneorb:not(.live) .nm { opacity:.4; }
   .laneorb .disc { transition:transform .18s ease, box-shadow .18s ease, filter .18s ease; }
   .laneorb .nm   { transition:opacity .18s ease; }
   /* The session being off is a fact about the SESSION, so it is said once, on every orb, rather
