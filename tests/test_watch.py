@@ -401,7 +401,7 @@ def test_the_retired_name_is_not_dispatchable_at_all(capsys):
     assert payload["code"] == "unknown_command"
     assert payload["replaced_by"] == "watch"
     # THE WHOLE POINT: the same call, respelled and runnable, not a list to choose from.
-    assert payload["remedy"] == "command-bridge watch --session dev --since 42"
+    assert payload["remedy"] == "command-bridge watch --since 42"
     assert "drain" not in payload["commands"]
 
 
@@ -463,7 +463,7 @@ def test_the_watchdog_prompt_emits_the_new_command():
     spelling the tool wants to be running a release from now."""
     prompt = cli.WATCHDOG_PROMPT.format(session="dev")
 
-    assert "command-bridge watch --session dev" in prompt
+    assert "command-bridge watch --since" in prompt
     assert "command-bridge drain" not in prompt
     assert "command-bridge wait" not in prompt, "the third name he rejected must not be taught"
     # WAS: `assert "deprecated alias" in prompt`, so the prompt named the old command as the one
@@ -633,7 +633,7 @@ def test_a_clean_reply_says_so_without_raising_the_alarm(monkeypatch):
     out = _say(monkeypatch)
 
     assert "READ THE" not in out["next"]
-    assert "command-bridge watch --session dev --since 7" in out["next"]
+    assert "command-bridge watch --since 7" in out["next"]
 
 
 def test_describe_documents_the_new_fields():

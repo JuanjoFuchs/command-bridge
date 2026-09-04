@@ -152,7 +152,7 @@ def test_a_second_watch_on_the_same_branch_costs_the_command_alone(monkeypatch, 
     """
     first = _watch(monkeypatch, live, turns=turns)
     second = _watch(monkeypatch, live, turns=turns)
-    _, literal, _full = cli._next_branch(turns, live, SESSION, second["cursor"])
+    _, literal, _full = cli._next_branch(turns, live, second["cursor"])
 
     assert "next_repeated" not in first
     assert second["next_repeated"] is True
@@ -232,12 +232,12 @@ def test_every_next_this_tool_emits_carries_a_runnable_command(monkeypatch):
     """
     offenders = []
     for branch, turns, live in WATCH_BRANCHES:
-        got, literal, full = cli._next_branch(turns, live, SESSION, CURSOR)
+        got, literal, full = cli._next_branch(turns, live, CURSOR)
         assert got == branch, f"branch id drifted: expected {branch}, got {got}"
         for form, text in zip(("full", "short"), _emitted_forms(branch, literal, full),
                               strict=True):
-            if f"--session {SESSION}" not in text:
-                offenders.append(f"watch/{branch}/{form}: no session-substituted command")
+            if "--session" in text:
+                offenders.append(f"watch/{branch}/{form}: --session leaked into the command (it is dropped now)")
             if "<" in text and ">" in text:
                 offenders.append(f"watch/{branch}/{form}: unresolved placeholder in {text!r}")
             if "`command-bridge " not in text:
@@ -248,8 +248,8 @@ def test_every_next_this_tool_emits_carries_a_runnable_command(monkeypatch):
             out = _say(monkeypatch, server_says, now=now)
             text = out["next"]
             form = "short" if out.get("next_repeated") else "full"
-            if f"--session {SESSION}" not in text:
-                offenders.append(f"say/{branch}/{form}: no session-substituted command")
+            if "--session" in text:
+                offenders.append(f"say/{branch}/{form}: --session leaked into the command (it is dropped now)")
             if "<" in text and ">" in text:
                 offenders.append(f"say/{branch}/{form}: unresolved placeholder in {text!r}")
             if "`command-bridge " not in text:
@@ -274,7 +274,7 @@ def test_the_two_exception_payloads_also_carry_their_command(monkeypatch):
         session=SESSION, since=CURSOR, timeout=0.0, force=False, all_turns=False))
 
     assert busy["reason"] == "watch_open"
-    assert f"`command-bridge watch --session {SESSION} --since {CURSOR} --force`" in busy["next"]
+    assert f"`command-bridge watch --since {CURSOR} --force`" in busy["next"]
     assert "next_repeated" not in busy
 
     monkeypatch.setattr(cli, "WATCH_SPEECH_MAX_S", 0.0)
@@ -286,7 +286,7 @@ def test_the_two_exception_payloads_also_carry_their_command(monkeypatch):
         session=SESSION, since=CURSOR, timeout=0.0, force=False, all_turns=False))
 
     assert ceiling["reason"] == "ceiling"
-    assert f"`command-bridge watch --session {SESSION} --since {CURSOR}`" in ceiling["next"]
+    assert f"`command-bridge watch --since {CURSOR}`" in ceiling["next"]
     assert "NOT permission to reply" in ceiling["next"], (
         "the one warning in this payload is the reason it exists; it may never be suppressed"
     )
@@ -304,7 +304,7 @@ def test_the_one_placeholder_left_is_the_value_that_cannot_be_known(monkeypatch)
     out = _say(monkeypatch, {**_CLIP, "cursor": None})
 
     assert "--since <cursor>" in out["next"]
-    assert f"`command-bridge watch --session {SESSION} --since <cursor>`" in out["next"], (
+    assert f"`command-bridge watch --since <cursor>`" in out["next"], (
         "even here the session is filled in and the invocation is otherwise complete"
     )
 
@@ -445,7 +445,7 @@ def test_the_quiet_watch_is_left_exactly_as_it_was(monkeypatch):
     first = _watch(monkeypatch, _live())
     second = _watch(monkeypatch, _live())
 
-    assert first["next"] == second["next"] == f"run `command-bridge watch --session {SESSION} " \
+    assert first["next"] == second["next"] == f"run `command-bridge watch " \
                                               f"--since {CURSOR - 1}`"
     assert "next_repeated" not in second
     assert len(second["next"]) <= 51
@@ -457,7 +457,7 @@ def test_a_branch_whose_guidance_is_already_bare_never_pays_the_tail(monkeypatch
     actually shorter."""
     for branch in ("orb_off", "quiet"):
         turns, live = next((t, lv) for b, t, lv in WATCH_BRANCHES if b == branch)
-        _, literal, full = cli._next_branch(turns, live, SESSION, CURSOR)
+        _, literal, full = cli._next_branch(turns, live, CURSOR)
         first, second = _emitted_forms(f"bare-{branch}", literal, full)
 
         assert first == second == full, f"{branch} grew a tail it cannot afford"
@@ -488,3 +488,16 @@ def test_no_repeat_ever_makes_a_payload_bigger(monkeypatch):
             grew.append(f"say/{branch}: {len(json.dumps(first))} -> {len(json.dumps(second))}")
 
     assert not grew, "a repeat cost MORE than the call it repeats:\n  " + "\n  ".join(grew)
+
+
+def test_the_session_flag_is_dropped_from_describe_but_still_accepted():
+    """`--session` always defaults to `dev` and is dropped from the AGENT SURFACE (2026-09-04, JJ:
+    "I don't see a point in which we would choose a different session"). It must not appear in any
+    command's describe args. But argparse still ACCEPTS it — a one-off override and backward-compat —
+    so an invocation that still passes it does not break, and omitting it defaults to `dev`."""
+    out = cli.cmd_describe(types.SimpleNamespace(session="dev"))
+    leaked = [n for n, s in out["commands"].items()
+              if isinstance(s, dict) and isinstance(s.get("args"), dict) and "--session" in s["args"]]
+    assert leaked == [], f"--session leaked into the describe surface for: {leaked}"
+    assert cli.build_parser().parse_args(["watch", "--session", "other", "--since", "1"]).session == "other"
+    assert cli.build_parser().parse_args(["watch", "--since", "1"]).session == "dev"
