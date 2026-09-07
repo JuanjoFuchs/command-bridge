@@ -58,6 +58,16 @@ _viewport: dict[str, dict] = {}
 # moment of the switch.
 _armed: dict[str, dict] = {}
 
+# lane -> the CURRENT static point on that lane's canvas, or absent when nothing
+# is pointed. A `point` was published and then forgotten, so it did not survive
+# the two things that happen constantly mid-explanation: JJ switching AWAY from a
+# lane and back (the point was never re-sent, so it vanished — "the pointing
+# didn't work", 2026-09-07), and a page reconnecting (the SSE replay carried
+# frames and armed cues but not the highlight). Stored here so both restore it,
+# exactly as `_armed` is restored — a reference whose referent disappears the
+# moment his attention returns is worse than no reference at all.
+_point: dict[str, dict] = {}
+
 # In-flight `inspect` questions: id -> [Event, answer]. The page is the only
 # thing that knows what a selector resolves to, so the answer has to come back
 # FROM it — one request out on the stream, one POST back.
@@ -91,8 +101,16 @@ def set_live(lane: str) -> int:
         # connecting AFTER the switch does not replay a schedule that has
         # already run.
         _armed.pop(lane, None)
+        pt = _point.get(lane)
     _store.touch()
-    return publish("switch", {"lane": lane})
+    n = publish("switch", {"lane": lane})
+    # RESTORE THE LANE'S POINT (2026-09-07). The page renders the newly-live lane fresh, so a
+    # highlight set on it earlier is gone until re-sent. Without this, pointing at a box, switching
+    # away to another agent, and switching back left the box unmarked — the referent vanished the
+    # moment his attention returned. Published AFTER the switch so the lane's canvas is up first.
+    if pt:
+        publish("point", pt)
+    return n
 
 
 def live_lane() -> str:
@@ -544,6 +562,13 @@ class Handler(BaseHTTPRequestHandler):
             msg = {"selector": payload.get("selector", ""),
                    "zoom": bool(payload.get("zoom")),
                    "look": bool(payload.get("look")), "lane": lane}
+            # PERSIST so the highlight survives a switch-away-and-back and a reconnect (see
+            # `_point`). An empty selector is the CLEAR, so it removes the stored point rather than
+            # storing a highlight of nothing.
+            if msg["selector"]:
+                _point[lane] = msg
+            else:
+                _point.pop(lane, None)
             out = {"ok": True, "delivered_to": publish("point", msg), **msg}
             # A highlight the viewer cannot see is a reference with no referent.
             target = str(msg["selector"] or "").lstrip("#.")

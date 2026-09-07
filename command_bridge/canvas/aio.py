@@ -83,6 +83,7 @@ async def handle_events(request: web.Request) -> web.StreamResponse:
                    for f in frames.values()]
         live, hands = canvas._live, dict(canvas._hands)
         armed = list(canvas._armed.values())
+        point = dict(canvas._point.get(live) or {})
 
     try:
         # Version first, so a tab on an older build reloads itself (no refresh ever). Then `sync`,
@@ -102,6 +103,11 @@ async def handle_events(request: web.Request) -> web.StreamResponse:
                 await resp.write(_sse("rows", {"id": frame["id"], "lane": lane,
                                                "insert": frame["rows"], "remove_all": True,
                                                "data_name": frame.get("data_name", "table")}))
+        # The live lane's static point, AFTER its frames so the referent it names already exists
+        # (2026-09-07). A highlight set before this page connected — or before it reconnected — is
+        # otherwise lost, which is half of why "the pointing didn't work".
+        if point.get("selector"):
+            await resp.write(_sse("point", point))
         loop = asyncio.get_event_loop()
         while True:
             try:

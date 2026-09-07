@@ -54,6 +54,43 @@ def test_a_camera_verb_is_refused_from_a_lane_that_is_not_live():
     assert code == 409 and body["live_lane"] == "_t_live"
 
 
+def test_a_point_survives_a_switch_away_and_back():
+    """2026-09-07: a `point` was published and then forgotten, so JJ pointing at a box, switching
+    to another agent, and switching back left the box unmarked — 'the pointing didn't work'. The
+    point is now stored per lane and re-published when the lane goes live again."""
+    import queue as _q
+    canvas.set_live("_pt_a")
+    canvas.apply("/point", {"selector": "onlane", "lane": "_pt_a"})
+    assert canvas._point.get("_pt_a", {}).get("selector") == "onlane", "the point must be stored"
+
+    sub = _q.Queue()
+    canvas._subscribers.append(sub)
+    try:
+        canvas.set_live("_pt_b")          # switch AWAY
+        canvas.set_live("_pt_a")          # switch BACK
+        events = []
+        while not sub.empty():
+            events.append(sub.get_nowait())
+    finally:
+        canvas._subscribers.remove(sub)
+
+    points = [p for (e, p) in events if e == "point" and p.get("lane") == "_pt_a"]
+    assert points and points[-1]["selector"] == "onlane", \
+        "switching back to a lane must restore its point"
+    canvas._point.pop("_pt_a", None)
+    canvas._point.pop("_pt_b", None)
+
+
+def test_an_empty_selector_clears_the_stored_point():
+    """`point` with no selector is the CLEAR — it must remove the stored point, not persist a
+    highlight of nothing that would re-appear on the next switch or reconnect."""
+    canvas.set_live("_pt_c")
+    canvas.apply("/point", {"selector": "box", "lane": "_pt_c"})
+    assert "_pt_c" in canvas._point
+    canvas.apply("/point", {"selector": "", "lane": "_pt_c"})
+    assert "_pt_c" not in canvas._point
+
+
 def test_a_bad_batch_op_is_reported_not_fatal():
     results = canvas.run_batch([{"op": "set", "id": "b", "content": "y", "lane": "_t_b"},
                                 {"op": "nope"}])
