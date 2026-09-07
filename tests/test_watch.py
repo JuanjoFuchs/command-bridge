@@ -559,6 +559,36 @@ def test_a_pre_reply_check_ignores_room_noise(monkeypatch):
     assert out["user_speaking"] is True, "the noise is still REPORTED honestly, just not held on"
 
 
+def test_a_pre_reply_check_resolves_immediately_when_he_speaks_on_another_lane(monkeypatch):
+    """JJ's rule, 2026-09-07: *"a pre-say watch should resolve immediately unless I am speaking on
+    that same lane."* magnus holds a reply and the segmenter hears speech — but the LIVE lane is
+    kepler, so it is not speech to magnus. magnus must take the instant fast path, not wait it out.
+    Before the fix the fast path gated on the SESSION-WIDE speech signal, so his talking to another
+    agent kept every off-lane agent's pre-say check from resolving promptly."""
+    st = _quiet(lane="kepler", speech_active=True, lane_holds_turns={"magnus": True})
+    fake = Fake([st]).install(monkeypatch)
+    t0 = time.monotonic()
+    out = cli.cmd_watch(_args(lane="magnus", timeout=30.0))
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 0.1, "a pre-say off-lane, while he talks elsewhere, must not wait"
+    assert fake.timeouts == [0.0], "it takes the instant fast path, not a blocking poll"
+    assert out["reason"] == "quiet" and out["finished"] is True
+
+
+def test_a_pre_reply_check_still_holds_while_he_speaks_on_my_lane(monkeypatch):
+    """The other half of the same rule: magnus holds a reply and the live lane IS magnus with
+    segmented speech — that is speech TO me, so I hold and do not interrupt until he stops."""
+    on_mine = _quiet(lane="magnus", speech_active=True, lane_holds_turns={"magnus": True})
+    quiet_after = _quiet(lane="magnus", lane_holds_turns={"magnus": True})
+    fake = Fake([on_mine, on_mine, on_mine, quiet_after]).install(monkeypatch)
+    out = cli.cmd_watch(_args(lane="magnus", timeout=30.0))
+
+    assert fake.polls >= 2, "it must hold while he is speaking on MY lane"
+    assert fake.timeouts[0] == cli.WATCH_POLL_SPEECH_S
+    assert out["finished"] is True
+
+
 def test_listening_still_blocks_rather_than_spinning(monkeypatch):
     """The other half, and why this cannot simply always return immediately. An agent with
     nothing in hand is required by RULE_1 to sit in a blocking call; an instant empty return would

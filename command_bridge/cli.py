@@ -2844,11 +2844,20 @@ def cmd_watch(args) -> dict[str, Any]:
         # history, and it bounds the measurement error rather than the wait. That is what keeps
         # NFR2 honest — 200 ms of resolution on top of the segmenter's own delay, not another
         # ladder.
-        if holding_reply and not collected and not talking_gate:
+        if holding_reply and not collected and not talking_to_me:
             # THE PRE-REPLY CHECK, and it does not wait at all: one read of the log, one look at
-            # the speech signals, an answer. This is the case he timed and called slow. It gates on
-            # `talking_gate`, not `talking`, so amplitude-only room noise no longer denies the fast
-            # path — the check the pre-say exists for is "is he SPEAKING", not "is there sound".
+            # the speech signals, an answer. This is the case he timed and called slow.
+            #
+            # 🔴 GATED ON `talking_to_me`, NOT `talking_gate` (2026-09-07). JJ's rule, stated
+            # outright: *"a pre-say watch should resolve immediately unless I am speaking on that
+            # same lane."* `talking_gate` is the segmenter signal but it is SESSION-WIDE — so while
+            # he spoke to ANOTHER agent, every off-lane agent's pre-say check saw speech and refused
+            # the fast path, then only fell out one idle poll later; and if the live lane read as his
+            # (or None) it sat the 2min ceiling. `talking_to_me` is `talking_gate` narrowed to MY
+            # lane, so the pre-say resolves the instant he is not speaking TO THIS AGENT — whether he
+            # is silent or talking to someone else — and still holds, uninterrupted, while he is
+            # speaking on my lane. (`talking_gate` already dropped raw amplitude, so room noise still
+            # never holds it — that Thursday fix is preserved, this only adds the lane scope.)
             slice_s = 0.0
         elif collected or talking_to_me:
             slice_s = WATCH_POLL_SPEECH_S
