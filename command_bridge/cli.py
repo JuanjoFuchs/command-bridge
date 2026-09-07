@@ -2903,6 +2903,17 @@ def cmd_watch(args) -> dict[str, Any]:
         # does not (2026-09-03). `_lane_event_for` returns None for a switch that neither left nor
         # reached `my_lane`, so an off-lane agent stops re-arming on every move he makes elsewhere.
         lane_event = _lane_event_for(lane_baseline, lane_now, my_lane, holding_reply=holding_reply)
+        # ROLL THE BASELINE so a ROUND-TRIP is visible (2026-09-07). `_lane_event_for` compares two
+        # snapshots; with a baseline frozen at the watch's start, a switch AWAY and back to my lane
+        # nets to no change and reads as "nothing happened". That was harmless while a switch-away
+        # woke the watch immediately — but the 2026-09-04 silent switch-away made leaving my lane
+        # NOT wake a pure-listen watch, so the baseline then sat frozen at my_lane and his RETURN
+        # ("I had to come back to your lane to resolve that watch") compared equal to it and never
+        # woke me — the watch sat out the full speech ceiling instead. Advancing to the current lane
+        # each poll turns this into consecutive-poll deltas, so leaving AND returning are each caught
+        # on the poll they happen. Rolled after the event is read, so this poll's decision is
+        # unaffected; only the NEXT comparison moves.
+        lane_baseline = lane_now
         # THE ONE RULE. Everything above gathers; this decides. A return is only permitted at a
         # quiet moment, whatever it is returning — and after the FR1 fix a muted, released or
         # disconnected microphone reads as quiet at the source, so none of those can wedge it.

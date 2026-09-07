@@ -131,3 +131,33 @@ def test_a_switch_away_still_resolves_a_watch_that_is_holding_a_reply(monkeypatc
     result = _run(monkeypatch, tmp_path, on_kepler, to_magnus, "kepler", timeout=5.0)
     assert result["reason"] == "lane"
     assert result.get("on_lane") is False, "he left my lane — a holding-reply agent is told"
+
+
+def test_a_round_trip_away_and_back_to_my_lane_wakes_me(monkeypatch, tmp_path):
+    """2026-09-07 regression from the silent switch-away. Leaving my lane no longer wakes a
+    pure-listen watch (right) — but the RETURN must still wake it, or the watch sits out the speech
+    ceiling. JJ: *"I had to come back to your lane to resolve that watch"* — and it did nothing. The
+    baseline is now rolled each poll, so magnus → atlas → magnus is seen as two deltas and the
+    return wakes me. Without the roll the return compares equal to the frozen start and is missed."""
+    monkeypatch.setattr(cli.config, "session_dir", lambda: str(tmp_path))
+    seq = {"n": 0}
+
+    def request(_session, path, _payload=None):
+        if path != "/status":
+            return {}
+        seq["n"] += 1
+        # 1,2 = the setup reads (baseline: on magnus); 3 = switched AWAY to atlas; 4+ = back on magnus
+        lane = "magnus" if seq["n"] <= 2 else ("atlas" if seq["n"] == 3 else "magnus")
+        return {**_IDLE, "lane": lane}
+    monkeypatch.setattr(cli, "_request", request)
+
+    def watch(_session, cursor, timeout=0.0, addressed_only=True, lane=None, default_lane=None):
+        time.sleep(min(timeout, 0.05))
+        return [], cursor
+    monkeypatch.setattr(cli.store, "watch", watch)
+
+    result = cli.cmd_watch(types.SimpleNamespace(
+        session="s", since=6, timeout=5.0, force=False, all_turns=False, lane="magnus"))
+
+    assert result["reason"] == "lane", "the return to my lane must wake the watch, not sit out the ceiling"
+    assert result.get("live_lane") == "magnus"
