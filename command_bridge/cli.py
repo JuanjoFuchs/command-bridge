@@ -679,7 +679,10 @@ DESCRIBE: dict[str, Any] = {
                           "'codex', 'grok'. This tool holds no model and cannot know what is "
                           "driving it; you are the only party that does. Persists, so pass it once.",
             },
-            "returns": "runs until stopped; prints the client URL including the token",
+            "returns": "runs until stopped; prints the client URL WITH its token — GIVE THAT URL "
+                       "to the human whole, the `?token=` is what lets the page connect the mic. "
+                       "Started detached you will not see the banner: read the same URL back from "
+                       "`command-bridge doctor` (its `client_url`) or `status.url`.",
             "notes": "A phone needs HTTPS, so front this port with a tunnel — `ngrok http "
                      "<port>` (detected automatically by `status.phone`) or `tailscale serve "
                      "--bg <port>` (which also changes this device's DNS system-wide, so check "
@@ -1597,6 +1600,20 @@ def _url_for(rt: dict[str, Any], path: str = "/") -> str:
 def _client_url(session: str) -> str | None:
     rt = read_runtime(session)
     return _url_for(rt, "/") if rt else None
+
+
+def _server_alive(rt: dict[str, Any]) -> bool:
+    """A loopback `/health` probe — is a server actually answering on this runtime's port?
+
+    The runtime file is written at `serve` start and OUTLIVES a `stop`, so its mere presence is not
+    proof the URL works. Handing the human a dead URL is worse than handing none — he opens it,
+    nothing connects, and the tool looks broken (JJ 2026-09-07). `/health` needs no token."""
+    try:
+        url = f"http://{rt['host']}:{rt['port']}/health"
+        with urllib.request.urlopen(url, timeout=PROXY_PROBE_TIMEOUT_S) as resp:
+            return 200 <= int(getattr(resp, "status", None) or resp.getcode()) < 300
+    except Exception:
+        return False
 
 
 NGROK_API = "http://127.0.0.1:4040/api/tunnels"
@@ -4913,6 +4930,21 @@ def cmd_doctor(_args) -> dict[str, Any]:
     elif covered:
         parts.append(f"If this machine already has a provisioned checkout elsewhere, run from "
                      f"THAT instead: this process is {sys.executable}")
+    # THE URL TO HAND THE HUMAN, whenever a server is actually up (JJ 2026-09-07). An agent that
+    # restarts the server DETACHED never sees the serve banner — it goes to a pipe — and then
+    # verifies with THIS command, so `doctor` is where it must be told to give the human the full
+    # client URL INCLUDING the token, the gate the page cannot connect without. Live-probed, not
+    # read off the runtime file alone, because that file outlives a `stop`: a dead URL handed over
+    # is worse than none. The failure this fixes: a tokenless URL given from memory, and the human
+    # having to ask "don't we need a token?"
+    _session = getattr(_args, "session", None) or "dev"
+    _rt = read_runtime(_session)
+    if _rt and _server_alive(_rt):
+        _url = _url_for(_rt, "/")
+        out["client_url"] = _url
+        parts.append(f"THE SERVER IS UP — give the human this URL to open Command Bridge, and give "
+                     f"it WHOLE: the `token` in it is REQUIRED and the page cannot connect without "
+                     f"it → {_url}")
     out["next"] = ". ".join(parts)
     return out
 

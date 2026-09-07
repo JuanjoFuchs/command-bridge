@@ -3070,6 +3070,13 @@ def run(
     # flush=True: without it the banner sits in the pipe buffer when serve is launched
     # detached (which is the normal way an agent runs it), so the operator never sees the URL.
     print(f"command-bridge serving   http://{host}:{port}/?token={token}", flush=True)
+    # GIVE THIS TO THE HUMAN, WHOLE (JJ 2026-09-07). The line above is not just a status message —
+    # it is the one thing the operator needs to open the page, and the `?token=` is load-bearing:
+    # the page loads without it but cannot connect the microphone, so a URL handed over without it
+    # looks like the tool is broken. An agent that restarts DETACHED will not see this banner and
+    # must read the same URL back from `command-bridge doctor` / `status.url` instead.
+    print("  ^ GIVE THIS URL to whoever will talk — including the ?token=, which the mic needs",
+          flush=True)
     print(f"  session            {session}", flush=True)
     # The FIRST thing an agent reads after starting the tunnel, because it is the one instruction
     # this CLI cannot enforce on its own. Everything else here makes staying in `watch` the easy
