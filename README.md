@@ -2,9 +2,6 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/command-bridge/ci.yml?branch=main&label=CI)](https://github.com/JuanjoFuchs/command-bridge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/command-bridge/release.yml?label=Release)](https://github.com/JuanjoFuchs/command-bridge/actions/workflows/release.yml)
-[![PyPI](https://img.shields.io/pypi/v/command-bridge)](https://pypi.org/project/command-bridge/)
-[![npm](https://img.shields.io/npm/v/%40juanjofuchs%2Fcommand-bridge)](https://www.npmjs.com/package/@juanjofuchs/command-bridge)
-[![Python](https://img.shields.io/pypi/pyversions/command-bridge)](https://pypi.org/project/command-bridge/)
 [![GitHub Release](https://img.shields.io/github/v/release/JuanjoFuchs/command-bridge)](https://github.com/JuanjoFuchs/command-bridge/releases)
 [![License](https://img.shields.io/github/license/JuanjoFuchs/command-bridge)](LICENSE)
 
@@ -31,26 +28,32 @@ than editing it out. The tunnel's own half of the round trip is about a second.
 
 ## Quick start
 
-Two commands, and only the first one is yours.
+One command installs it straight from this repo — no npm, no PyPI, no account:
 
 ```bash
-npm install -g @juanjofuchs/command-bridge
+curl -fsSL https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/install.sh | bash
 ```
 
-Then paste this to your coding agent:
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/install.ps1 | iex
+```
+
+It finds Python, clones the repo into `~/command-bridge`, builds a private virtualenv beside it,
+and installs command-bridge with its neural engines — nothing touches your system Python. Put
+`<repo>/bin` on your PATH and `command-bridge` works from anywhere. Then paste this to your coding
+agent:
 
 > Run `command-bridge describe` and follow it end to end: install anything missing, start the tunnel
 > under your own name, give me the URL to open on my phone, and then stay in `watch` so you can
 > hear me.
 
-That is the whole handoff. Your agent installs the engines, downloads the models, starts the
-server and hands you back a URL. Open it on your phone, tap once, and say *"hey Claude, can you
-hear me?"*
+That is the whole handoff. Your agent downloads the models, starts the server and hands you back a
+URL. Open it on your phone, tap once, and say *"hey Claude, can you hear me?"*
 
-Needs **Python 3.10+ on PATH** — the npm package is a launcher, not a bundle, and builds a private
-environment inside itself without touching anything else on your machine. `pipx install
-command-bridge` is the same tool with one fewer wrapper, and [WinGet](#winget-windows-no-python-needed)
-needs nothing installed at all.
+Needs **Python 3.10+ on PATH**. The installer builds a private environment inside the checkout and
+touches nothing else on your machine — removing that one directory removes all of it.
 
 **The one thing your agent cannot do for you:** a phone needs HTTPS to reach a microphone at all,
 so a plain LAN address gives *no microphone* rather than a broken one. Front the port with a
@@ -108,50 +111,40 @@ seconds thinking about the last thing.
 
 ## Install
 
-### npm
+Published packages (npm, PyPI, WinGet) are not out yet — for now command-bridge installs straight
+from this repository.
+
+### One line
 
 ```bash
-npm install -g @juanjofuchs/command-bridge
-command-bridge setup
+curl -fsSL https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/install.sh | bash   # macOS / Linux
 ```
-
-Needs Python 3.10+ on PATH. The postinstall builds a private virtualenv inside the package and
-installs the matching PyPI release into it — your global Python environment is never modified, and
-`npm uninstall` removes all of it. A failed postinstall is not fatal: it reports what is missing
-and the launcher repeats the guidance when you actually run the tool.
-
-### pipx
-
-```bash
-pipx install command-bridge
-command-bridge setup
-```
-
-The canonical artifact — this is a Python package, and pipx installs it isolated without the npm
-layer in between.
-
-### pip
-
-```bash
-pip install command-bridge
-```
-
-### WinGet (Windows, no Python needed)
 
 ```powershell
-winget install JuanjoFuchs.command-bridge
+irm https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/install.ps1 | iex          # Windows
 ```
 
-The only channel that needs nothing else installed. Windows may flag it on first run: the bundle
-is unsigned, and Defender's heuristic dislikes unsigned Python bundles.
+The installer finds Python 3.10+, clones the repo (into `~/command-bridge`, or wherever `CB_DIR`
+points), builds a private virtualenv beside it, and installs the package with every engine. It runs
+the same whether piped or from a checkout (`./install.sh` / `.\install.ps1`), and reruns cleanly to
+update. Nothing touches your system Python, and deleting the checkout removes all of it.
+
+### By hand
+
+```bash
+git clone https://github.com/JuanjoFuchs/command-bridge.git
+cd command-bridge
+python -m venv venv
+venv/bin/python -m pip install -e ".[all]"      # venv/Scripts/python.exe on Windows
+export PATH="$PWD/bin:$PATH"                     # then `command-bridge` works from anywhere
+```
 
 ### Better voice and better recognition
 
-`command-bridge setup` does all of this in one command. The pieces, if you want them individually:
+The one-line install already includes every engine. `command-bridge setup` then downloads all of
+the models in one command — or fetch them individually:
 
 ```bash
-pip install command-bridge[all]      # or [piper] / [parakeet]
-
 command-bridge download asr          # Parakeet — 8x faster than whisper, more accurate
 command-bridge download voice        # a neural voice instead of the robotic one
 command-bridge download voiceprint   # learns your voice, so the wake phrase becomes optional
@@ -253,7 +246,7 @@ graphics card. Measured on a 20-core desktop CPU:
 | **Minimum** — system voice + `whisper base.en` | 219 MB | ~150 MB | usable |
 | **Recommended** — Parakeet + neural voice + voiceprint | ~1.0 GB | 788 MB | **RTF 0.11** — 7.4 s of speech in 0.85 s |
 
-- **Python 3.10+** for pip and npm. WinGet needs nothing.
+- **Python 3.10+** on PATH.
 - **A phone browser.** Android Chrome is what this is tested on. The tab must stay in the
   foreground — background recording needs a native app, which this deliberately is not.
 - **HTTPS to the phone**, via Tailscale or any tunnel. See [Privacy](#privacy).
