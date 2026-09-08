@@ -1783,6 +1783,9 @@ async def _flush_lane_held(state: TunnelState, lane: str) -> int:
     four minutes after the question, with no acknowledgement that time passed, reads as the agent
     being slow rather than as him having been elsewhere.
     """
+    # Read BEFORE the prune, so a lane whose held clips have ALL expired still counts as having had
+    # a raised hand to lower. See the broadcast at the end of this function.
+    had = bool(state.lane_held.get(lane))
     _prune_lane_held(state, lane)
     queued = state.lane_held.pop(lane, [])
     if queued:
@@ -1813,9 +1816,15 @@ async def _flush_lane_held(state: TunnelState, lane: str) -> int:
         await _send_clip(state, header, clip["pcm"])
     if queued:
         timing.stamp(state.session, "lane_held_flushed", lane=lane, count=len(queued))
-        # The hand comes down on OPTIMISM, and that is deliberate: he has switched to this lane
-        # and the audio is on its way, so leaving it up would be the page telling him something is
-        # still waiting while it plays. If the clips come back (barge-in), so does the hand.
+    # THE HAND COMES DOWN WHENEVER THIS LANE'S HELD QUEUE EMPTIED — on a FLUSH (he switched here and
+    # the audio is on its way, so lowering it is OPTIMISM; if the clips come back via barge-in, so
+    # does the hand) OR on an EXPIRY (the clips are gone and nothing will play). Only the flush path
+    # lowered it before, so a lane whose held clips had ALL expired kept a stale raised hand until
+    # something else happened to move it — JJ, 2026-09-08: *"the hand was still up ... it showed at
+    # number three ... I had to say something for stuff to play back."* Gated on `had` (read before
+    # the prune) so this fires for the expiry case too, and does not broadcast for a lane that never
+    # had a hand up.
+    if had:
         await _broadcast_json(state, {"type": "lane_waiting", "lane": lane, "waiting": 0})
     return len(queued)
 

@@ -15,6 +15,7 @@ below is the specific regression this file exists to prevent.
 NO SERVER IS STARTED HERE. A live voice session was running on `dev` throughout this work.
 """
 import asyncio
+import time
 
 import pytest
 
@@ -273,6 +274,29 @@ def test_the_page_is_told_the_moment_a_lane_starts_waiting(state, sock):
 
     waiting = [h for h in sock.headers if h.get("type") == "lane_waiting"]
     assert waiting and waiting[-1] == {"type": "lane_waiting", "lane": "codex", "waiting": 1}
+
+
+def test_the_hand_comes_down_when_the_held_clips_all_expired(state, sock):
+    """🔴 2026-09-08. Coming back to a lane whose held replies had ALL expired left the raised hand
+    stuck on its count. `_flush_lane_held` pruned the dead clips but only lowered the hand when it
+    had something to FLUSH — so an all-expired lane cleared nothing, and the page kept painting a
+    reply that no longer existed. JJ: *"the hand was still up ... it showed at number three ... I had
+    to say something for stuff to play back."* The hand must come down on an expiry too."""
+    state.lanes.switch("claude")
+    say(state, "codex here", lane="codex")            # a held clip on codex, the hand goes up (1)
+    # Age it past the bound so the switch-back prunes it and has nothing left to play.
+    state.lane_held["codex"][0]["at"] = time.time() - (server.config.LANE_HELD_MAX_AGE_S + 1)
+
+    sock.headers.clear()
+    asyncio.run(server._set_lane(state, "codex", why="tap"))   # switch here: flush runs, prunes it
+
+    waiting = [h for h in sock.headers
+               if h.get("type") == "lane_waiting" and h.get("lane") == "codex"]
+    assert waiting and waiting[-1] == {"type": "lane_waiting", "lane": "codex", "waiting": 0}, (
+        "an all-expired lane left its raised hand stuck instead of lowering it on the switch back"
+    )
+    assert not state.lane_held.get("codex"), "the expired clips must be gone"
+    assert state.lane_expired.get("codex"), "and the agent is still told what it lost (unchanged)"
 
 
 def test_the_off_lane_hint_tells_the_agent_to_SPEAK_not_to_wait():
