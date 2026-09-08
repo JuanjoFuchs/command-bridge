@@ -20,11 +20,11 @@ phone will not give a web page a microphone over plain http.
 
 ## Watch it work
 
-https://github.com/user-attachments/assets/a5be07a0-b1dc-446d-919f-c9351a583a2f
+https://github.com/user-attachments/assets/52b01a4c-2868-49ed-a299-6e314fa88cf5
 
-A real session, phone in hand: *"can you hear me"*, then shipping a release end to end. **The
-`skipped Ns` badges are the agent thinking** — that time is real and this cut discloses it rather
-than editing it out. Command-bridge's own half of the round trip is about a second.
+The agent talking through its own `watch` logic out loud — pointing at each box of a diagram it drew
+on the shared canvas as it explains. Voice out, a diagram back, and every bit of it runs on your
+own machine.
 
 ## Quick start
 
