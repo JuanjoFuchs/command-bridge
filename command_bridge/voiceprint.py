@@ -70,7 +70,7 @@ which leaves the whole 0.15-0.50 band as "unsure" — and unsure keeps its atten
 It cannot override a spoken wake phrase; it only overrides the conversation window, which is an
 inference rather than an instruction — the guess that whoever is speaking now is the same person
 who spoke a moment ago. When someone else in the room is talking, that guess is simply wrong, and
-Found live on 2026-08-07 when another person speaking landed as an addressed turn.
+Found live on 2026-08-07 when another person nearby speaking landed as an addressed turn.
 
 Why this does not reopen the false-negative risk the additive rule was protecting against: being
 ignored mid-sentence requires the gate to be confident you are a stranger, and the margin between

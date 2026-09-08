@@ -77,7 +77,7 @@ def test_addressed_flag_round_trips(tmp_sessions):
 
 
 def test_unaddressed_turns_are_consumed_but_not_returned(tmp_sessions):
-    """Reported live on the move, family talking around him: *"we need a better way to ignore what
+    """Reported live with other people talking around him: *"we need a better way to ignore what
     isn't classified as me, and it doesn't waste turns resolving the watch."*
 
     Both halves matter. Not returned, so the agent does not wake for someone else's sentence —

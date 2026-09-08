@@ -137,6 +137,6 @@ drive layout state.)
 ## References
 
 - `distill/tunnel-vision.md` — the `shot` donor and the 900×560 / `--lane` notes.
-- the project's Tunnel Vision Guide, rule 8 ("screenshot the page before claiming it works") — the
-  effort gate this makes executable in Command Bridge. (A vault note, not a repo file; named here for
+- The Tunnel Vision Guide, rule 8 ("screenshot the page before claiming it works") — the
+  effort gate this makes executable in Command Bridge. (A design note, not a repo file; named here for
   provenance, not as a path to open.)

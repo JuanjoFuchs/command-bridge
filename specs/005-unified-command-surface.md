@@ -33,7 +33,7 @@ becomes the highlight; the earcon yields the name.
 > genuinely survives is the `cue` conjunction (live + agent-authored canvas + speech-synced
 > highlight)."*
 >
-> Roadmap row (`Command Bridge.md`, 2026-09-01): *"**Unified command surface** — resolve the ~6
+> Roadmap row (`Command Bridge`, 2026-09-01): *"**Unified command surface** — resolve the ~6
 > command collisions (`serve`/`status`/`describe`/`lane`/`switch`/`watch`); bring the canvas verbs
 > under the one `command-bridge` CLI."*
 

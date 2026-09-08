@@ -60,7 +60,7 @@ it later, off a network event, is too late and playback silently fails.
 ## Bluetooth padding — pad every clip
 
 Bluetooth audio sinks power down between sounds and **clip the first ~100 ms** of playback.
-Nearly every session here is Bluetooth (earbuds, headset audio), so:
+Nearly every session here is Bluetooth (earbuds, headsets), so:
 
 - **0.1 s of leading silence** before any cue or utterance, so the sink is awake by the time
   speech starts.

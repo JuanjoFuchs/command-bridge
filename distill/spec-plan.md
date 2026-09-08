@@ -1,7 +1,7 @@
 # Command Bridge — proposed spec plan
 
 > **Status: SUPERSEDED as the authority — kept as the reasoning trail.** The authoritative roadmap now
-> lives in the project note `Command Bridge` , and the specs themselves are being written
+> lives in the project note `Command Bridge`, and the specs themselves are being written
 > in `../specs/cb-*.md`. This file is the scratch that generated them; where it disagrees with the
 > note or a written spec, they win. **JJ ruled on sequencing 2026-09-01: rename first (spec 001), then
 > the screenshot harness (spec 002) as the UI-verification prerequisite, then the server merge.** The

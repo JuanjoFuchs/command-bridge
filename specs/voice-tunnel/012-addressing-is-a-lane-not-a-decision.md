@@ -579,8 +579,8 @@ harness that proves it started no server.
 ## Out of Scope
 
 - **Routing work between agents, monitoring them, or steering them.** That is
-  Voice Tunnel's written anti-goal and is already served by `sb sessions`, `agent-mail` and
-  `ccpulse`. Lanes carry *speech*, nothing else.
+  Voice Tunnel's written anti-goal and is already served by existing session-history tooling.
+  Lanes carry *speech*, nothing else.
 - **Inferring who a turn is for.** See TC1.
 - **A distinct voice per agent.** `say --voice` already exists; whether each lane pins one is a separate,
   cheaper question.

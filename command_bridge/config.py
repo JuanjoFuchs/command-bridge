@@ -655,8 +655,8 @@ to fix one thing. This one attenuates a single band and only while that band is 
 every frame that is not an 's' the gain is exactly 1.0 — a listener who does not have the problem
 hears nothing change.
 
-Reported 2026-08-15, on the move: *"whenever you pronounce an S, it sounds very high and it makes
-someone nearby headache."* The complaint came from someone who was not even the user, which is worth
+Reported 2026-08-15: *"whenever you pronounce an S, it sounds very high and it's harsh to
+listen to."* The complaint came from someone who was not even the user, which is worth
 recording: this tool gets played out loud in rooms with other people in them, and fatigue for a
 bystander is a real failure even when the operator is comfortable.
 

@@ -151,7 +151,7 @@ command-bridge reload --session dev
 - `command_bridge/canvas/page.py` — the version-check self-reload (~L1089) and the `/events` sync
   replay that restores frames.
 - The `command-bridge reload` hot-reload endpoint (`canvas/aio.py handle_reload`) that this builds on.
-- JJ's genesis note the genesis note and the HTML-over-Websockets post it links — the transport pattern
+- JJ's genesis note and the HTML-over-Websockets post it links — the transport pattern
   CB's canvas already embodies (server renders, client places).
 - **idiomorph** — https://github.com/bigskysoftware/idiomorph — the DOM-morphing library for the
   flicker-free/camera-preserving refinement (Out of Scope here). Distill its practices before

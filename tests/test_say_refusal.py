@@ -377,7 +377,7 @@ def test_muting_does_not_forgive_a_turn_said_before_it(state, synth):
 
 
 def test_room_speech_that_never_passed_the_wake_gate_causes_no_refusal(state, synth):
-    """AC10. Reported on the move, 2026-08-15, with other people talking around him: turns the gate
+    """AC10. Reported 2026-08-15, with other people talking around him: turns the gate
     judged were not for the agent already carry `addressed: false`. They advance the cursor and
     end no wait — and they must not be able to gag the agent either, or a conversation in the room
     becomes a mute button nobody pressed."""

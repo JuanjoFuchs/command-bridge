@@ -3,7 +3,7 @@
 WHY THIS EXISTS
 ---------------
 Three de-esser implementations shipped in one sitting (see `_deess` in command_bridge/tts.py and
-the 2026-08-15 entry in the project note). Each was measured as working. Every one landed on the
+the 2026-08-15 entry in the design notes). Each was measured as working. Every one landed on the
 owner as *"I didn't feel a difference."* The failure was not in the DSP:
 
     A metric authored by the same pass that authors the fix is not evidence, it is the fix
@@ -258,13 +258,13 @@ def hf_energy_share(x: np.ndarray, rate: int, split_hz: float = 4000.0) -> float
 
     Reported deliberately, and deliberately labelled `legacy_proxy` in the output. It is here so
     the two can be watched disagreeing: this is the number the failed de-esser passes optimised,
-    and the project's ground-truth claim ("this voice puts ~55% of its energy above 4 kHz where
+    and the recorded ground-truth claim ("this voice puts ~55% of its energy above 4 kHz where
     natural speech is under 20%") is stated in these terms, so reproducing it is how this
     pipeline proves it is looking at the same audio everyone else was.
 
     It is NOT the metric. Energy share knows nothing about the ear.
 
-    MEASURED CAVEAT, and it matters for reading the project's ground-truth claim. "55% of its
+    MEASURED CAVEAT, and it matters for reading the recorded ground-truth claim. "55% of its
     energy above 4 kHz" does not reproduce under this definition: `en_GB-alan-medium` measures
     18.7% full-band and 22.8% energy-weighted per frame. 55% is recoverable only by summing
     MAGNITUDES rather than power, unweighted, across all frames including silence -- and 64% of

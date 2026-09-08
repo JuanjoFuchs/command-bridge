@@ -758,7 +758,7 @@ DESCRIBE: dict[str, Any] = {
                 "--all-turns": "ALSO return turns the wake gate judged were not for you. OFF BY "
                                "DEFAULT: an unaddressed turn advances the cursor but does not "
                                "end the wait, so other people in the room cannot burn your "
-                               "turns. Reported on the move, 2026-08-15, with other people talking "
+                               "turns. Reported 2026-08-15, with other people talking "
                                "around him — every one of those turns already carried "
                                "`addressed: false` and nothing was reading it. Pass this only "
                                "to audit what the gate rejected; `--no-wake-gate` on `serve` is "

@@ -45,8 +45,7 @@ combined page), which was deferred here on purpose.
 > On seeing the wireframe framed: *"Perfect. I love this."*
 >
 > (dictated 2026-08-31 over the voice tunnel, turns 4420–4421 and the earlier vision dump; captured in
-> `Command Bridge.md` → Wireframe and "The layout ADAPTS…". Mockup: the project's
-> `the wireframe mockup`.)
+> the project's Wireframe notes and "The layout ADAPTS…".)
 
 ## Findings — where the two pages are today
 
@@ -201,8 +200,7 @@ Grounded in the code:
 
 ## References
 
-- `Command Bridge.md` → Wireframe, "The layout ADAPTS as agents join and share"; the project notes mockup
-  `the wireframe mockup`.
+- `Command Bridge` → Wireframe, "The layout ADAPTS as agents join and share"; the project's wireframe mockup.
 - `command_bridge/server.py` `handle_index` (the voice page), `command_bridge/canvas/page.py`
   (`render()` — the canvas page), `specs/003-one-server-one-page.md` (the merge + the deferred AC-2),
   `specs/004-unified-lane.md` (the live lane the orb row lights), `specs/002-screenshot-harness.md`

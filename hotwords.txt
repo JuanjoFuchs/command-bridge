@@ -10,7 +10,6 @@
 #   Claude            Claude              Claude              ✓ (already fine)
 #   Codex             "Codix"             Codex               ✓ FIXED
 #   Grok              Grok                Grok                ✓
-#   Grok          "Grok"        Grok            ✓ FIXED
 #   Juanjo Fuchs   "Huang Ho Fuchs"    Juanjo Fuchs     ✓ FIXED @2.0
 #   Claudefana        "Claude Fanner"     "Claude Fanner"     ✗ still splits
 #
@@ -30,10 +29,9 @@
 #   spoken token just makes the beam prepend it on low-content audio. And
 #   "Claudefana" never matched anyway (splits to "Claude Fanner") while its
 #   "Claude" prefix fed the same insertion. Both were pure downside. The four
-#   that biasing actually fixed — Codex, Grok, Grok, Juanjo Fuchs — stay.
+#   that biasing actually fixed — Codex, Grok, Juanjo Fuchs — stay.
 #   Claudefana's real fix, if wanted, is a post-ASR text map, not a hotword.
 
 Codex
-Grok
 Grok
 Juanjo Fuchs

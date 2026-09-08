@@ -151,7 +151,7 @@ exists visually. **On a phone in a pocket it does not.** See the ruling section 
   commands that session is using.** No verification may start, restart or stop a server. The suite
   verifies server behaviour structurally and through in-process handlers; that is the ceiling here, and
   **the criteria say which parts are therefore unverified rather than claiming otherwise.**
-- **TC6**: Removing `drain` changes what the project's Voice Tunnel Guide tells agents to do. **That guide
+- **TC6**: Removing `drain` changes what the Voice Tunnel Guide tells agents to do. **That guide
   is not in this repo and is not this spec's to edit** — it is flagged upward instead.
 - **TC7**: 🔴 **The live session is armed RIGHT NOW and this change is visible to it immediately.**
   Measured at 13:45 on 2026-08-19: server pid alive, last turn 12:56, last watch re-armed 13:37. **The
@@ -295,7 +295,7 @@ since the thing being removed is feedback he has had in every session so far.
 - Changing what the waiting command *does* — spec `005` settled that.
 - The cue contours or their audio design.
 - Any change to how turns are transcribed, segmented or logged.
-- The agent-side operating rules themselves, which live in the project's Voice Tunnel Guide — flagged
+- The agent-side operating rules themselves, which live in the Voice Tunnel Guide — flagged
   upward under TC6, not edited here.
 - Adding a capture-liveness cue (option B above) unless JJ chooses it.
 
@@ -304,7 +304,7 @@ since the thing being removed is feedback he has had in every session so far.
 - `specs/005-one-wait-gated-on-speech.md` — the single waiting command this spec removes the second name
   for.
 - `specs/006-orb-off-is-not-quiet.md` — the control-event semantics the refusal must not fight.
-- Project node: `Voice Tunnel` in the project notes — the roadmap rows this spec closes.
+- Project node: `Voice Tunnel` — the roadmap rows this spec closes.
 
 ## Verified state (2026-08-19)
 
@@ -376,5 +376,5 @@ so a scan that collapsed to zero files would fail rather than pass.
 - **The refusal is not active in the live `dev` session**, because that server keeps the code it
   started with until it restarts. Only the command-surface change reached it — which is the
   migration path working as designed.
-- **TC6 stands and is flagged upward:** the project's Voice Tunnel Guide still instructs agents to run
+- **TC6 stands and is flagged upward:** the Voice Tunnel Guide still instructs agents to run
   the removed command before every reply. It is not in this repo and was not edited.

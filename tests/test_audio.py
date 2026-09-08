@@ -331,8 +331,8 @@ def test_the_deesser_attenuates_a_sibilant_burst():
     """A high-frequency burst is what an 's' looks like to the detector: nearly all of its energy
     sits above the 4 kHz split. It must come out quieter.
 
-    Reported 2026-08-15 on the move: *"whenever you pronounce an S, it sounds very high and it
-    makes someone nearby headache."*
+    Reported 2026-08-15: *"whenever you pronounce an S, it sounds very high and it's
+    harsh to listen to."*
     """
     import numpy as np
 

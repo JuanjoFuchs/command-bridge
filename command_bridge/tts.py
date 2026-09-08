@@ -306,7 +306,7 @@ of two. The relationship that holds is:
 **exact — zero error — across 14 cases** on 2026-08-26: four voices and speeds 0.8 through 4.0.
 Both roundings carry weight. Rounding the SUM instead of each token matched 0 of 10; the
 `max(1, …)` floor is what closed the last two, because a token never costs less than one unit and
-at high speed many round to zero. See Local TTS for the Command Bridge - Research."""
+at high speed many round to zero. See the local-TTS research notes."""
 
 
 def word_offsets(tokens, durations, space_id):
@@ -665,8 +665,8 @@ def _articulate(samples, rate: int):
 def _deess(pcm: bytes, rate: int) -> bytes:
     """Tame sibilance — the piercing 's' — without dulling the rest of the voice.
 
-    Reported live 2026-08-15, on the move with other people in it: *"whenever you pronounce an S, it
-    sounds very high and it makes someone nearby headache."* Two things make this worse here than on a
+    Reported live 2026-08-15: *"whenever you pronounce an S, it
+    sounds very high and it's harsh to listen to."* Two things make this worse here than on a
     normal TTS setup. The voice runs at **2x**, so the same number of fricatives arrive in half
     the time and the ear gets no gap to recover in; and it is played through a phone speaker on
     speakerphone, which has a presence peak in the same 5-8 kHz band the sibilance lives in.

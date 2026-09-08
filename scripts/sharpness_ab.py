@@ -14,7 +14,7 @@ the failure this whole effort exists to end.
 Three things get measured here:
 
 1. **Is the voice actually sharp?** `en_GB-alan-medium` against the owner's own recorded speech.
-   the project notes records a ground truth from a different pass, by a different method: this voice puts
+   The design notes record a ground truth from a different pass, by a different method: this voice puts
    ~55% of its energy above 4 kHz where natural speech is under 20%. If the sharpness metric does
    not also rate it high, the metric is wrong.
 
@@ -87,7 +87,7 @@ def arctic_reference(speaker: str = "awb", n_utts: int = 10) -> str:
 
     Why this rather than his own recordings, which was the first thing tried: his sessions are
     captured through a microphone this project has already measured as muffled -- a 405 Hz
-    spectral centroid against 2629 Hz through a proper capture path (vault, 2026-07-29). Scored
+    spectral centroid against 2629 Hz through a proper capture path (design notes, 2026-07-29). Scored
     against that, ANY TTS looks piercing, and the comparison would be measuring his headset.
     ARCTIC is studio-recorded, 16 kHz mono, phonetically balanced, and freely redistributable.
 
@@ -123,8 +123,8 @@ def natural_speech(session: str = "live", max_seconds: float = 60.0) -> str:
     cannot be blamed on the recording path. The cost is that they are 16 kHz, which is exactly
     why `sharpness.py` band-limits everything to 8 kHz by default.
 
-    `addressed` turns only -- 25 of the last 80 turns in one session were other people talking in
-    the car, and a reference contaminated with other voices measures nothing.
+    `addressed` turns only -- 25 of the last 80 turns in one session were other people talking
+    nearby, and a reference contaminated with other voices measures nothing.
     """
     wav_path = os.path.join(ROOT, "sessions", f"{session}.wav")
     log_path = os.path.join(ROOT, "sessions", f"{session}.jsonl")
@@ -402,7 +402,7 @@ def main() -> int:
 
     # -- the measurement's own noise floor, BEFORE any verdict is issued ------------------
     # Piper is VITS: it samples noise at every inference, so the same text through the same
-    # voice is different audio every time. the project notes already records this ("byte-identity was
+    # voice is different audio every time. The design notes already record this ("byte-identity was
     # never achievable"). It was noticed here because piper_raw moved 0.066 acum between two
     # runs -- the same order as the published JND. An instrument whose own jitter is the size of
     # the effect it is judging will confidently report noise as a fix, which is the failure mode

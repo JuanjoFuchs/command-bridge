@@ -170,7 +170,7 @@ def turns_since(
     advances past them**, which is the whole point: they are marked read and never come back,
     so the agent neither wakes for them nor re-reads them on the next call.
 
-    Reported live 2026-08-15, on the move: *"other people nearby are talking, and I
+    Reported live 2026-08-15, from a noisy room: *"other people nearby are talking, and I
     think you're picking up what they are saying. We need a better way to ignore what isn't
     classified as me, so it doesn't waste turns resolving the watch."* Every one of those turns
     already carried `addressed: false` and a `reason` explaining why — the gate was right and
