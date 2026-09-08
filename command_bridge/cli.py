@@ -823,11 +823,14 @@ DESCRIBE: dict[str, Any] = {
                               "torn between. He said a name and it matched nobody exactly, so "
                               "NOBODY heard it. You are being told because you are the lane he "
                               "was already talking to: ask him which he meant, naming these",
-                "user_speaking": "bool — was he mid-sentence at the last look, COMBINED across "
-                                 "both speech signals and pending transcription (not the raw "
-                                 "client flag of the same name on `status`). **null means this "
-                                 "server publishes none of them**, so nothing checked and "
-                                 "`finished` rests on empty polls alone",
+                "user_speaking": "bool — was he mid-sentence ON YOUR LANE at the last look, "
+                                 "COMBINED across both speech signals and pending transcription and "
+                                 "then NARROWED to your lane: false while he is speaking to ANOTHER "
+                                 "agent, so an off-lane watch is never told his conversation with "
+                                 "someone else is 'still talking to me' (not the raw session-wide "
+                                 "client flag of the same name on `status`, which stays unscoped). "
+                                 "**null means this server publishes none of them**, so nothing "
+                                 "checked and `finished` rests on empty polls alone",
                 "speech_pending": "int — utterances that have CLOSED and are not yet transcribed. "
                                   "Non-zero means he has spoken and nobody has the words yet, so "
                                   "the wait holds even though both speech signals read quiet",
@@ -2454,6 +2457,18 @@ def _watch_payload(args, reason: str, turns: list, cursor: int, rounds: int, sta
     waiting on to be missing from whichever branch happened to take a shortcut — so nothing
     returns without them, not even the failures.
     """
+    # LANE-SCOPED before it is reported (2026-09-08). `talking` is the session-wide combined signal —
+    # one microphone cannot know which lane he means — and handing it back raw told every idle lane
+    # "he is speaking" while he spoke to ONE agent, so an off-lane watch read it as "still talking to
+    # me" and re-held a watch it never needed (JJ: *"Dexter found there was a user_speaking flag ... so
+    # it's holding another watch unnecessarily"*). The loop's own hold gate is already narrowed to the
+    # lane (`_talking_to_me` via the live lane); the PAYLOAD was the one place the raw flag still
+    # leaked out, so an agent branching on it could not tell the speech was not its own. Narrow it the
+    # same way: False while he is speaking to someone else, unchanged for a single-lane session (no
+    # `my_lane`) or a server too old to publish `lane`. `None` — the server publishes no speech signal
+    # at all — is preserved, not coerced to a lane answer (the "unknowable" hint below still keys on it).
+    my_lane = getattr(args, "lane", None)
+    user_speaking = talking if talking is None else _talking_to_me(talking, live, my_lane)
     out: dict[str, Any] = {
         "turns": turns,
         "cursor": cursor,
@@ -2462,10 +2477,10 @@ def _watch_payload(args, reason: str, turns: list, cursor: int, rounds: int, sta
         # speak now. `reason` explains it; nothing should have to parse `reason` to decide.
         "finished": reason in ("turns", "control", "quiet"),
         "reason": reason,
-        # The COMBINED last look — either signal, plus pending speech — not the raw client flag
-        # of the same name on `status`. Kept under this name because `drain` published it under
-        # this name and callers branch on it.
-        "user_speaking": talking,
+        # LANE-SCOPED "is he speaking to ME" (see above), not the raw session-wide flag — the COMBINED
+        # last look, either signal plus pending speech, narrowed to this lane. Kept under this name
+        # because `drain` published it here and callers branch on it.
+        "user_speaking": user_speaking,
         "rounds": rounds,
         "elapsed_s": round(time.monotonic() - started, 1),
     }

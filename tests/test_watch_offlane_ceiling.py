@@ -96,3 +96,36 @@ def test_an_on_lane_watch_still_hits_the_speech_ceiling(monkeypatch, tmp_path):
     assert result["reason"] == "ceiling", "the on-lane interrupt-guard stopped firing"
     assert result["finished"] is False, "the ceiling is not permission to reply"
     assert time.monotonic() - started < 2.0, "it waited well past the shrunk ceiling"
+
+
+# --- the RETURNED payload is lane-scoped too, not just the hold gate (2026-09-08) --------------
+#
+# The ceiling fix above narrowed the loop's HOLD decision. But the payload it hands back still
+# reported the raw session-wide `user_speaking`, so an off-lane agent that returned for any reason
+# read "he is speaking" and could not tell the speech was not its own — and re-held a watch it never
+# needed. JJ: *"Dexter found there was a user_speaking flag ... so it's holding another watch
+# unnecessarily"* while he was talking to magnus. The flag an agent branches on must mean "to ME".
+
+def test_an_off_lane_return_reports_user_speaking_scoped_to_my_lane(monkeypatch, tmp_path):
+    """He is talking to kepler; a magnus watch that returns must report `user_speaking: False`. The
+    status it read said the mic was hot (session-wide), but that speech was not on magnus's lane."""
+    result = _run(monkeypatch, tmp_path, _TALKING_TO_KEPLER, "magnus",
+                  speech_max=0.05, timeout=0.6)
+    assert result["user_speaking"] is False, \
+        "an off-lane watch reported the session-wide flag as if the user were talking to it"
+
+
+def test_an_on_lane_return_still_reports_user_speaking_true(monkeypatch, tmp_path):
+    """The other half: when he IS talking to me, the payload must still say so — the scope narrows it
+    to my lane, it does not blind the lane he is actually addressing."""
+    result = _run(monkeypatch, tmp_path, _TALKING_TO_MAGNUS, "magnus",
+                  speech_max=0.05, timeout=5.0)
+    assert result["user_speaking"] is True, "the lane he is addressing lost its own speech signal"
+
+
+def test_a_single_agent_return_reports_the_unscoped_flag(monkeypatch, tmp_path):
+    """No lane to be off of: a single-agent watch (`my_lane` None) reports the combined flag exactly
+    as before, so the scoping is invisible to the workflow it does not apply to."""
+    result = _run(monkeypatch, tmp_path, _TALKING_TO_KEPLER, None,
+                  speech_max=0.05, timeout=0.6)
+    assert result["user_speaking"] is True
