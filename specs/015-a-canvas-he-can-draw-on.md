@@ -36,14 +36,14 @@ can be opened on a phone or tablet over a plain LAN address — getting the canv
 strictly easier than getting voice there.
 
 > **Completion rule:** This spec is not complete until all acceptance criteria are verified through
-> the repo's testing methodology (`kittest` for the touch/draw UI, `integration` for the
-> capture-and-read path). Build-only verification is insufficient. The agent must iterate until
-> verification passes.
+> the testing methodology below — Playwright integration for the touch/draw UI, `shot` for the
+> render-and-read path, and the small `manual` phone core. Build-only verification is insufficient;
+> iterate until verification passes.
 
-> **Mode note:** This is a strategist **metaspec** — the vision, requirements, constraints, key
-> decisions and open questions. The repo implementer refines it into full Implementation Tasks,
-> Acceptance Criteria and Testing Approach against the actual canvas code, after JJ's review and
-> after the open questions below are settled.
+> **Testing method:** Playwright-driven integration (the pattern of `scripts/uitest.py` /
+> `scripts/e2e.py`) for the `/canvas` drawing surface and the submit path; `shot` screenshots for the
+> render-and-read path; `?mock=` for deterministic UI states; and a small irreducible `manual` core
+> for real finger/pen on a real touchscreen, which a headless pointer cannot fully stand in for.
 
 ## Goals
 
@@ -131,6 +131,97 @@ folded in as decisions.
   are cheap; **no pressure**. *"Whatever is fastest."*
 - **KD7 — point (FR1) is the first slice.** It is nearly free (addressable nodes already exist) and
   high-value, so it can ship ahead of, or alongside, the draw slice.
+
+## Contracts
+
+These are the interfaces the feature adds; the *how* (function names, file layout) the implementer
+derives from `command_bridge/canvas/`.
+
+- **`GET /canvas`** *(exists)* — the standalone canvas page (`handle_canvas_page` → `canvas.render()`,
+  the same document the voice page embeds as an iframe). This is the surface JJ opens on the touch
+  device, with `?token=`. It gains the drawing layer below. No new route is needed for the surface
+  itself.
+- **`ink` frame kind** *(new)* — a frame whose content is JJ's strokes as **SVG paths**. It renders
+  on the canvas like any frame (so both JJ and the agent see the sketch), persists with the canvas,
+  and is captured by `shot` exactly like a `mermaid`/`svg` frame. Stored via the existing frame path
+  (`/canvas/frame`, kind `ink`) so it rides all the existing per-lane frame machinery.
+- **Submit (draw-then-submit)** *(new inbound)* — a `send` control on `/canvas` POSTs the accumulated
+  strokes; the server stores them as an `ink` frame on the **live** lane and **surfaces a
+  canvas-sourced turn to the agent** (see below). Mirrors the existing inbound POST pattern
+  (`/placed`, `/inspected`) rather than inventing a transport.
+- **Inbound point (FR1)** *(new inbound)* — tapping a rendered element on `/canvas` POSTs that
+  element's node id; the server surfaces a canvas-sourced turn naming the node.
+- **Canvas-sourced turn** *(the surfacing decision)* — an inbound canvas action reaches the agent the
+  **same way speech does: as a turn its `watch` returns**, tagged as canvas-sourced (e.g. a
+  `source: "canvas"` turn whose text names the frame or node: *"drew on lane magnus, frame ink-7"* /
+  *"pointed at watch-logic"*). One loop handles speech and canvas intent alike; the agent then `shot`s
+  the frame and acts. *Rationale: the whole agent contract is `watch` → turns → act; a second
+  inbound channel the agent has to poll would fork that.*
+- **Reach** — a drawing-only `/canvas` never calls `getUserMedia`, so it is **not** gated on a secure
+  context and works over a plain-http LAN address; the **token still gates it**, and the CIDR
+  allowlist must admit the LAN (or a tunnel fronts it, as voice does today).
+
+## Implementation Tasks
+
+Ordered so the first testable slice is the whole loop end-to-end, then the additions.
+
+- [ ] **T1 — `ink` frame kind.** Store and render an SVG-strokes frame; confirm `shot` captures it.
+- [ ] **T2 — drawing layer on `/canvas`.** Pointer/touch strokes over the canvas (including over
+  existing frames), a **pen** and an **eraser**, and a **send** control. Freeform paths; no pressure.
+- [ ] **T3 — submit path.** `send` POSTs the strokes → an `ink` frame on the live lane, and the server
+  surfaces a canvas-sourced turn to the agent.
+- [ ] **T4 — inbound point.** Tapping a rendered element POSTs its node id → a canvas-sourced turn.
+- [ ] **T5 — reach.** `/canvas` served on a LAN bind, token-gated, drawing-only; documented in
+  `status.phone` / `describe` so the phone URL is discoverable.
+- [ ] **T6 — colors.** A small fixed palette (2–3 colors), only if it stays cheap (KD6).
+- [ ] **T7 — agent loop.** On a canvas turn: `shot` the frame, read it; for a sketch, produce a clean
+  frame (mermaid/SVG) as a *separate* frame; for a point, act on the named node.
+
+## Acceptance Criteria
+
+### Core loop (the MVP slice)
+- [ ] **AC1** — a stored `ink` frame renders its strokes on `/canvas`. *(kittest-snapshot: `shot` the
+  page, the strokes appear.)*
+- [ ] **AC2** — `shot` of a lane holding an `ink` frame returns an image that contains the strokes,
+  readable by the agent. *(integration.)*
+- [ ] **AC3** — pointer/touch strokes on `/canvas` draw a path; the eraser removes strokes.
+  *(integration via Playwright pointer events; plus `manual` for real finger/pen — the irreducible.)*
+- [ ] **AC4** — `send` stores an `ink` frame on the live lane AND the agent's next `watch` returns a
+  `source: "canvas"` turn naming that frame. *(integration.)*
+- [ ] **AC5** — strokes drawn on top of an existing frame are captured in the submitted `ink` frame,
+  i.e. the annotation lands on the shared canvas. *(integration.)*
+
+### Point + reach
+- [ ] **AC6** — tapping a rendered element surfaces a `source: "canvas"` turn naming that node on the
+  agent's `watch`. *(integration.)*
+- [ ] **AC7** — `/canvas` loads and accepts drawing over a plain-http LAN address with the token and
+  **never requests the microphone**; a wrong/absent token is refused. *(integration + `manual` on a
+  real phone.)*
+
+### The polish loop
+- [ ] **AC8** — given a submitted sketch, the agent `shot`s it and produces a clean frame from it that
+  coexists with the raw `ink` frame on the same lane. *(manual — the interpretation is the agent's
+  vision; assert the `shot` happened and a distinct rendered frame was produced.)*
+
+## Testing Approach
+
+### Validation Steps
+1. Unit/integration for the `ink` frame kind: store → render → `shot` (T1/AC1/AC2), no browser.
+2. Playwright drives `/canvas` (the `scripts/uitest.py` / `e2e.py` pattern): synth pointer strokes,
+   eraser, `send`; assert the `ink` frame and the canvas turn (T2–T4/AC3–AC5).
+3. Token/reach: load `/canvas` with and without the token over a non-loopback bind; assert no
+   `getUserMedia` call (AC7).
+4. `manual` pass on a real phone/tablet: finger and pen actually draw, `send` lands, the agent reads
+   it — the part a headless pointer cannot certify.
+
+### Test Cases
+| Input | Expected |
+|-------|----------|
+| Draw two strokes, `send` | one `ink` frame on the live lane; a `source: canvas` turn naming it |
+| Draw over frame `watch-logic`, `send` | the `ink` frame captures the overlay; turn names the lane |
+| Tap element `watch-logic` on `/canvas` | a `source: canvas` turn: "pointed at watch-logic" |
+| Open `/canvas` with no token over LAN | refused; the mic is never requested |
+| `shot` a lane with an `ink` frame | image contains the strokes |
 
 ## Out of Scope
 
