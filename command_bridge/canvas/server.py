@@ -74,6 +74,13 @@ _point: dict[str, dict] = {}
 _asked: dict[str, list] = {}
 _ask_n = 0
 
+# WHICH SESSION'S TURN LOG a human draw/point surfaces into (spec 015 AC4). The canvas writes the
+# SAME `<session>.jsonl` the voice server and `command-bridge watch` read, so an inbound canvas
+# action rides the one agent contract — watch → turns → act — instead of a second channel the agent
+# would have to poll. Set by `serve` / `init_canvas`; the default matches the voice server's so an
+# inert import (tests, `describe`) never guesses a real session.
+_session = "dev"
+
 # The canvas on disk. Replaced by `serve`; the default is inert so importing the
 # module (tests, `describe`) never touches a real file.
 _store = Store(enabled=False)
@@ -115,6 +122,30 @@ def set_live(lane: str) -> int:
 
 def live_lane() -> str:
     return _live
+
+
+def _surface_canvas_turn(lane: str, text: str) -> dict | None:
+    """Append a canvas-sourced turn so the agent's `watch` returns it (spec 015 AC4).
+
+    The whole agent contract is `watch` → turns → act; an inbound canvas action (a draw, later a
+    point) reaches the agent the SAME way speech does — as a turn on its watch — rather than a
+    second inbound channel it would have to poll. Tagged `source="canvas"` so the agent knows to go
+    `shot` the frame and read it, and addressed to `lane` (the live lane he drew on) so that lane's
+    own lane-filtered watch delivers it and no one else's.
+
+    Best-effort by design: the frame is already stored and on screen before this runs, so a log
+    write that fails must never fail the draw. The turn-log store is imported lazily (and named to
+    stay distinct from this module's canvas `Store`) so the module's import surface is unchanged.
+    """
+    from .. import store as turnlog
+
+    try:
+        now = time.time()
+        return turnlog.append_turn(
+            session=_session, text=text, t_start=now, t_end=now,
+            addressed=True, reason="canvas", lane=lane, stamp_lane=True, source="canvas")
+    except Exception:  # noqa: BLE001 — surfacing is best-effort; the draw itself already succeeded
+        return None
 
 
 def _canvas_snapshot() -> dict:
@@ -398,6 +429,42 @@ class Handler(BaseHTTPRequestHandler):
             return 200, {"ok": True, "delivered_to": publish("frame", {**frame, "lane": lane}),
                          "id": fid, "lane": lane, "kind": frame["kind"], "frames": count}
 
+        if path == "/draw":
+            # THE HUMAN DREW (spec 015 T3, KD5). Draw-then-submit: the page hands the accumulated
+            # strokes over as ONE svg, and this stores them as an `ink` frame and surfaces the sketch
+            # to the agent as a turn its `watch` returns.
+            #
+            # A DEDICATED OP, NOT `/frame` with kind:ink — and both halves of that are load-bearing.
+            # (1) His ink must land on the lane he is LOOKING AT — the live lane — never on a lane an
+            # agent named in a payload; a human on a phone has no concept of the caller's lane. (2)
+            # `/frame` is the agent's OUTBOUND verb (spec 011); firing a canvas turn on every agent
+            # draw would be wrong, so the turn-surfacing lives HERE and `/frame` stays untouched (the
+            # constraint: this adds the inbound direction, it does not touch the outbound one).
+            target = _live
+            with _lock:
+                existing = _lanes.get(target, {})
+                # A stable, collision-free id per sketch so several drawings coexist as SEPARATE
+                # frames (KD4 — his raw sketch and the agent's polish sit side by side).
+                fid = str(payload.get("id") or "")
+                if not fid:
+                    n = 0
+                    while ("ink-%d" % n) in existing:
+                        n += 1
+                    fid = "ink-%d" % n
+            # Reuse the `/frame` storage path verbatim (no second copy of the age/persist/fan-out
+            # rules to drift) by handing it an ink frame pinned to the live lane. NOT under `_lock`:
+            # `/frame` takes the lock itself and this Lock is not reentrant.
+            code, body = self.apply("/frame", {
+                "id": fid, "kind": "ink", "content": payload.get("content", ""),
+                "title": payload.get("title") or "sketch", "lane": target,
+                **({"at": payload["at"]} if payload.get("at") else {})})
+            if code != 200:
+                return code, body
+            # SURFACE IT (AC4). Best-effort — the frame is already stored and delivered to the page.
+            turn = _surface_canvas_turn(target, "drew on lane %s, frame %s" % (target, fid))
+            return 200, {**body, "kind": "ink", "source": "canvas",
+                         "turn": (turn.get("id") if turn else None)}
+
         if path == "/remove":
             fid = str(payload.get("id") or "")
             with _lock:
@@ -676,7 +743,8 @@ def serve(port: int = DEFAULT_PORT, verbose: bool = False,
           fresh: bool = False, follow: bool = True,
           session: str = "dev") -> None:
     """Run until interrupted. Binds loopback only — nothing else can reach it."""
-    global _live, _store, _follower
+    global _live, _store, _follower, _session
+    _session = session  # spec 015: the log a human draw surfaces its canvas turn into (AC4)
     _store = Store()
     restored = 0
     if fresh:

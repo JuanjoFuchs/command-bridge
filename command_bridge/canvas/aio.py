@@ -155,8 +155,35 @@ async def handle_inspected(request: web.Request) -> web.Response:
     return await _apply(request, "/inspected")
 
 
+async def handle_draw(request: web.Request) -> web.Response:
+    """`POST /draw` — the human handed over a sketch (spec 015 T3). An INBOUND-from-the-page route,
+    sibling of `/placed` and `/inspected` (root-level, not under /canvas/ where the agent's ops live):
+    the drawing surface posts here on `send`, and `apply("/draw")` stores it as an `ink` frame on the
+    live lane and surfaces the canvas turn. Kept off the agent's `/frame` verb on purpose — see the
+    `/draw` comment in canvas.server."""
+    return await _apply(request, "/draw")
+
+
 async def handle_canvas_page(request: web.Request) -> web.Response:
     return web.Response(text=canvas.render(), content_type="text/html")
+
+
+async def handle_settle(request: web.Request) -> web.Response:
+    """The `shot` settle script. A deliberately slow, empty script the capture page loads so its LOAD
+    EVENT waits for the SSE to deliver frames — which is what makes a headless capture deterministic
+    instead of a race against the stream (an open SSE never reaches network-idle, so that is not the
+    wait to use). It mirrors the ThreadingHTTPServer's `/settle`, and it is needed HERE because a
+    lane-scoped `shot --lane` targets the aiohttp `/canvas` (cli.cmd_shot): without this route the
+    page's `/settle?ms=` 404s, its `onerror` closes the stream early, and every capture of this
+    server's canvas comes back empty. `asyncio.sleep`, never `time.sleep`, so a long settle does not
+    block the event loop the SSE frames arrive on."""
+    try:
+        ms = int(request.query.get("ms", "2500"))
+    except (TypeError, ValueError):
+        ms = 2500
+    ms = min(20000, max(0, ms))
+    await asyncio.sleep(ms / 1000)
+    return web.Response(body=b"// settled", content_type="application/javascript")
 
 
 async def handle_canvas_status(request: web.Request) -> web.Response:
@@ -183,6 +210,9 @@ def init_canvas(session: str = "dev", fresh: bool = False, follow: bool = True) 
     from .follow import Follower
     from .store import Store
 
+    # spec 015 AC4: the canvas surfaces a human draw as a turn in THIS session's log — the same one
+    # the voice server appends to and `command-bridge watch` reads — so the two share one turn stream.
+    canvas._session = session
     canvas._store = Store()
     restored = 0
     if not fresh:
@@ -244,9 +274,11 @@ def setup(app: web.Application) -> None:
     _index_sig = _index_signature()  # spec 013: baseline the parent doc so the first reload can spot an index.html change
     app.router.add_get("/events", handle_events)
     app.router.add_get("/canvas", handle_canvas_page)
+    app.router.add_get("/settle", handle_settle)  # shot's load-event hold — see handle_settle
     app.router.add_get("/canvas/status", handle_canvas_status)
     app.router.add_post("/canvas/{op}", handle_canvas_op)
     app.router.add_post("/switch", handle_switch)
     app.router.add_post("/placed", handle_placed)
     app.router.add_post("/inspected", handle_inspected)
+    app.router.add_post("/draw", handle_draw)  # spec 015: the page's `send` posts the sketch here
     app.router.add_post("/reload", handle_reload)

@@ -220,6 +220,39 @@ PAGE = """<!doctype html>
     0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--glow) 55%, transparent); }
     100% { box-shadow: 0 0 0 14px transparent; }
   }
+
+  /* ---- spec 015: the drawing layer (his ink) --------------------------------
+     An INK frame is the human's freehand strokes, and it is deliberately NOT a packed card: it is a
+     transparent overlay positioned in canvas space at the coordinates he drew, so a stroke laid over
+     a frame stays ON that frame (FR2a/AC5). No card chrome, no title bar, and pointer-events:none so
+     it never blocks a drag — or a stroke drawn on the frame beneath it. The packer already skips it
+     because a submitted sketch always carries an explicit `at`. */
+  .card[data-kind="ink"] {
+    background: transparent; border: none; box-shadow: none;
+    max-width: none; pointer-events: none;
+  }
+  .card[data-kind="ink"] > .bar { display: none; }
+  .card[data-kind="ink"] > .body { padding: 0; }
+  .card[data-kind="ink"] svg { overflow: visible; }
+  /* The LIVE preview while he draws. A child of #stage so it lives in canvas space and pans/zooms
+     with the frames — which is why a stroke stays glued to what it was drawn over. It draws no
+     events itself, and it carries no size of its own: absolute canvas coordinates paint outside its
+     1x1 box because overflow is visible. */
+  #ink-live { position: absolute; left: 0; top: 0; width: 1px; height: 1px;
+              overflow: visible; pointer-events: none; }
+  /* A spare toolbar (FR5): pen, eraser, send — "whatever is fastest". Anchored to the viewport
+     corner so it is reachable on a phone without hunting, and above the canvas. */
+  #tools { position: absolute; left: .6rem; bottom: .6rem; display: flex; gap: .3rem; z-index: 10; }
+  #tools .tool {
+    font: 12px ui-sans-serif, system-ui, sans-serif; letter-spacing: .02em;
+    padding: .4rem .62rem; border: 1px solid var(--edge); border-radius: 7px;
+    background: color-mix(in srgb, var(--card) 88%, transparent); color: var(--fg);
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    touch-action: manipulation;   /* a tap on a tool fires at once, never held for a gesture */
+  }
+  #tools .tool.on { border-color: var(--glow); color: var(--glow); }
+  /* While a drawing tool is active the surface is a canvas to ink on, not one to grab-and-pan. */
+  main.inking { cursor: crosshair; }
 </style>
 
 <script>if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");</script>
@@ -232,6 +265,12 @@ PAGE = """<!doctype html>
   <div id="stage"></div>
   <div id="empty">Nothing drawn yet.</div>
   <div id="zoom">100%</div>
+  <!-- spec 015: the drawing toolbar. Pen / eraser / send — the whole tool JJ asked for. -->
+  <div id="tools">
+    <button id="tool-pen" class="tool" title="Draw with a finger or pen">Pen</button>
+    <button id="tool-erase" class="tool" title="Erase strokes">Erase</button>
+    <button id="tool-send" class="tool" title="Hand the sketch to the agent">Send</button>
+  </div>
 </main>
 
 <script>
@@ -509,6 +548,10 @@ PAGE = """<!doctype html>
 
   let drag = null;
   view.addEventListener("pointerdown", e => {
+    // A pointerdown on a toolbar button bubbles up to here; capturing it would steal the button's
+    // own click (pointer capture retargets the click off the button). So the toolbar owns its taps.
+    if (e.target.closest("#tools")) return;
+    if (drawMode) return;              // a drawing tool owns the pointer (spec 015); do not pan
     cancelFlight();
     stage.style.transition = "none";
     drag = { x: e.clientX - cam.x, y: e.clientY - cam.y, moved: false };
@@ -541,6 +584,132 @@ PAGE = """<!doctype html>
   // overrode the frame that had just been requested, so the capture came
   // back showing the whole canvas while the server reported the look ok.
   addEventListener("resize", () => report());
+
+  // ---- the drawing layer (spec 015) -------------------------------------
+  // His ink, draw-then-submit (KD5). Strokes are captured straight into CANVAS coordinates — the
+  // inverse of the camera transform, the same math `boxOf` uses — so a stroke stays glued to
+  // whatever it was drawn over even if he pans or zooms between strokes, and the sketch he hands
+  // over lands on the shared canvas exactly where the frames are (FR2a/AC5). The agent reads it by
+  // screenshot (KD3); the browser only captures and submits, it parses nothing.
+  //
+  // Pointer/touch, and NOT gated on a secure context — pointer events work over plain http, which
+  // is what makes reaching this on a LAN cheaper than voice (TC3). No pressure (KD6).
+  const PEN_PX = 3;      // on-screen stroke width; stored in canvas units as PEN_PX / cam.k
+  const ERASE_PX = 16;   // on-screen eraser radius
+  let drawMode = null;   // null = pan (unchanged), 'pen', or 'erase'
+  let strokes = [];      // committed strokes: [{ pts:[{x,y} in canvas coords], w }]
+  let curStroke = null;
+  let inking = false;
+
+  // The preview lives in canvas space, on top of everything, rebuilt on each move — a human draws a
+  // handful of strokes, so a full rebuild is far cheaper than tracking nodes, and it stays correct
+  // through pan/zoom for free because it rides #stage.
+  const inkLive = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  inkLive.id = "ink-live";
+  stage.appendChild(inkLive);
+
+  const toolPen = document.getElementById("tool-pen");
+  const toolErase = document.getElementById("tool-erase");
+  const toolSend = document.getElementById("tool-send");
+
+  function viewToCanvas(e) {
+    const port = view.getBoundingClientRect();
+    return { x: (e.clientX - port.left - cam.x) / cam.k,
+             y: (e.clientY - port.top - cam.y) / cam.k };
+  }
+
+  function strokeD(pts, ox, oy) {
+    if (!pts.length) return "";
+    // A single tap is `M x y L x y` — with a round linecap that paints a dot rather than nothing.
+    const p = pts.map(q => (q.x - ox).toFixed(1) + " " + (q.y - oy).toFixed(1));
+    return pts.length === 1 ? ("M" + p[0] + " L" + p[0]) : ("M" + p.join(" L"));
+  }
+
+  function strokePath(s, ox, oy) {
+    return '<path d="' + strokeD(s.pts, ox || 0, oy || 0) + '" fill="none" stroke="currentColor"'
+      + ' stroke-width="' + s.w.toFixed(2) + '" stroke-linecap="round" stroke-linejoin="round"/>';
+  }
+
+  function renderInk() {
+    const all = curStroke ? strokes.concat([curStroke]) : strokes;
+    inkLive.innerHTML = all.map(s => strokePath(s, 0, 0)).join("");
+  }
+
+  function eraseAt(p) {
+    // Canvas-space hit test: drop any stroke that passes within the eraser radius of the pointer.
+    const r = ERASE_PX / cam.k;
+    const kept = strokes.filter(s => !s.pts.some(q => Math.hypot(q.x - p.x, q.y - p.y) <= r));
+    if (kept.length !== strokes.length) { strokes = kept; renderInk(); }
+  }
+
+  view.addEventListener("pointerdown", e => {
+    if (!drawMode) return;             // pan mode owns the pointer (handler above)
+    if (e.target.closest("#tools")) return;   // a tap on Send/Erase is not the start of a stroke
+    e.preventDefault();
+    view.setPointerCapture(e.pointerId);
+    inking = true;
+    const p = viewToCanvas(e);
+    if (drawMode === "erase") { eraseAt(p); return; }
+    curStroke = { pts: [p], w: PEN_PX / cam.k };
+    renderInk();
+  });
+  view.addEventListener("pointermove", e => {
+    if (!drawMode || !inking) return;
+    const p = viewToCanvas(e);
+    if (drawMode === "erase") { eraseAt(p); return; }
+    curStroke.pts.push(p);
+    renderInk();
+  });
+  function endStroke() {
+    if (curStroke && curStroke.pts.length) strokes.push(curStroke);
+    curStroke = null; inking = false; renderInk();
+  }
+  view.addEventListener("pointerup", () => { if (drawMode) endStroke(); });
+  view.addEventListener("pointercancel", () => { if (drawMode) endStroke(); });
+
+  function setMode(m) {
+    drawMode = drawMode === m ? null : m;   // tapping the active tool again returns to pan
+    toolPen.classList.toggle("on", drawMode === "pen");
+    toolErase.classList.toggle("on", drawMode === "erase");
+    view.classList.toggle("inking", !!drawMode);
+    // Keep the preview above any frame placed since (a later DOM sibling paints last).
+    if (drawMode) stage.appendChild(inkLive);
+  }
+  toolPen.onclick = () => setMode("pen");
+  toolErase.onclick = () => setMode("erase");
+  toolSend.onclick = () => submitDrawing();
+
+  async function submitDrawing() {
+    if (!strokes.length) return;            // nothing to hand over
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, maxW = 0;
+    for (const s of strokes) {
+      maxW = Math.max(maxW, s.w);
+      for (const q of s.pts) {
+        x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y);
+        x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y);
+      }
+    }
+    // Pad by the stroke width so a mark at the very edge is not clipped by the viewBox.
+    const pad = maxW + 4;
+    const ox = x0 - pad, oy = y0 - pad;
+    const w = (x1 - x0) + pad * 2, h = (y1 - y0) + pad * 2;
+    // Author the svg in LOCAL coords (translated by the bbox origin) with a viewBox of the same
+    // size, and hand over `at:[ox,oy]` in CANVAS space. Placed there, the local coords map straight
+    // back onto the canvas — so the ink lands exactly over the frame it annotates (AC5).
+    const paths = strokes.map(s => strokePath(s, ox, oy)).join("");
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w.toFixed(1) + '" height="'
+      + h.toFixed(1) + '" viewBox="0 0 ' + w.toFixed(1) + ' ' + h.toFixed(1) + '">' + paths + '</svg>';
+    try {
+      await fetch("/draw", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: svg, at: [ox, oy], title: "sketch" }) });
+    } catch (_) {
+      return;   // keep the strokes so a failed send can be retried rather than silently lost
+    }
+    // Draw-then-submit clears the local buffer on send; the ink now lives as a frame on the shared
+    // canvas and arrives back over /events like any other frame.
+    strokes = []; curStroke = null; renderInk();
+    setMode(null);
+  }
 
   // ---- the canvas -------------------------------------------------------
 
@@ -651,7 +820,10 @@ PAGE = """<!doctype html>
         body.innerHTML = '<pre class="md"></pre>';
         body.firstChild.textContent = msg.content;
       }
-    } else if (msg.kind === "html" || msg.kind === "svg") {
+    } else if (msg.kind === "html" || msg.kind === "svg" || msg.kind === "ink") {
+      // `ink` (spec 015) is the human's strokes, already an svg in canvas-local coords — rendered
+      // like any inline svg; the card CSS makes it a transparent, click-through overlay so it sits
+      // ON TOP of whatever it was drawn over.
       body.innerHTML = msg.content;
     } else if (msg.kind === "text") {
       body.innerHTML = "<pre></pre>";

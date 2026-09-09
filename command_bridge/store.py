@@ -119,6 +119,7 @@ def append_turn(
     reason: str = "",
     lane: str | None = None,
     stamp_lane: bool = False,
+    source: str = "",
 ) -> dict[str, Any]:
     """Append one turn and return it (with its assigned `id`).
 
@@ -126,6 +127,12 @@ def append_turn(
     `lane` itself — because `None` is a meaningful lane (a refused turn) and omission is a
     different, also meaningful state (a turn from before lanes existed). A caller that has an
     opinion says so explicitly; a caller that does not leaves the log exactly as it was.
+
+    `source` tags where a turn CAME FROM when it was not the microphone — spec 015's canvas draw/point
+    surfaces as `source="canvas"` so the agent's `watch` can tell a spoken turn from one it must go
+    `shot` to read. Written ONLY when non-empty, exactly like `lane` above: a voice turn keeps its
+    original shape (no `source` key), so nothing that parses the existing schema changes, and the
+    field's PRESENCE is itself the signal.
     """
     validate_session(session)
     turn = {
@@ -144,6 +151,8 @@ def append_turn(
     }
     if stamp_lane:
         turn["lane"] = lane
+    if source:
+        turn["source"] = source
     path = log_path(session, base)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(turn, ensure_ascii=False) + "\n")

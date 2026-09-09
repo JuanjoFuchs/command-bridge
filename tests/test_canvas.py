@@ -8,7 +8,9 @@ import ast
 import pathlib
 
 from command_bridge import server as cb_server
+from command_bridge import store
 from command_bridge.canvas import server as canvas
+from command_bridge.canvas import page as canvas_page
 
 
 def _routes(app):
@@ -27,6 +29,7 @@ def test_the_canvas_routes_are_mounted_on_the_one_server():
     assert "/events" in paths, paths          # the SSE stream
     assert "/canvas" in paths                 # the canvas page
     assert "/placed" in paths                 # the page's geometry callback
+    assert "/draw" in paths                    # spec 015: the page's `send` posts the sketch here
     assert any(p.startswith("/canvas/") for p in paths)  # the /canvas/{op} ops
     # And the voice contract is still there, untouched (NFR1).
     for voice in ("/", "/status", "/ws", "/say"):
@@ -118,3 +121,106 @@ def test_the_canvas_surface_stays_dumb():
                 if n in banned:
                     offenders.append(f"{path.name}:{node.lineno} imports {n!r}")
     assert not offenders, "the canvas grew a model:\n  " + "\n  ".join(offenders)
+
+
+# ============================================================ spec 015 — a canvas he can draw on
+
+
+def test_an_ink_frame_stores_and_persists_via_the_existing_frame_path():
+    """T1/AC1: an `ink` frame is just a frame with kind:ink and an svg body — it rides the SAME
+    `/frame` machinery (no new storage path), so its kind and content are kept verbatim."""
+    lane = "_ink_store"
+    svg = '<svg><path d="M0 0 L10 10"/></svg>'
+    code, body = canvas.apply("/frame", {"id": "ink-0", "kind": "ink", "content": svg,
+                                         "at": [40, 50], "lane": lane})
+    assert code == 200 and body["kind"] == "ink"
+    stored = canvas._lanes.get(lane, {}).get("ink-0")
+    assert stored and stored["kind"] == "ink" and stored["content"] == svg
+    assert stored["at"] == [40, 50], "an ink frame carries its canvas-space placement"
+    canvas._lanes.pop(lane, None)
+
+
+def test_draw_stores_an_ink_frame_on_the_live_lane_and_surfaces_a_canvas_turn(tmp_sessions):
+    """T3/AC3/AC4: `send` posts the strokes; `/draw` stores ONE ink frame on the LIVE lane and
+    appends a `source:"canvas"` turn that the agent's `watch` returns, naming the frame."""
+    lane = "_ink_live"
+    session = "inkdraw"
+    canvas.set_live(lane)
+    canvas._session = session
+    svg = '<svg viewBox="0 0 30 20"><path d="M1 1 L20 15"/></svg>'
+    code, body = canvas.apply("/draw", {"content": svg, "at": [100, 120], "title": "sketch"})
+
+    # one ink frame, on the live lane, auto-ided
+    assert code == 200 and body["ok"] and body["kind"] == "ink" and body["lane"] == lane
+    assert body["source"] == "canvas"
+    fid = body["id"]
+    assert fid == "ink-0"
+    stored = canvas._lanes.get(lane, {}).get(fid)
+    assert stored and stored["content"] == svg and stored["at"] == [100, 120]
+
+    # AC4: the agent's watch (lane-filtered, addressed-only) returns it as a canvas turn
+    turns, _ = store.watch(session, -1, timeout=0.5, addressed_only=True,
+                           lane=lane, default_lane=lane)
+    canvas_turns = [t for t in turns if t.get("source") == "canvas"]
+    assert canvas_turns, "the draw must surface a source:canvas turn to the agent"
+    t = canvas_turns[-1]
+    assert t["lane"] == lane and t["addressed"] is True
+    assert fid in t["text"] and lane in t["text"], t["text"]
+    assert body["turn"] == t["id"]
+    canvas._lanes.pop(lane, None)
+
+
+def test_draw_lands_on_the_live_lane_even_when_the_payload_names_another(tmp_sessions):
+    """KD5: his ink lands on the lane he is LOOKING AT (the live one), never on a lane a payload
+    names — a human on a phone has no concept of a caller's lane."""
+    canvas.set_live("_ink_here")
+    canvas._session = "inklane"
+    code, body = canvas.apply("/draw", {"content": "<svg></svg>", "lane": "_ink_elsewhere"})
+    assert code == 200 and body["lane"] == "_ink_here"
+    assert "ink-0" in canvas._lanes.get("_ink_here", {})
+    assert "_ink_elsewhere" not in canvas._lanes
+    canvas._lanes.pop("_ink_here", None)
+
+
+def test_successive_sketches_coexist_as_separate_ink_frames(tmp_sessions):
+    """KD4: his raw sketch and (later) the agent's polish sit side by side — so each `send` gets a
+    fresh, collision-free id rather than replacing the last drawing."""
+    lane = "_ink_multi"
+    canvas.set_live(lane)
+    canvas._session = "inkmulti"
+    a = canvas.apply("/draw", {"content": "<svg>a</svg>"})[1]
+    b = canvas.apply("/draw", {"content": "<svg>b</svg>"})[1]
+    assert a["id"] == "ink-0" and b["id"] == "ink-1"
+    assert set(canvas._lanes.get(lane, {})) >= {"ink-0", "ink-1"}
+    canvas._lanes.pop(lane, None)
+
+
+def test_an_ink_annotation_lands_over_the_frame_it_was_drawn_on(tmp_sessions):
+    """FR2a/AC5 (data layer): a stroke drawn on top of an agent frame is stored as an ink frame on
+    the SAME lane, positioned in the frame's region — the annotation lands on the shared canvas.
+    (The pixel-level overlay is verified in the browser by scripts/drawtest.py.)"""
+    lane = "_ink_annot"
+    canvas.set_live(lane)
+    canvas._session = "inkannot"
+    # an agent frame occupying canvas box [200,200]..[500,360]
+    canvas.apply("/frame", {"id": "watch-logic", "kind": "mermaid", "content": "graph TD;A-->B",
+                            "at": [200, 200], "lane": lane})
+    # a circle scribbled ON it: bbox ~[260,240]..[420,320]
+    ink = canvas.apply("/draw", {"content": '<svg viewBox="0 0 160 80"><path d="M0 0 L160 80"/></svg>',
+                                 "at": [260, 240]})[1]
+    frames = canvas._lanes.get(lane, {})
+    assert "watch-logic" in frames and ink["id"] in frames, "the annotation coexists with its target"
+    ink_at = frames[ink["id"]]["at"]
+    # the ink origin sits INSIDE the target frame's box — i.e. the mark is on the diagram
+    assert 200 <= ink_at[0] <= 500 and 200 <= ink_at[1] <= 360, ink_at
+    canvas._lanes.pop(lane, None)
+
+
+def test_the_page_renders_ink_and_carries_the_drawing_toolbar():
+    """The render path actually wires the drawing layer: the page has the pen/erase/send toolbar,
+    an ink render branch, a `/draw` submit, and it does NOT gate drawing on a secure context (TC3)."""
+    html = canvas_page.render()
+    for needle in ('id="tool-pen"', 'id="tool-erase"', 'id="tool-send"', 'ink-live',
+                   'kind === "ink"', 'fetch("/draw"', "pointerdown"):
+        assert needle in html, f"the page is missing {needle!r}"
+    assert "isSecureContext" not in html, "drawing must not be gated on a secure context (FR4/TC3)"
