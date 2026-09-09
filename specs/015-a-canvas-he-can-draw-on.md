@@ -53,6 +53,9 @@ strictly easier than getting voice there.
   know which one ("polish *this* box", "the arrow *here* is wrong").
 - Let JJ **draw** a mockup or diagram freehand on a touchscreen device, and have the agent read it
   and act on it — the "his rough → agent polishes" loop.
+- Let JJ **mark up the agent's own diagrams** — draw directly on a frame the agent produced to give
+  feedback in place ("this arrow is wrong", circle *that* box), the highest-bandwidth correction
+  there is.
 
 ## Requirements
 
@@ -61,16 +64,24 @@ strictly easier than getting voice there.
 - **FR1 (point, inbound).** JJ can select/tap an element on the canvas from his device, and the
   agent learns *which named element* he indicated on its next `watch` (or an equivalent read) —
   the deixis channel of spec 011 run in reverse.
-- **FR2 (draw).** JJ can draw freehand strokes on the canvas from a **touchscreen** device using a
-  finger or a pen. Strokes are freeform ink, not snapped to shapes.
-- **FR3 (the agent reads it).** The agent can obtain what JJ drew as an **image it can interpret**
-  (via the existing `shot` path or an equivalent), so it can understand the sketch and respond —
-  polish it into a real frame, ask about it, or act on it.
+- **FR2 (draw).** JJ can draw freehand strokes on the shared canvas from a **touchscreen** device
+  using a finger or a pen. Strokes are freeform ink, not snapped to shapes, and can be laid **over
+  the agent's existing frames** as well as on empty canvas — see FR2a.
+- **FR2a (annotate over the agent's frames).** Because the strokes land on the *shared* canvas, JJ
+  can draw **on top of a frame the agent drew** — circle a box, cross out an arrow, scribble a note
+  beside it — which is feedback delivered *directly on the diagram*. This is the richest form of
+  FR1's pointing: a mark on the thing beats a tap on it. JJ, 2026-09-09: *"I could even draw on top
+  of your frames … that can help me point or give feedback directly on the diagrams. That would be
+  amazing."*
+- **FR3 (the agent reads it).** The agent obtains what JJ drew as an **image it can interpret** —
+  it `shot`s the frame and reads the picture — so it can understand the sketch and respond: polish
+  it into a clean frame (mermaid/SVG), ask about it, or act on it. JJ, 2026-09-09: *"you would see
+  this by screenshotting the frame."*
 - **FR4 (reach).** The drawing surface is reachable on a phone/tablet as a view that does **not**
   require a microphone secure-context — a plain LAN address is sufficient for drawing-only, so the
   device does not need the voice tunnel to draw.
-- **FR5 (short text, optional at v0).** JJ can place a short text label on the canvas ("mainly point
-  and draw", so text is the lowest-priority of the three and may slip to a follow-on).
+- **FR5 (a minimal pen).** The tools are deliberately spare — *"whatever is fastest"*: a pen, an
+  **eraser**, and **a couple of colors only if they are cheap to add**. No pressure sensitivity.
 
 ### Non-Functional Requirements
 
@@ -93,37 +104,42 @@ strictly easier than getting voice there.
 
 ## Key Decisions
 
+All settled with JJ in review on 2026-09-09; the four open questions this draft carried are now
+folded in as decisions.
+
 - **KD1 — separate drawing VIEW, one shared canvas.** JJ asked for "a different URL … I can render
   on my phone." The decision: a dedicated **drawing route/view** the touch device opens, backed by
   the **same** canvas state (not a second, disconnected canvas). The phone is a drawing surface onto
-  the shared canvas; the laptop stays the viewing surface.
-- **KD2 — freeform ink at v0, structured shapes later.** The v0 hands the agent a *picture* of a
-  freehand sketch and lets the agent's vision do the interpreting. Snapping strokes to boxes/arrows,
-  or OCR-ing handwriting, is a real feature but a **later spec** — it is not needed to get the
-  bandwidth win.
-- **KD3 — the agent reads via `shot`, not by parsing strokes.** Reuse the mechanism that already
-  exists (screenshot → the agent interprets the image) rather than build a stroke parser. This is
-  what makes FR3 small.
-- **KD4 — point (FR1) is the first slice.** It is nearly free (addressable nodes exist) and
+  the shared canvas; the laptop stays the viewing surface. His drawings **persist as frames on that
+  shared canvas** — *"my drawings persist in the shared canvas you and me have."*
+- **KD2 — freeform ink (settled).** Freeform is enough: the agent screenshots the sketch and its
+  own vision does the interpreting, then it produces the clean version in mermaid/SVG. *"Freeform is
+  fine because you're going to screenshot and then you can use Mermaid or whatever or SVG to produce
+  what you understood from my input."* Snapping strokes to shapes and handwriting-to-text OCR stay a
+  **later spec** — not needed for the bandwidth win.
+- **KD3 — the agent reads via `shot`, not by parsing strokes (settled).** Reuse the existing
+  screenshot path (the agent interprets the image) rather than build a stroke parser — the thing
+  that makes FR3 small.
+- **KD4 — his input and the agent's rendering are SEPARATE FRAMES (settled).** His raw sketch is one
+  frame; the agent's cleaned-up interpretation is another; both live on the one shared canvas, side
+  by side, so the "rough → polished" pair is visible together. And because it is one shared surface,
+  he can lay strokes **over** the agent's frames to annotate them (FR2a).
+- **KD5 — draw-then-submit, not a live mirror (settled).** A stroke does not stream to the laptop as
+  it is drawn; JJ finishes and hands the frame over. *"Draw then submit is fine."* Far cheaper than a
+  real-time two-way mirror, and it matches "sketch → hand it over → you polish."
+- **KD6 — a minimal pen, chosen for speed (settled).** Pen + eraser; a couple of colors only if they
+  are cheap; **no pressure**. *"Whatever is fastest."*
+- **KD7 — point (FR1) is the first slice.** It is nearly free (addressable nodes already exist) and
   high-value, so it can ship ahead of, or alongside, the draw slice.
-
-## Open Questions (settle with JJ before implementation)
-
-- **OQ1.** How structured does the sketching need to be to be useful — is freeform ink genuinely
-  enough for the first version, or does JJ expect at least snap-to-rectangle so a mockup reads
-  cleanly?
-- **OQ2.** Does a drawing **persist as a shared canvas frame** everyone sees, or land on a private
-  scratch layer JJ hands over deliberately ("here, look at this now")? The bandwidth story wants the
-  deliberate hand-over; the collaboration story wants the shared frame.
-- **OQ3.** Laptop-view + phone-draw at once (TC2): **real-time mirror**, or **draw-then-submit**?
-  Draw-then-submit is far cheaper and matches "sketch → hand it over → you polish."
-- **OQ4.** Pen niceties — pressure, eraser, a couple of colors: any of these needed at v0, or all
-  deferred?
 
 ## Out of Scope
 
 - **Structured shape recognition / snapping and handwriting-to-text OCR** (KD2) — a later spec.
-- **Real-time collaborative multi-cursor editing** — at most draw-then-submit at v0 (OQ3).
+- **A real-time two-way mirror** — the laptop does not see strokes as they are drawn; v0 is
+  draw-then-submit (KD5).
+- **Pen pressure sensitivity** (KD6) — a plain pen, an eraser, and at most a couple of cheap colors.
+- **Typed/written text on the canvas** — JJ's "maybe write" was tentative and secondary to "mainly
+  point and draw"; text is deferred so it cannot pull the v0 wide.
 - **The Command Bridge UI redesign** (orbs → a grid of labeled boxes, lanes moved over the
   transcript, more canvas height) — that is a **separate spec (016)**, and notably it is the *first
   thing JJ intends to draw* using this one. This spec builds the tool; that spec is a use of it.
