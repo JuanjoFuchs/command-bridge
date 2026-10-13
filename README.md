@@ -20,11 +20,11 @@ phone will not give a web page a microphone over plain http.
 
 ## Watch it work
 
-https://github.com/user-attachments/assets/52b01a4c-2868-49ed-a299-6e314fa88cf5
+[![Talking to a team of Claude Code agents by voice: the agent roster, the board of what each agent is on, and an agent explaining a blog post with a diagram, outlining each box as it names it](https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/docs/demo.gif)](https://github.com/JuanjoFuchs/command-bridge/blob/main/docs/demo.mp4)
 
-The agent talking through its own `watch` logic out loud — pointing at each box of a diagram it drew
-on the shared canvas as it explains. Voice out, a diagram back, and every bit of it runs on your
-own machine.
+Talking to a team of Claude Code agents by voice: ask for the roster, bring agents up, see the board
+of what each one is on, and watch one explain a blog post with a diagram it points at box by box.
+Sped up and without sound; [the full 1:09 clip](https://github.com/JuanjoFuchs/command-bridge/blob/main/docs/demo.mp4) has the voices.
 
 ## Quick start
 
