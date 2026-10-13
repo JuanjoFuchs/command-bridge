@@ -552,7 +552,8 @@ class Handler(BaseHTTPRequestHandler):
     # rather than a URL it should never have had to learn.
     # spec 022: no draw/remove/clear/look/zoom op — a frame is a file in the lane folder, and focus
     # follows the latest edit. What an agent still CALLS is pointing and switching.
-    OPS = {"point": "/point", "cue": "/cue", "switch": "/switch", "relayout": "/relayout"}
+    OPS = {"point": "/point", "cue": "/cue", "switch": "/switch", "relayout": "/relayout",
+           "show": "/show"}
 
     def _batch(self, payload: dict) -> list[dict]:
         """Apply many operations in order, and never abort on one failure.
@@ -845,6 +846,16 @@ class Handler(BaseHTTPRequestHandler):
             _store.touch()
             return 200, {"ok": True, "lane": lane,
                          "delivered_to": publish("relayout", {"lane": lane})}
+
+        if path == "/show":
+            # THE AGENT OPENS OR CLOSES ITS OWN CANVAS (JJ, 2026-10-13: *"I would also like a way for
+            # you to control when to open and close the canvas"*, for any agent with its own lane).
+            # Dumb relay: the page decides, and only acts when the lane is the one he is on.
+            want = str(payload.get("action") or "")
+            if want not in ("open", "close"):
+                return 400, {"error": "action must be open or close", "code": "invalid_input"}
+            return 200, {"ok": True, "lane": lane, "action": want,
+                         "delivered_to": publish("show", {"lane": lane, "action": want})}
 
         if path == "/rendered":
             # A diagram frame's RENDER OUTCOME (JJ, 2026-09-24): the page reports whether a mermaid

@@ -69,18 +69,20 @@ def test_an_empty_history_still_clears_the_saved_rows():
 # --- 2. a camera move holds the canvas until his turn --------------------------------------------
 
 _SIM = r"""
-let autoCanvas = null, canvasHeld = null, autoCanvasT = 0, liveLane = "atlas", defaultLane = "atlas";
+let autoCanvas = null, canvasHeld = null, canvasHeldAfterClip = false, agentOpened = null;
+let autoCanvasT = 0, liveLane = "atlas", defaultLane = "atlas";
 let playingLane = null, clipQueue = [], open = false;
 const canvasNews = {}, canvasLook = {};
 const document = { body: { classList: { contains: () => open } } };
 function openCanvas() { autoCanvas = null; open = true; }
-function closeCanvas() { autoCanvas = null; canvasHeld = null; open = false; }
+function closeCanvas() { autoCanvas = null; canvasHeld = null; agentOpened = null; open = false; }
 const AUTO_CANVAS_LINGER_MS = 0;
 const timers = [];
 function setTimeout(fn) { timers.push(fn); return timers.length; }
 function clearTimeout() {}
+function endClip(lane) { autoCanvasAfterClip({lane}); timers.splice(0).forEach(f => f()); }
 """ + "\n".join(_function_source(n) for n in (
-    "canvasEventIsLook", "autoCanvasOnClip", "autoCanvasOnTurn", "autoCanvasAfterClip"))
+    "canvasEventIsLook", "autoCanvasOnClip", "autoCanvasOnTurn", "canvasShow", "autoCanvasAfterClip"))
 
 
 def _run(steps: str):
@@ -106,11 +108,39 @@ def test_a_point_look_keeps_the_canvas_open_past_the_clip_until_his_turn():
 const trace = [];
 canvasNews.atlas = 1; canvasLook.atlas = true;          // agent ran `point f1 --look`, then `say`
 autoCanvasOnClip({lane: "atlas"}); trace.push(open);    // clip starts: canvas opens
-autoCanvasAfterClip({lane: "atlas"}); timers.forEach(f => f()); trace.push(open);  // clip ends: still open
+autoCanvasOnTurn("atlas"); trace.push(open);            // a turn landing mid-clip is not a ruling on it
+endClip("atlas"); trace.push(open);                     // clip ends: still open
 autoCanvasOnTurn("vega"); trace.push(open);             // a turn on another lane is not his ruling
 autoCanvasOnTurn("atlas"); trace.push(open);            // his ruling on this lane: it closes
 """)
-    assert trace == [True, True, True, False]
+    assert trace == [True, True, True, True, False]
+
+
+@needs_node
+def test_the_ruling_closes_it_even_after_he_clicked_into_the_canvas():
+    # The 2026-10-13 live miss: a click into the frame clears `autoCanvas` (the blur rule), and the
+    # first fix only closed when `autoCanvas` still named the lane — so three turns later it was up.
+    trace = _run("""
+const trace = [];
+canvasNews.atlas = 1; canvasLook.atlas = true;
+autoCanvasOnClip({lane: "atlas"});
+autoCanvas = null;                                      // he clicked into the canvas to look
+endClip("atlas"); trace.push(open);
+autoCanvasOnTurn("atlas"); trace.push(open);
+""")
+    assert trace == [True, False]
+
+
+@needs_node
+def test_a_look_holds_a_canvas_that_was_already_open():
+    trace = _run("""
+const trace = [];
+open = true;                                            // already showing (he opened it)
+canvasNews.atlas = 1; canvasLook.atlas = true;
+autoCanvasOnClip({lane: "atlas"}); endClip("atlas"); trace.push(open);
+autoCanvasOnTurn("atlas"); trace.push(open);
+""")
+    assert trace == [True, False]
 
 
 @needs_node
@@ -119,9 +149,81 @@ def test_a_plain_edit_still_hides_when_the_clip_ends():
 const trace = [];
 canvasNews.atlas = 1;                                   // a frame edit, no camera move
 autoCanvasOnClip({lane: "atlas"}); trace.push(open);
-autoCanvasAfterClip({lane: "atlas"}); timers.forEach(f => f()); trace.push(open);
+endClip("atlas"); trace.push(open);
 """)
     assert trace == [True, False]
+
+
+@needs_node
+def test_canvas_open_stays_until_canvas_close_and_only_on_the_live_lane():
+    trace = _run("""
+const trace = [];
+canvasShow({lane: "vega", action: "open"}); trace.push(open);    // not his lane: ignored, no switch
+canvasShow({lane: "atlas", action: "open"}); trace.push(open);
+canvasNews.atlas = 1; canvasLook.atlas = true;                   // a look + clip on top of it
+autoCanvasOnClip({lane: "atlas"}); endClip("atlas"); trace.push(open);
+autoCanvasOnTurn("atlas"); trace.push(open);                     // his turn does not close an explicit open
+canvasShow({lane: "atlas", action: "close"}); trace.push(open);
+""")
+    assert trace == [False, True, True, True, False]
+
+
+def _canvas_fn(name: str) -> str:
+    from command_bridge.canvas import page
+    src = page.PAGE
+    start = src.index(f"function {name}(")
+    return src[start:src.index("\n  }\n", start) + len("\n  }")]
+
+
+@needs_node
+@pytest.mark.parametrize("target,lands_on", [
+    ("outline", "zoom:outline"),   # liaison's `point outline --look`, then the canvas opens: stay there
+    (None, "auto:link-1"),         # no explicit target: opening shows the latest edit, as before
+])
+def test_opening_the_canvas_lands_on_the_explicit_target_not_the_latest_edit(target, lands_on):
+    # 2026-10-13, liaison mode: "your update to the Lyra frame stole the camera away from the outline".
+    prog = """
+let live = "magnus", pendingFocus = null; const calls = [];
+function layout() {}
+function latestCardId() { return "link-1"; }
+function autoFocus(id) { calls.push("auto:" + id); }
+function zoomTo(el) { calls.push("zoom:" + el.id); }
+let explicitTarget = %s;
+%s
+focusLatestOnOpen();
+process.stdout.write(JSON.stringify(calls));""" % (
+        "null" if target is None
+        else '{lane: "magnus", el: {id: "%s", isConnected: true}, margin: 24}' % target,
+        _canvas_fn("focusLatestOnOpen"))
+    assert _node(prog) == [lands_on]
+
+
+def test_explicit_moves_are_remembered_and_only_a_focusing_edit_clears_them():
+    from command_bridge.canvas import page
+    src = page.PAGE
+    calls = src.count("rememberExplicit(el, ") - src.count("function rememberExplicit(")
+    assert calls == 3   # point --look, look, cue --look
+    frame = src[src.index('es.addEventListener("frame"'):src.index('es.addEventListener("relayout"')]
+    focus_branch = frame[frame.index("if (msg.focus && lane === live"):]
+    assert "explicitTarget = null" in focus_branch
+
+
+def test_the_show_route_relays_open_and_close_and_rejects_anything_else(monkeypatch):
+    from command_bridge.canvas import server as canvas
+    assert canvas.Handler.OPS["show"] == "/show"
+    sent = []
+    monkeypatch.setattr(canvas, "publish", lambda ev, p: sent.append((ev, p)) or 1)
+    code, body = canvas.Handler.apply(None, "/show", {"lane": "magnus", "action": "open"})  # type: ignore[arg-type]
+    assert code == 200 and body["delivered_to"] == 1
+    assert sent == [("show", {"lane": "magnus", "action": "open"})]
+    code, body = canvas.Handler.apply(None, "/show", {"lane": "magnus", "action": "toggle"})  # type: ignore[arg-type]
+    assert code == 400 and body["code"] == "invalid_input"
+
+
+def test_the_canvas_verb_is_in_describe():
+    from command_bridge import cli
+    assert "canvas" in cli.DESCRIBE["commands"]
+    assert "action" in cli.DESCRIBE["commands"]["canvas"]["args"]
 
 
 def test_the_point_event_carries_its_look_flag_to_the_page():

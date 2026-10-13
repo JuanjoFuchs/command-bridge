@@ -1002,6 +1002,13 @@ PAGE = """<!doctype html>
     bootFocusUntil = 0;
     focusWhenShown = false;
   }
+  // THE EXPLICIT TARGET OUTLIVES A HIDE (JJ, 2026-10-13, liaison mode: "your update to the Lyra frame
+  // stole the camera away from the outline"). `point outline --look` landed, the parent then OPENED the
+  // canvas for the clip, and opening always flew to the latest EDITED frame (link-1) — an edit moving
+  // the camera in the one mode where edits never may. So the last explicit target per lane is kept, and
+  // opening lands on it; only an auto-focusing edit (never sent in liaison mode) supersedes it.
+  let explicitTarget = null;   // {lane, el, margin}
+  function rememberExplicit(el, margin) { explicitTarget = el ? { lane: live, el, margin } : null; }
   // spec 022: for a moment after the page (re)loads, the backlog is still arriving and sizing, so
   // each settle re-lands on the latest edited frame instead of the first frame's whole-board fit.
   let bootFocusUntil = Date.now() + 2500;
@@ -1047,6 +1054,12 @@ PAGE = """<!doctype html>
   let focusLatestFor = null;
   function focusLatestOnOpen() {
     layout();
+    const ex = explicitTarget;
+    if (ex && ex.lane === live && ex.el && ex.el.isConnected) {   // the agent's explicit look wins
+      pendingFocus = null;
+      zoomTo(ex.el, ex.margin, false);
+      return;
+    }
     const latest = latestCardId();
     if (!latest) return;
     // retried by relayoutSoon while the card is still sizing (mermaid renders after this)
@@ -1764,6 +1777,7 @@ PAGE = """<!doctype html>
       // an armed cue runs while the agent is not live and cannot correct a
       // mark that resolved into the wrong frame.
       if (cardEl(msg.look)) focused = msg.look;
+      rememberExplicit(el, 80);
       if (el) zoomTo(el, 80, true);
     }
     // `lead_ms` is the clip's own lead-in — the silence before the first word is
@@ -1913,6 +1927,7 @@ PAGE = """<!doctype html>
       // for a short window: every re-layout in that window (relayoutSoon) re-frames it on its
       // final size, without the flight.
       pendingFocus = { id, until: Date.now() + 2500 };
+      if (explicitTarget && explicitTarget.lane === lane) explicitTarget = null;   // the edit takes over
       // Each settle yields to an explicit camera move made after this edit (spec 037).
       const at = Date.now();
       setTimeout(() => { if (lastExplicit < at) autoFocus(id, true); }, 250);
@@ -2043,6 +2058,7 @@ PAGE = """<!doctype html>
     if (msg.zoom || msg.look) {
       explicitCamera();
       const el = findEl(msg.selector);
+      rememberExplicit(el, 24);
       if (el) zoomTo(el);
     }
   });
@@ -2059,6 +2075,7 @@ PAGE = """<!doctype html>
       // The camera and the search scope move together. This is the rule:
       // focus a frame, THEN highlight inside it.
       if (liveCardEl(msg.id) || cardEl(msg.id)) focused = msg.id;
+      rememberExplicit(el, 80);
       zoomTo(el, 80, true);
     }
   });

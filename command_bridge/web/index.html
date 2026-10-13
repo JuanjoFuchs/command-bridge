@@ -3423,7 +3423,7 @@
       try { sc && sc.contentWindow.postMessage({ type: "cb-focus-latest", lane: name }, location.origin); } catch (_) {}
     }, 350);
   }
-  function closeCanvas() { autoCanvas = null; canvasHeld = null; document.body.classList.remove("canvasopen"); canvasLane = null; paintOpenButtons(); }
+  function closeCanvas() { autoCanvas = null; canvasHeld = null; agentOpened = null; document.body.classList.remove("canvasopen"); canvasLane = null; paintOpenButtons(); }
 
   // THE CANVAS SHOWS WHILE AN AGENT TALKS ABOUT IT, THEN HIDES (JJ, 2026-10-05: *"when an agent wants
   // to show me something or updates something in their canvas, the canvas should show for a while
@@ -3443,7 +3443,9 @@
   const canvasNews = {};                // lane -> when its canvas last changed, since its last clip ended
   const canvasLook = {};                // lane -> an explicit camera move (`point --look`) since its last clip
   let autoCanvas = null;                // the lane whose canvas was opened for a clip, until he takes it
-  let canvasHeld = null;                // the auto-opened lane held open until HE speaks on it (below)
+  let canvasHeld = null;                // the lane whose `point --look` holds the canvas until HE speaks on it
+  let canvasHeldAfterClip = false;      // ...armed once the clip that showed it has ended
+  let agentOpened = null;               // the lane that opened its canvas with `canvas open` (until close)
   let autoCanvasT = 0;
   let canvasReplayUntil = 0;            // the SSE replays every frame after `sync`; that is not news
   // A CAMERA MOVE IS A QUESTION, SO IT WAITS FOR HIS ANSWER (JJ, 2026-10-13: *"When you show me
@@ -3463,31 +3465,49 @@
     canvasNews[d.lane] = Date.now();
     if (canvasEventIsLook(d)) canvasLook[d.lane] = true;
   });
+  window.addEventListener("cb-canvas-show", (e) => canvasShow(e.detail || {}));
   function autoCanvasOnClip(header) {
     const lane = header.lane || defaultLane;
     if (!lane || lane !== liveLane || !canvasNews[lane]) return;
     delete canvasNews[lane];
     const look = Boolean(canvasLook[lane]);
     delete canvasLook[lane];
-    if (document.body.classList.contains("canvasopen")) {   // already showing: leave it as it is
-      if (look && autoCanvas === lane) canvasHeld = lane;    // ...but a look on an auto-open one holds it
-      return;
-    }
+    // A look holds whether the canvas opens now or was already showing — but never one the agent
+    // opened explicitly with `canvas open`, which stays until `canvas close`.
+    if (look && agentOpened !== lane) { canvasHeld = lane; canvasHeldAfterClip = false; }
+    if (document.body.classList.contains("canvasopen")) return;   // already showing: leave it as it is
     clearTimeout(autoCanvasT);
     openCanvas(lane);
     autoCanvas = lane;
-    canvasHeld = look ? lane : null;
   }
-  // His final turn on the held lane is the ruling: release the hold and close it the way a clip end would.
+  // His first final turn on the held lane AFTER the clip that showed it is the ruling: it closes the
+  // canvas. 🔴 Not gated on `autoCanvas` (2026-10-13 live: "Why is your canvas still showing?" after
+  // three turns): `autoCanvas` is cleared the moment he clicks into the canvas (the blur rule below),
+  // or was never set when the canvas was already open — and a long hold is exactly when he clicks into
+  // the frame to look at it. A turn transcribed while that clip still plays is not a ruling on it.
   function autoCanvasOnTurn(lane) {
-    if (!canvasHeld || canvasHeld !== lane) return;
+    if (!canvasHeld || canvasHeld !== lane || !canvasHeldAfterClip) return;
     canvasHeld = null;
-    if (autoCanvas === lane) closeCanvas();
+    if (agentOpened === lane) return;
+    if (document.body.classList.contains("canvasopen") && liveLane === lane) closeCanvas();
+  }
+  // `command-bridge canvas open|close --lane <you>` (JJ, 2026-10-13: "a way for you to control when to
+  // open and close the canvas", for any agent with its own lane). Only the lane he is on: like a clip,
+  // it never switches him. An agent's `open` stays until its `close` or his; it overrides the hold.
+  function canvasShow(d) {
+    const lane = d && d.lane;
+    if (!lane || lane !== liveLane) return;
+    if (d.action === "open") {
+      if (!document.body.classList.contains("canvasopen")) openCanvas(lane);
+      autoCanvas = null; canvasHeld = null; agentOpened = lane;
+    } else if (d.action === "close" && document.body.classList.contains("canvasopen")) {
+      closeCanvas();
+    }
   }
   function autoCanvasAfterClip(header) {
     const lane = header.lane || defaultLane;
+    if (canvasHeld === lane) { canvasHeldAfterClip = true; return; }   // his next turn closes it
     if (!autoCanvas || autoCanvas !== lane) return;
-    if (canvasHeld === lane) return;   // held for his ruling: his next turn closes it, not this clip
     clearTimeout(autoCanvasT);
     autoCanvasT = setTimeout(() => {
       const more = (clipQueue || []).some((c) => c && c.header && !c.header.cue
@@ -5905,6 +5925,8 @@
   on("look",   function (d) { tell("look", { lane: d.lane, id: d.id }); });
   on("point",  function (d) { tell("point", { lane: d.lane, selector: d.selector, look: Boolean(d.look || d.zoom) }); });
   on("cue",    function (d) { if (!d.cancel) tell("cue", { lane: d.lane }); });
+  // An explicit open/close is not news (it must not mark the next clip), so it has its own event.
+  on("show",   function (d) { try { window.dispatchEvent(new CustomEvent("cb-canvas-show", { detail: { lane: d.lane, action: d.action } })); } catch (x) {} });
   on("remove", function (d) { frames[d.lane] = Math.max(0, (frames[d.lane] || 1) - 1); apply(); });
   on("clear",  function (d) { frames[d.lane] = 0; apply(); });
   // spec 013 papercut (2026-09-03): after a `stop`+`serve`, THIS parent EventSource auto-reconnects

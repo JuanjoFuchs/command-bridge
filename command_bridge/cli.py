@@ -1703,6 +1703,15 @@ DESCRIBE: dict[str, Any] = {
                            "fills a free gap; `relayout` re-packs on demand. A render failure and "
                            "the legibility of each frame are in `status` "
                            "(canvas.lanes[].frames[]); `shot` shows what he sees."},
+        "canvas": {"args": {"action": "open | close (positional)", "--session": "session id",
+                            "--lane": "which agent you are — only YOUR canvas"},
+                   "returns": {"delivered_to": "pages that got it (0 = no page open)"},
+                   "notes": "Open or close YOUR lane's canvas on his page (JJ, 2026-10-13). Acts only "
+                            "while he is ON your lane — it never switches lanes; an `open` on another "
+                            "lane is ignored. `open` stays until you `close` it or he closes it. Without "
+                            "it the default still holds: a clip after a frame edit shows the canvas while "
+                            "you speak, and after `point --look` it stays until his next turn on your "
+                            "lane (his ruling). Needs a server started after this verb shipped."},
         "relayout": {"args": {"--session": "session id", "--lane": "which agent you are"},
                      "notes": "Re-pack your lane's canvas ONCE (spec 022 FR6). The board is sticky — "
                               "adding or editing a frame never moves the others — so this is the "
@@ -4879,6 +4888,12 @@ def cmd_canvas_doctor(args) -> dict[str, Any]:
     return canvas_folder.doctor(root, lane=args.lane or None, fix=args.fix)
 
 
+def cmd_canvas_show(args) -> dict[str, Any]:
+    """Open or close the caller's own canvas on his page (JJ, 2026-10-13). A relay: the page acts
+    only when `--lane` is the lane he is on, the same rule that keeps a clip from switching lanes."""
+    return _canvas(args.session, "show", {"action": args.action}, args.lane)
+
+
 def cmd_point(args) -> dict[str, Any]:
     return _canvas(args.session, "point", {"selector": args.selector, "look": args.look}, args.lane)
 
@@ -6292,6 +6307,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_doc.add_argument("--fix", action="store_true",
                        help="repair: index orphans, drop dangling entries, rename duplicate ids")
 
+    p_show = _canvas_parser("canvas", "open or close YOUR lane's canvas on his page")
+    p_show.add_argument("action", choices=("open", "close"),
+                        help="open: show it until you close it or he does; close: back to the fleet")
+
     p_point = _canvas_parser("point", "highlight a frame or something inside one")
     p_point.add_argument("selector", nargs="?", default="",
                          help="frame id, CSS selector, or mermaid node id; empty clears it")
@@ -6648,6 +6667,7 @@ def main(argv=None) -> int:
         # The canvas verbs (spec 005) — the one CLI drives both halves through the one server.
         # spec 022: set/look/zoom/remove/clear are retired — a frame is a file (RETIRED_COMMANDS).
         "point": cmd_point,
+        "canvas": cmd_canvas_show,
         "cue": cmd_canvas_cue,
         "inspect": cmd_inspect,
         "relayout": cmd_relayout,
