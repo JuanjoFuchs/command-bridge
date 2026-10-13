@@ -1060,14 +1060,20 @@ PAGE = """<!doctype html>
   // the canvas's own `switch` event has not arrived yet, focusing now would frame the PREVIOUS lane's
   // cards and the new lane would then restore its parked view. So a mismatch waits for useLane.
   let focusLatestFor = null;
+  // An AGENT opened it (a `point --look` clip or `canvas open`), not his button: never fall back to
+  // "the latest edit" (JJ, 2026-10-13: "you were showing me an old frame"). Consumed by one open.
+  let openByAgent = false;
   function focusLatestOnOpen() {
     layout();
+    const byAgent = openByAgent;
+    openByAgent = false;
     const ex = explicitTarget;
     if (ex && ex.lane === live && ex.el && ex.el.isConnected) {   // the agent's explicit look wins
       pendingFocus = null;
       zoomTo(ex.el, ex.margin, false);
       return;
     }
+    if (byAgent) return;   // no target to show: keep the view the agent left, never the latest edit
     const latest = latestCardId();
     if (!latest) return;
     // retried by relayoutSoon while the card is still sizing (mermaid renders after this)
@@ -1077,6 +1083,7 @@ PAGE = """<!doctype html>
   window.addEventListener("message", (e) => {
     if (e.origin !== location.origin || !e.data || e.data.type !== "cb-focus-latest") return;
     const lane = e.data.lane;
+    openByAgent = Boolean(e.data.explicit);
     if (lane && lane !== live) {
       focusLatestFor = lane;
       // …but not forever: when the parent already believed it was on this lane it sends no switch at

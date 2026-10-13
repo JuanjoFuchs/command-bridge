@@ -1708,10 +1708,11 @@ DESCRIBE: dict[str, Any] = {
                    "returns": {"delivered_to": "pages that got it (0 = no page open)"},
                    "notes": "Open or close YOUR lane's canvas on his page (JJ, 2026-10-13). Acts only "
                             "while he is ON your lane — it never switches lanes; an `open` on another "
-                            "lane is ignored. `open` stays until you `close` it or he closes it. Without "
-                            "it the default still holds: a clip after a frame edit shows the canvas while "
-                            "you speak, and after `point --look` it stays until his next turn on your "
-                            "lane (his ruling). Needs a server started after this verb shipped."},
+                            "lane is ignored. `open` stays until you `close` it or he closes it. The only "
+                            "other way the canvas opens is `point <frame> --look` followed by a `say`: it "
+                            "opens on that frame while you speak and stays until his next turn on your "
+                            "lane (his ruling). A frame edit or plain `point` never opens it. Needs a "
+                            "server started after this verb shipped."},
         "relayout": {"args": {"--session": "session id", "--lane": "which agent you are"},
                      "notes": "Re-pack your lane's canvas ONCE (spec 022 FR6). The board is sticky — "
                               "adding or editing a frame never moves the others — so this is the "

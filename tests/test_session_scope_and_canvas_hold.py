@@ -144,14 +144,16 @@ autoCanvasOnTurn("atlas"); trace.push(open);
 
 
 @needs_node
-def test_a_plain_edit_still_hides_when_the_clip_ends():
+def test_a_plain_edit_never_opens_the_canvas_for_a_clip():
+    # JJ, 2026-10-13: "whenever Phoenix speaks, its canvas opens, and there's nothing recent it
+    # should show me". Only an explicit look (or `canvas open`) opens it now.
     trace = _run("""
 const trace = [];
 canvasNews.atlas = 1;                                   // a frame edit, no camera move
 autoCanvasOnClip({lane: "atlas"}); trace.push(open);
 endClip("atlas"); trace.push(open);
 """)
-    assert trace == [True, False]
+    assert trace == [False, False]
 
 
 @needs_node
@@ -176,14 +178,18 @@ def _canvas_fn(name: str) -> str:
 
 
 @needs_node
-@pytest.mark.parametrize("target,lands_on", [
-    ("outline", "zoom:outline"),   # liaison's `point outline --look`, then the canvas opens: stay there
-    (None, "auto:link-1"),         # no explicit target: opening shows the latest edit, as before
+@pytest.mark.parametrize("target,by_agent,lands_on", [
+    ("outline", True, ["zoom:outline"]),   # liaison's `point outline --look`, then the canvas opens
+    ("outline", False, ["zoom:outline"]),
+    (None, False, ["auto:link-1"]),        # HIS button, nothing pointed at: the latest edit, as before
+    (None, True, []),                      # an agent's open with no target: never an old frame
 ])
-def test_opening_the_canvas_lands_on_the_explicit_target_not_the_latest_edit(target, lands_on):
-    # 2026-10-13, liaison mode: "your update to the Lyra frame stole the camera away from the outline".
+def test_opening_the_canvas_lands_on_the_explicit_target_not_the_latest_edit(target, by_agent, lands_on):
+    # 2026-10-13, liaison mode: "your update to the Lyra frame stole the camera away from the outline";
+    # and "you were showing me an old frame".
     prog = """
-let live = "magnus", pendingFocus = null; const calls = [];
+let live = "magnus", pendingFocus = null, openByAgent = """ + ("true" if by_agent else "false") + """;
+const calls = [];
 function layout() {}
 function latestCardId() { return "link-1"; }
 function autoFocus(id) { calls.push("auto:" + id); }
@@ -195,7 +201,7 @@ process.stdout.write(JSON.stringify(calls));""" % (
         "null" if target is None
         else '{lane: "magnus", el: {id: "%s", isConnected: true}, margin: 24}' % target,
         _canvas_fn("focusLatestOnOpen"))
-    assert _node(prog) == [lands_on]
+    assert _node(prog) == lands_on
 
 
 def test_explicit_moves_are_remembered_and_only_a_focusing_edit_clears_them():
@@ -238,6 +244,12 @@ def test_the_canvas_verb_is_in_describe():
     from command_bridge import cli
     assert "canvas" in cli.DESCRIBE["commands"]
     assert "action" in cli.DESCRIBE["commands"]["canvas"]["args"]
+
+
+def test_agent_opens_tell_the_canvas_they_are_the_agents():
+    assert "openCanvas(lane, true)" in _function_source("autoCanvasOnClip")
+    assert "openCanvas(lane, true)" in _function_source("canvasShow")
+    assert "explicit: Boolean(byAgent)" in _function_source("openCanvas")
 
 
 def test_the_point_event_carries_its_look_flag_to_the_page():

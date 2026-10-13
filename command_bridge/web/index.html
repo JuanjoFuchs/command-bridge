@@ -3409,7 +3409,9 @@
       b.setAttribute("aria-pressed", pressed ? "true" : "false");
     }
   }
-  function openCanvas(name) {
+  // `byAgent`: opened by an agent's look or `canvas open`, so the canvas keeps the frame the agent
+  // pointed at (or its current view) instead of flying to the latest edit, which is HIS button's rule.
+  function openCanvas(name, byAgent) {
     autoCanvas = null;   // opened by him; the auto path re-marks it right after this returns
     canvasLane = name;
     setTimeout(paintOpenButtons, 0);
@@ -3420,7 +3422,7 @@
     const sc = document.getElementById("sharecanvas");
     setTimeout(() => {
       // name the lane: the canvas holds the focus until ITS switch to that lane lands (canvas/page.py)
-      try { sc && sc.contentWindow.postMessage({ type: "cb-focus-latest", lane: name }, location.origin); } catch (_) {}
+      try { sc && sc.contentWindow.postMessage({ type: "cb-focus-latest", lane: name, explicit: Boolean(byAgent) }, location.origin); } catch (_) {}
     }, 350);
   }
   function closeCanvas() { autoCanvas = null; canvasHeld = null; agentOpened = null; document.body.classList.remove("canvasopen"); canvasLane = null; paintOpenButtons(); }
@@ -3472,12 +3474,17 @@
     delete canvasNews[lane];
     const look = Boolean(canvasLook[lane]);
     delete canvasLook[lane];
+    // 🔴 ONLY AN EXPLICIT LOOK OPENS IT (JJ, 2026-10-13: *"whenever Phoenix speaks, its canvas opens,
+    // and there's nothing recent it should show me … you were showing me an old frame"*). An edit, a
+    // plain point or a cue no longer opens the canvas for the next clip; `point --look` (or the
+    // agent's own `canvas open`) does, and it lands on the frame pointed at, not "the latest edit".
+    if (!look) return;
     // A look holds whether the canvas opens now or was already showing — but never one the agent
     // opened explicitly with `canvas open`, which stays until `canvas close`.
-    if (look && agentOpened !== lane) { canvasHeld = lane; canvasHeldAfterClip = false; }
+    if (agentOpened !== lane) { canvasHeld = lane; canvasHeldAfterClip = false; }
     if (document.body.classList.contains("canvasopen")) return;   // already showing: leave it as it is
     clearTimeout(autoCanvasT);
-    openCanvas(lane);
+    openCanvas(lane, true);
     autoCanvas = lane;
   }
   // His first final turn on the held lane AFTER the clip that showed it is the ruling: it closes the
@@ -3498,7 +3505,7 @@
     const lane = d && d.lane;
     if (!lane || lane !== liveLane) return;
     if (d.action === "open") {
-      if (!document.body.classList.contains("canvasopen")) openCanvas(lane);
+      if (!document.body.classList.contains("canvasopen")) openCanvas(lane, true);
       autoCanvas = null; canvasHeld = null; agentOpened = lane;
     } else if (d.action === "close" && document.body.classList.contains("canvasopen")) {
       closeCanvas();
