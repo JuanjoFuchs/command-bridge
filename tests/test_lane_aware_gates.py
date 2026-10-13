@@ -315,6 +315,16 @@ def test_the_last_page_leaving_returns_what_it_was_holding(state, sock):
     )
 
 
+def test_two_clips_in_the_same_millisecond_still_get_different_ids(state, sock, monkeypatch):
+    """The id used to be the millisecond timestamp alone, so two replies synthesized inside one
+    millisecond shared it — and the playing-clip filter above then dropped BOTH. Found by CI on a
+    fast Linux runner, where the test above went red intermittently. Freeze the clock to force it."""
+    monkeypatch.setattr(server.time, "time", lambda: 1_700_000_000.0)
+    a = say_on(state, "magnus", "first")
+    b = say_on(state, "magnus", "second")
+    assert a["id"] != b["id"], "two clips, one id: every receipt and barge would treat them as one"
+
+
 def test_the_receipt_after_a_barge_still_names_its_own_lane(state, sock, his_voice):
     """Spec 026 correcting spec 024. `stop_playback` is what MAKES the receipt, so one is always on
     its way; emptying `clip_owner` wholesale sent it through the `or state.lanes.current` fallback

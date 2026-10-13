@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import datetime as _dt
 import heapq
+import itertools
 import json
 import os
 import pickle
@@ -48,6 +49,9 @@ from . import lanes as lanes_mod
 from . import liaison as liaison_mod
 from . import native as native_mod
 from .wake import WakeGate
+
+# Per-process counter that makes every clip id unique even within one millisecond (see `_speak`).
+_CLIP_SEQ = itertools.count(1)
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 """The client page ships INSIDE the package, not beside it.
@@ -2432,7 +2436,11 @@ async def _speak_now(state: TunnelState, text: str, voice: str | None,
     # done signal); OFF his lane the reply is HELD, so this cue is the only audible "a reply is
     # waiting on that lane."
     await _push_cue(state, "synthesized")
-    clip_id = f"clip-{int(time.time() * 1000)}"
+    # UNIQUE, not just a timestamp. Two replies synthesized inside the same millisecond (a fast
+    # backend, two lanes at once) used to get the SAME id, and everything keyed on it — the
+    # playing-clip filter, `played` receipts, clip_owner — then treated two clips as one: a barge
+    # dropped the queued reply along with the one on the speaker. CI caught it on a fast runner.
+    clip_id = f"clip-{int(time.time() * 1000)}-{next(_CLIP_SEQ)}"
     # A HEADS-UP, NOT THE MESSAGE (spec 036). The clip below is held or played exactly as any other;
     # the notice only tells his phone it exists, and its `played` receipt resolves the notice.
     if notify:

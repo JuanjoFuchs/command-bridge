@@ -20,6 +20,8 @@ with a clean CPU fallback, pronunciation that holds at any speed, and the **Andr
 - 🔴 **`describe` crashed on Windows when its output was piped** — `UnicodeEncodeError` on the first
   non-ASCII character under the cp1252 console code page, which is how an agent always reads the
   tool. stdout/stderr are now UTF-8 regardless of the code page.
+- 🔴 **Two replies synthesized in the same millisecond shared one clip id**, so a barge or a
+  dropped page treated them as one clip and lost the queued reply. Ids are now unique per process.
 - CI was red on every push since the public repo opened: 114 lint findings stopped the run before
   the tests, and behind them five word-timing tests needed the optional `kokoro-onnx`. Both fixed;
   the suite passes on the core-only floor on Linux, macOS and Windows.
