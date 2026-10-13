@@ -2386,6 +2386,25 @@
   }
   window.addEventListener("pagehide", writeLog);        // flush before a reload/navigation the debounce would miss
 
+  // THE SAVED ROWS BELONG TO ONE SESSION (JJ, 2026-10-13, after a restart onto `serve --session demo`:
+  // *"The transcript panel is not filtered to the session. It's showing the previous session."*). The
+  // store above is per-browser, not per-session, so it replayed the old session's rows — and their turn
+  // ids, which the new session reuses from 0, so addRow's dedup then swallowed the new session's turns.
+  // `ready` names the session; a saved log from any other session (or an older build that never
+  // recorded one) is dropped before `/history` rebuilds. Pure so the test runs the shipped rule.
+  const LOG_SESSION_KEY = "command-bridge.log.session";
+  function logBelongsTo(savedSession, session) {
+    return !session || savedSession === session;
+  }
+  function adoptLogSession(session) {
+    let saved = null; try { saved = localStorage.getItem(LOG_SESSION_KEY); } catch (_) {}
+    if (logBelongsTo(saved, session)) return;
+    $log.querySelectorAll(".row").forEach(n => n.remove());
+    logRows = [];
+    writeLog();
+    try { localStorage.setItem(LOG_SESSION_KEY, session); } catch (_) {}
+  }
+
   // THE SERVER'S TRANSCRIPT WINS OVER THIS DEVICE'S (JJ, 2026-09-25, on the phone after the laptop:
   // "the turns that I did while in the computer are not showing up here, why"). The saved rows above
   // are only what THIS browser happened to see live, so a second device showed a stale, one-sided
@@ -2399,7 +2418,9 @@
       if (!r.ok) return;
       rows = (await r.json()).rows;
     } catch (_) { return; }
-    if (!Array.isArray(rows) || !rows.length) return;
+    // An EMPTY answer is still an answer: a fresh session has no history, and keeping the rows this
+    // browser saved would show him a different session's conversation (2026-10-13).
+    if (!Array.isArray(rows)) return;
     $log.querySelectorAll(".row").forEach(n => n.remove());
     logRows = [];
     // HISTORY IS NOT NEWS: replayed rows must not pop bubbles (JJ, 2026-09-29: "whenever I reload …
@@ -3402,7 +3423,7 @@
       try { sc && sc.contentWindow.postMessage({ type: "cb-focus-latest", lane: name }, location.origin); } catch (_) {}
     }, 350);
   }
-  function closeCanvas() { autoCanvas = null; document.body.classList.remove("canvasopen"); canvasLane = null; paintOpenButtons(); }
+  function closeCanvas() { autoCanvas = null; canvasHeld = null; document.body.classList.remove("canvasopen"); canvasLane = null; paintOpenButtons(); }
 
   // THE CANVAS SHOWS WHILE AN AGENT TALKS ABOUT IT, THEN HIDES (JJ, 2026-10-05: *"when an agent wants
   // to show me something or updates something in their canvas, the canvas should show for a while
@@ -3420,9 +3441,19 @@
   // the same opt-out that keeps them from moving the camera.
   const AUTO_CANVAS_LINGER_MS = 1500;   // a gap between one lane's clips shorter than this keeps it open
   const canvasNews = {};                // lane -> when its canvas last changed, since its last clip ended
+  const canvasLook = {};                // lane -> an explicit camera move (`point --look`) since its last clip
   let autoCanvas = null;                // the lane whose canvas was opened for a clip, until he takes it
+  let canvasHeld = null;                // the auto-opened lane held open until HE speaks on it (below)
   let autoCanvasT = 0;
   let canvasReplayUntil = 0;            // the SSE replays every frame after `sync`; that is not news
+  // A CAMERA MOVE IS A QUESTION, SO IT WAITS FOR HIS ANSWER (JJ, 2026-10-13: *"When you show me
+  // something in the canvas and I have to make a ruling on that, maybe we shouldn't hide the canvas as
+  // soon as your turn ends, but until I give you that ruling."*). An edit alone still hides after the
+  // clip; a frame the agent deliberately brought on screen (`point --look`, or a `look`) stays until his
+  // next turn lands on that lane. Pure so the test runs the shipped rule.
+  function canvasEventIsLook(d) {
+    return Boolean(d) && (d.kind === "look" || (d.kind === "point" && Boolean(d.selector) && Boolean(d.look)));
+  }
   window.addEventListener("cb-canvas-event", (e) => {
     const d = e.detail || {};
     if (d.kind === "sync") { canvasReplayUntil = Date.now() + 1500; return; }
@@ -3430,24 +3461,38 @@
     if (d.kind === "frame" && String(d.id || "").startsWith("_")) return;
     if (d.kind === "point" && !d.selector) return;   // a cleared highlight shows nothing
     canvasNews[d.lane] = Date.now();
+    if (canvasEventIsLook(d)) canvasLook[d.lane] = true;
   });
   function autoCanvasOnClip(header) {
     const lane = header.lane || defaultLane;
     if (!lane || lane !== liveLane || !canvasNews[lane]) return;
     delete canvasNews[lane];
-    if (document.body.classList.contains("canvasopen")) return;   // already showing: leave it as it is
+    const look = Boolean(canvasLook[lane]);
+    delete canvasLook[lane];
+    if (document.body.classList.contains("canvasopen")) {   // already showing: leave it as it is
+      if (look && autoCanvas === lane) canvasHeld = lane;    // ...but a look on an auto-open one holds it
+      return;
+    }
     clearTimeout(autoCanvasT);
     openCanvas(lane);
     autoCanvas = lane;
+    canvasHeld = look ? lane : null;
+  }
+  // His final turn on the held lane is the ruling: release the hold and close it the way a clip end would.
+  function autoCanvasOnTurn(lane) {
+    if (!canvasHeld || canvasHeld !== lane) return;
+    canvasHeld = null;
+    if (autoCanvas === lane) closeCanvas();
   }
   function autoCanvasAfterClip(header) {
     const lane = header.lane || defaultLane;
     if (!autoCanvas || autoCanvas !== lane) return;
+    if (canvasHeld === lane) return;   // held for his ruling: his next turn closes it, not this clip
     clearTimeout(autoCanvasT);
     autoCanvasT = setTimeout(() => {
       const more = (clipQueue || []).some((c) => c && c.header && !c.header.cue
                                                 && (c.header.lane || defaultLane) === lane);
-      if (autoCanvas === lane && playingLane !== lane && !more) closeCanvas();
+      if (autoCanvas === lane && canvasHeld !== lane && playingLane !== lane && !more) closeCanvas();
     }, AUTO_CANVAS_LINGER_MS);
   }
   // Touching the canvas makes it his. Focus moving into the canvas frame is the one signal this
@@ -3820,7 +3865,9 @@
                msg.text, msg.addressed ? "addressed" : "", msg.id,
                ("lane" in msg) ? msg.lane : defaultLane);
         placeDivider();
+        autoCanvasOnTurn(("lane" in msg) ? msg.lane : defaultLane);   // his ruling releases a held canvas
       } else if (msg.type === "ready") {
+        adoptLogSession(msg.session);   // drop a saved transcript from another session (2026-10-13)
         if (msg.lane_colors) laneColors = msg.lane_colors;
         if (msg.lane_roles) laneRoles = msg.lane_roles;
         liaisons = msg.liaisons || {};   // spec 038; an older server sends none = no hierarchy
@@ -5856,7 +5903,7 @@
   on("frame",  function (d) { tell("frame", { lane: d.lane, id: d.id }); frames[d.lane] = (frames[d.lane] || 0) + 1; apply(); });
   on("rows",   function (d) { tell("rows", { lane: d.lane, id: d.id }); frames[d.lane] = (frames[d.lane] || 1); apply(); });
   on("look",   function (d) { tell("look", { lane: d.lane, id: d.id }); });
-  on("point",  function (d) { tell("point", { lane: d.lane, selector: d.selector }); });
+  on("point",  function (d) { tell("point", { lane: d.lane, selector: d.selector, look: Boolean(d.look || d.zoom) }); });
   on("cue",    function (d) { if (!d.cancel) tell("cue", { lane: d.lane }); });
   on("remove", function (d) { frames[d.lane] = Math.max(0, (frames[d.lane] || 1) - 1); apply(); });
   on("clear",  function (d) { frames[d.lane] = 0; apply(); });
