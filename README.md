@@ -20,11 +20,10 @@ phone will not give a web page a microphone over plain http.
 
 ## Watch it work
 
-[![Talking to a team of Claude Code agents by voice: the agent roster, the board of what each agent is on, and an agent explaining a blog post with a diagram, outlining each box as it names it](https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/docs/demo.gif)](https://github.com/JuanjoFuchs/command-bridge/blob/main/docs/demo.mp4)
+https://github.com/user-attachments/assets/3da24122-e4d5-4661-9d06-1386f7a8bdcc
 
 Talking to a team of Claude Code agents by voice: ask for the roster, bring agents up, see the board
 of what each one is on, and watch one explain a blog post with a diagram it points at box by box.
-Sped up and without sound; [the full 1:09 clip](https://github.com/JuanjoFuchs/command-bridge/blob/main/docs/demo.mp4) has the voices.
 
 ## Quick start
 
