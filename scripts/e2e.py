@@ -162,8 +162,8 @@ def wav_duration(path: str) -> float:
 
 
 def run(headed: bool, keep: bool) -> int:
-    from playwright.sync_api import sync_playwright
     from pagesplit import ui_frame
+    from playwright.sync_api import sync_playwright
 
     workdir = tempfile.mkdtemp(prefix="command-bridge-e2e-")
     session = "e2e"

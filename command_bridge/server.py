@@ -30,12 +30,23 @@ from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
 from . import colors as colors_mod
-from . import config, cues, pairing, security, speech, store, timing, tts, turndetect, voiceprint
+from . import (
+    config,
+    cues,
+    guest,
+    notices,
+    pairing,
+    security,
+    speech,
+    store,
+    timing,
+    tts,
+    turndetect,
+    voiceprint,
+)
 from . import lanes as lanes_mod
-from . import guest
 from . import liaison as liaison_mod
 from . import native as native_mod
-from . import notices
 from .wake import WakeGate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -1563,7 +1574,7 @@ def _held_path(session: str) -> str:
     return os.path.join(config.session_dir(), f"{session}.held.pkl")
 
 
-def _persist_held(state: "TunnelState") -> None:
+def _persist_held(state: TunnelState) -> None:
     """Write the held clips to disk so the next server can raise the same hands (best-effort).
 
     The UNDELIVERED queue goes with them (JJ, 2026-09-29: held clips should *"survive restarts or
@@ -1584,7 +1595,7 @@ async def _restore_held_on_startup(app: web.Application) -> None:
     """Reload held clips a graceful restart left behind, then delete the file (best-effort, inert in
     tests — no file, no-op). Only clips newer than the restart window are restored; anything older is
     a stale leftover and is discarded."""
-    state: "TunnelState" = app["state"]
+    state: TunnelState = app["state"]
     path = _held_path(state.session)
     try:
         if not os.path.exists(path):

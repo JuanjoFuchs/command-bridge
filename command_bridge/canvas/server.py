@@ -31,8 +31,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ..config import CANVAS_READABLE_PX
-from .cue import schedule as cue_schedule
 from . import folder as canvas_folder
+from .cue import schedule as cue_schedule
 from .follow import Follower
 from .page import PAGE_VERSION, render
 

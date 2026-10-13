@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import colorsys
 import itertools
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def _palette() -> list[str]:
@@ -51,7 +51,7 @@ def _lab(hex_colour: str) -> tuple[float, float, float]:
 def delta_e(a: str, b: str) -> float:
     """CIE76 distance between two hex colours. Raises ValueError on a non-hex string."""
     la, lb = _lab(a), _lab(b)
-    return sum((p - q) ** 2 for p, q in zip(la, lb)) ** 0.5
+    return sum((p - q) ** 2 for p, q in zip(la, lb, strict=True)) ** 0.5
 
 
 def _is_hex(value: str) -> bool:

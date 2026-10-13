@@ -270,7 +270,7 @@ def satellites(arrangement: str) -> str:
         f'<div class="rv-sat {c}" data-lane="{n}" style="{s}">'
         f'<span class="mini"><i></i></span><span class="nm">{n}</span>'
         f'<span class="st">{st}</span></div>'
-        for (n, st, _hue, _w), c, s in zip(LANES, cls, spots))
+        for (n, st, _hue, _w), c, s in zip(LANES, cls, spots, strict=False))
 
 
 COLLAPSE = ('<button class="rv-collapse">transcript'
@@ -373,7 +373,7 @@ def build(style: str) -> str:
         f'<span class="hand"><span class="em">&#9995;</span>{wait or ""}</span>'
         f'</div>'
         f'<span class="nm">{n}</span></div>'
-        for (n, st, hue, wait), c in zip(LANES, cls))
+        for (n, st, hue, wait), c in zip(LANES, cls, strict=False))
     c = frame("C — no centre orb, one per lane",
               head() + f'<div class="rv-grid">{lanes}</div>' + COLLAPSE + log(True))
 

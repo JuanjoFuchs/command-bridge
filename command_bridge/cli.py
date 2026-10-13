@@ -2166,8 +2166,8 @@ def _serve_remedy() -> str:
     (start it detached, then go straight back into `watch`) and an agent that only gets told
     'no server' reliably starts one and then forgets the second half."""
     return (
-        f"start it detached: `command-bridge serve` — then IMMEDIATELY "
-        f"`command-bridge watch --since -1`"
+        "start it detached: `command-bridge serve` — then IMMEDIATELY "
+        "`command-bridge watch --since -1`"
     )
 
 
@@ -2376,7 +2376,7 @@ def _next_branch(turns, live: dict[str, Any] | None,
     the whole reason this field beats documentation.
     """
     watch = f"`command-bridge watch --since {cursor}`" if cursor is not None \
-        else f"`command-bridge watch --since <cursor>`"
+        else "`command-bridge watch --since <cursor>`"
     # NO PRE-SAY `watch --reply` IS HANDED OUT ANY MORE (spec 028). It used to be, from the turns
     # branch, because a bare pre-say watch read as a LISTEN and backed off (JJ, 2026-09-15). `say` now
     # refuses on both conditions that wait guarded, so the turns branch says to SAY; the `--reply`
@@ -2399,7 +2399,7 @@ def _next_branch(turns, live: dict[str, Any] | None,
     # recovery. `watch` now returns on a control change too (see cmd_watch), so waiting is not
     # merely allowed here — it is how the agent learns he came back.
     if live is None:
-        serve = f"run `command-bridge serve`"
+        serve = "run `command-bridge serve`"
         return ("no_server", serve,
                 f"say you stopped listening, then {serve}")
     if not live.get("clients"):
@@ -2443,7 +2443,7 @@ def _next_branch(turns, live: dict[str, Any] | None,
         # turn from him, i.e. the agent is about to act on his instruction, which is the one moment an
         # "about to…" clip SHOULD be an intent announcement. Naming --intent right here is what turns
         # the flag from a thing agents forget into the default for instruction-driven work.
-        mode = (f"say what you will do via `command-bridge say --now --intent \"…\"` before acting "
+        mode = ("say what you will do via `command-bridge say --now --intent \"…\"` before acting "
                 "— use --intent because this is an 'about to' announcement in reply to HIS turn: it "
                 "is superseded the moment your real result lands and it shows on his intent badge, so "
                 "he can see you have it without switching lanes — then watch between steps"
@@ -4559,8 +4559,8 @@ def cmd_rate(args) -> dict[str, Any]:
         # Not an error: persisting with no server running is a normal thing to do. Say what
         # happened so nobody concludes the setting was lost.
         "note": None if applied else (
-            f"saved, and it applies the next time you `command-bridge serve` "
-            f"— no server is running to change right now"
+            "saved, and it applies the next time you `command-bridge serve` "
+            "— no server is running to change right now"
         ),
     }
 
@@ -4685,8 +4685,8 @@ def cmd_wake(args) -> dict[str, Any]:
         "file": config.env_file_path() if written else None,
         "applied_live": applied,
         "note": None if applied else (
-            f"saved, and it applies the next time you `command-bridge serve` "
-            f"— no server is running to change right now"
+            "saved, and it applies the next time you `command-bridge serve` "
+            "— no server is running to change right now"
         ),
     }
 
@@ -4719,7 +4719,7 @@ def cmd_verbose(args) -> dict[str, Any]:
         "persisted": written or None,
         "applied_live": applied,
         "note": None if applied else (
-            f"saved; applies on the next `command-bridge serve`"
+            "saved; applies on the next `command-bridge serve`"
         ),
     }
 
@@ -4853,7 +4853,6 @@ def _await_legibility(session: str, lane: str, fid: str,
 # carries it per frame. Re-exported here under its old names for the callers and tests that use them.
 from .canvas.folder import WALL_OF_TEXT_WORDS  # noqa: E402,F401
 from .canvas.folder import wall_of_text as _wall_of_text  # noqa: E402,F401
-
 
 # spec 022: `set`, `look`, `zoom`, `remove` and `clear` are retired (see RETIRED_COMMANDS). A frame is
 # a file the agent writes into its lane folder; the server's watcher adds, re-renders, removes, lays
@@ -5191,7 +5190,7 @@ def cmd_shot(args) -> dict[str, Any]:
     if not url:
         return {"error": "no running server for this session",
                 "code": "no_server",
-                "remedy": f"start one with `command-bridge serve`, "
+                "remedy": "start one with `command-bridge serve`, "
                           "or pass --url"}
     viewport = _shot.parse_viewport(args.viewport)
     return _shot.capture(url, args.out, viewport=viewport, lane=args.lane, settle_ms=args.settle,

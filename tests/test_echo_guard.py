@@ -3,7 +3,6 @@ his turn — and his own short replies must never be mistaken for one (JJ, 2026-
 
 from command_bridge import echo
 
-
 DEXTER = ("This one's complete. It's bigger because it scanned the whole glass, not just the main "
           "diagram, so I cropped it.")
 

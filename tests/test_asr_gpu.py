@@ -7,8 +7,6 @@ on the search path — which must never turn into a dead ASR: it falls back to t
 """
 import os
 
-import pytest
-
 from command_bridge import asr, config
 
 

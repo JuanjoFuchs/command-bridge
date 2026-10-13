@@ -20,8 +20,8 @@ judge of it (TC1).
 """
 import pytest
 
-from tests.test_cli_surface import run
 from command_bridge import cli, speech, timing, tts
+from tests.test_cli_surface import run
 
 # ============================================================ AC1: the FR2 table, class by class
 

@@ -31,6 +31,7 @@ def test_a_restart_waits_for_him_to_stop_speaking(monkeypatch):
     """JJ, 2026-10-05: *"Magnus restarted the server so that whole thing was lost."* The wait holds
     while he is talking and only releases after a quiet stretch, so his sentence is not cut."""
     import asyncio
+
     from command_bridge import config, server
     monkeypatch.setattr(config, "SHUTDOWN_QUIET_S", 0.3)
     st = _Talker([True] * 8)                       # ~0.8 s of speech, then quiet
@@ -43,6 +44,7 @@ def test_a_restart_waits_for_him_to_stop_speaking(monkeypatch):
 
 def test_the_wait_is_capped_so_noise_cannot_hold_a_restart_forever(monkeypatch):
     import asyncio
+
     from command_bridge import config, server
     monkeypatch.setattr(config, "SHUTDOWN_SPEECH_WAIT_S", 0.5)
     monkeypatch.setattr(server.timing, "stamp", lambda *a, **k: None)

@@ -109,8 +109,8 @@ server = subprocess.Popen(
 
 try:
     time.sleep(7)
-    from playwright.sync_api import sync_playwright
     from pagesplit import ui_frame
+    from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(args=[

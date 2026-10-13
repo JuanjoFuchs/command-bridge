@@ -107,6 +107,30 @@ def legacy_canvas(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
+def kokoro_trim(monkeypatch):
+    """Give the timed Kokoro path a `kokoro_onnx.trim` when the extra is not installed.
+
+    `_ResidentKokoro.synthesize` imports `kokoro_onnx.trim` inline on the durations path, and the
+    word-timing tests drive that path through a fake model. On the CI floor (core deps only — no
+    kokoro-onnx) the import raised, so those tests failed on every runner while passing on a
+    machine with the extra. Stub ONLY when the real module is absent: where kokoro-onnx is
+    installed the tests keep exercising the library's own trim. The stub trims nothing, which is
+    what the real trim does to audio with no leading or trailing silence to remove.
+    """
+    import importlib.util
+    import types
+
+    if importlib.util.find_spec("kokoro_onnx") is not None:
+        return
+    pkg = types.ModuleType("kokoro_onnx")
+    trim = types.ModuleType("kokoro_onnx.trim")
+    setattr(trim, "trim", lambda samples: (samples, (0, len(samples))))  # noqa: B010
+    setattr(pkg, "trim", trim)  # noqa: B010
+    monkeypatch.setitem(sys.modules, "kokoro_onnx", pkg)
+    monkeypatch.setitem(sys.modules, "kokoro_onnx.trim", trim)
+
+
+@pytest.fixture()
 def tmp_sessions(tmp_path, monkeypatch):
     """Isolate turn logs per test so nothing leaks between them or into the repo.
 

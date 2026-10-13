@@ -290,7 +290,7 @@ def drive_build(page):
 # a defect.
 def compare(design, build):
     def lane_field(p, f):
-        return {l["name"].lower(): l[f] for l in p["lanes"] if l.get("name")}
+        return {ln["name"].lower(): ln[f] for ln in p["lanes"] if ln.get("name")}
 
     rows = [
         ("one header row, title + controls", design["header_present"], build["header_present"]),
@@ -313,8 +313,8 @@ def compare(design, build):
         ("lane ring hues", lane_field(design, "hue"), lane_field(build, "hue")),
         ("orb diameter", lane_field(design, "diameter"), lane_field(build, "diameter")),
         ("raised hand, one lane only", design["hands"], build["hands"]),
-        ("raised hand carries the count", [l["hand"] for l in design["lanes"] if l["hand"]],
-         [l["hand"] for l in build["lanes"] if l["hand"]]),
+        ("raised hand carries the count", [ln["hand"] for ln in design["lanes"] if ln["hand"]],
+         [ln["hand"] for ln in build["lanes"] if ln["hand"]]),
         ("transcript tags carry lane colour", design["tags_coloured"], build["tags_coloured"]),
         ("tick states in use", design["tick_states"], build["tick_states"]),
         ("transcript share of the screen", str(design["log_share"]) + "%",

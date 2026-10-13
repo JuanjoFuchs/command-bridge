@@ -16,8 +16,8 @@ import argparse
 
 import pytest
 
-from tests.test_cli_surface import run
 from command_bridge import cli
+from tests.test_cli_surface import run
 
 # ------------------------------------------------------------------- `say`'s return shape
 

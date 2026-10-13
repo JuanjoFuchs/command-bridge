@@ -22,8 +22,8 @@ def test_parse_viewport_falls_back_on_garbage():
 
 
 def _args(**kw):
-    base = dict(session="no-such-session", out="x.png", viewport="390x844",
-                lane="", url="", settle=4000)
+    base = {"session": "no-such-session", "out": "x.png", "viewport": "390x844",
+            "lane": "", "url": "", "settle": 4000}
     base.update(kw)
     return argparse.Namespace(**base)
 

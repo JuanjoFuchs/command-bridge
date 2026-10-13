@@ -223,8 +223,10 @@ def run(headed: bool, keep: bool) -> int:
         # cannot nest inside the one already running here. The server stays up, so the ink frame is
         # still there to capture.
         print("\n== shot ==")
-        browser.close(); browser = None
-        pw.stop(); pw = None
+        browser.close()
+        browser = None
+        pw.stop()
+        pw = None
         out = os.path.join(workdir, "ink.png")
         result = shot.capture(f"{base}/canvas", out, lane=lane, settle_ms=3000, viewport=(900, 700))
         check(result.get("ok") is True, "shot rendered the canvas", json.dumps(result)[:200])

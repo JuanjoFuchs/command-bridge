@@ -6,8 +6,8 @@ which is the only failure mode left once the thing works.
 """
 import os
 
-from tests.test_cli_surface import run
 from command_bridge import cli
+from tests.test_cli_surface import run
 
 
 def test_setup_is_named_by_every_remedy_it_actually_fixes(capsys, tmp_sessions, monkeypatch):

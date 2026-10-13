@@ -126,7 +126,7 @@ def test_the_page_groups_exactly_like_the_server():                    # 038 FR2
     js = _js_function(UI, "liaisonGroups") + "\nconst cases = " + json.dumps(cases) + ";\n" \
         "console.log(JSON.stringify(cases.map(([m, l]) => liaisonGroups(l, m))));"
     out = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout
-    assert json.loads(out) == [liaison.groups(m, l) for m, l in cases]
+    assert json.loads(out) == [liaison.groups(m, lane) for m, lane in cases]
 
 
 # ------------------------------------------------------------------ the server

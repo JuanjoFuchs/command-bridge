@@ -1040,8 +1040,8 @@ def add_cuda_dll_dirs() -> int:
     added = 0
     if _sys.platform == "win32":
         for root in _sys.path:
-            for bin_dir in sorted(set(os.path.dirname(p) for p in glob.glob(
-                    os.path.join(root, "nvidia", "*", "bin", "*.dll")))):
+            for bin_dir in sorted({os.path.dirname(p) for p in glob.glob(
+                    os.path.join(root, "nvidia", "*", "bin", "*.dll"))}):
                 try:
                     os.add_dll_directory(bin_dir)
                 except OSError:

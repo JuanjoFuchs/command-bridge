@@ -30,8 +30,6 @@ from __future__ import annotations
 
 import argparse
 import functools
-import http.server
-import os
 import pathlib
 import socketserver
 import subprocess

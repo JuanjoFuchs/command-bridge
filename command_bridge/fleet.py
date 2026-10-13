@@ -308,7 +308,7 @@ def _is_wait(name: str, inp: dict) -> bool:
     return re.search(r"\bhttp\.server\b", cmd) is not None
 
 
-def _track_work(b: dict, btype: str | None, st: dict, ts: "dt.datetime | None") -> None:
+def _track_work(b: dict, btype: str | None, st: dict, ts: dt.datetime | None) -> None:
     """IS THE AGENT WORKING, as opposed to waiting? (JJ, 2026-09-29: "we instruct agents that are busy
     implementing something to background their watch. And that shows them as idle when in reality
     they are actually working … Is there a better way to detect if an agent is truly idle?")

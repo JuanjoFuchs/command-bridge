@@ -15,7 +15,6 @@ import types
 
 import command_bridge.cli as cli
 
-
 # --- the pure narrowing ------------------------------------------------------
 
 def test_on_my_lane_his_speech_is_to_me():

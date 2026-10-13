@@ -305,7 +305,7 @@ def test_the_one_placeholder_left_is_the_value_that_cannot_be_known(monkeypatch)
     out = _say(monkeypatch, {**_CLIP, "cursor": None})
 
     assert "--since <cursor>" in out["next"]
-    assert f"`command-bridge watch --since <cursor>`" in out["next"], (
+    assert "`command-bridge watch --since <cursor>`" in out["next"], (
         "even here the session is filled in and the invocation is otherwise complete"
     )
 

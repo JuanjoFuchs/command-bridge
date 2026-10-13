@@ -337,8 +337,8 @@ def main() -> int:
         os.makedirs(args.shots, exist_ok=True)
 
     try:
-        from playwright.sync_api import sync_playwright
         from pagesplit import ui_frame
+        from playwright.sync_api import sync_playwright
     except ImportError:
         print(json.dumps({"error": "playwright is not installed",
                           "remedy": f"{ROOT}/venv/Scripts/python -m pip install playwright "

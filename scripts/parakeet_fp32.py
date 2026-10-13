@@ -20,7 +20,7 @@ import sys
 
 import numpy as np
 import onnx
-from onnx import TensorProto, helper, numpy_helper
+from onnx import TensorProto, numpy_helper
 
 FP16, FP32 = TensorProto.FLOAT16, TensorProto.FLOAT
 

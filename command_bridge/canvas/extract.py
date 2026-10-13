@@ -84,7 +84,9 @@ def _matches(section: Section, want: str) -> bool:
     agent should not have to reproduce a heading's punctuation to quote it, and
     a near-miss that silently extracts nothing is worse than a loose match.
     """
-    norm = lambda s: re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+    def norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
     a, b = norm(section.title), norm(want)
     return bool(b) and (a == b or b in a)
 

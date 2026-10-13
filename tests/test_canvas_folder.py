@@ -18,7 +18,6 @@ from command_bridge.canvas import folder as fs
 from command_bridge.canvas import server as canvas
 from command_bridge.canvas.watcher import SETTLE, Watcher
 
-
 # ---- fixtures -----------------------------------------------------------------------------------
 
 @pytest.fixture()

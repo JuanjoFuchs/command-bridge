@@ -538,7 +538,7 @@ class _ResidentKokoro:
                 "style": style.astype(np.float32),
                 "speed": np.array([speed], dtype=np.float32),   # <- float32. The whole reason.
             })
-            named = dict(zip(outs, got))
+            named = dict(zip(outs, got, strict=False))
             parts.append(np.asarray(named[audio_key]).squeeze())
             all_ids.append(ids)
             if "durations" in named:
@@ -628,7 +628,8 @@ class _ResidentKokoro:
                     space_id = k.tokenizer.vocab.get(" ")
                     labels, ok = label_groups(piece, phonemes.split())
                     aligned = aligned and ok
-                    for (a, _b), label in zip(word_offsets(ids, dur, space_id), labels):
+                    for (a, _b), label in zip(word_offsets(ids, dur, space_id), labels,
+                                                  strict=False):
                         # A stretched piece is `stretch` times shorter, every word with it: the
                         # offset into the model's audio divides by the same factor (spec 039).
                         at = (a - int(lead)) / stretch

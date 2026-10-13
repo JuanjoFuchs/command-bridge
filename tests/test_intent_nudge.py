@@ -10,7 +10,6 @@ import json
 
 from command_bridge import cli
 
-
 _HELD = {"queued": True, "held_off_lane": True, "lane": "magnus", "seconds": 2.0,
          "superseded": 0, "unread": [], "unread_count": 0, "cursor": 10}
 

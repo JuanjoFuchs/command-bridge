@@ -8,7 +8,6 @@ that silence — once — and leaves the choice of what to say to the agent.
 drive the whole `cmd_watch` loop through a scripted fake to pin the payload, the precedence, the
 fired-once record and the `--reply` exemption.
 """
-import time
 import types
 
 import pytest

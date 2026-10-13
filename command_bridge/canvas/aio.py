@@ -322,6 +322,7 @@ async def handle_reload(request: web.Request) -> web.Response:
     live over `/events`; this is only for changes to a page's own code. Unauthenticated like the
     page it reloads."""
     import importlib
+
     from . import page as _page
     global _sigs
     try:

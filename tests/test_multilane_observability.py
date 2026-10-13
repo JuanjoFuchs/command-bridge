@@ -179,7 +179,7 @@ def test_the_timing_log_can_tell_two_agents_apart(state, tmp_path):
     events = timing.read(state.session) if hasattr(timing, "read") else None
     if events is None:
         path = tmp_path / f"{state.session}.timing.jsonl"
-        events = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        events = [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
     stages = {e.get("stage"): e for e in events}
     assert "consumed" in stages, "the stamp that opens thinking time"

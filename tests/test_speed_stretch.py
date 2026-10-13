@@ -122,7 +122,7 @@ class _TimedStub:
     tokenizer = _Tok()
 
 
-def test_word_timings_scale_with_the_stretch(monkeypatch):
+def test_word_timings_scale_with_the_stretch(monkeypatch, kokoro_trim):
     """A stretched clip with unscaled timings points a word late, more so down the reply."""
     durs = np.array([1, 4, 1, 6, 1, 8, 1], dtype=np.float32)   # pad, a, sp, b, sp, c, pad
     ids = [0, 10, 16, 11, 16, 12, 0]
@@ -141,5 +141,5 @@ def test_word_timings_scale_with_the_stretch(monkeypatch):
     factor = 2.4 / config.KOKORO_NATIVE_SPEED_MAX
     assert slow is not None and fast is not None
     assert [w["w"] for w in fast["words"]] == ["a", "b", "c"]
-    for s, f in zip(slow["words"], fast["words"]):
+    for s, f in zip(slow["words"], fast["words"], strict=True):
         assert f["t"] == pytest.approx(s["t"] / factor, abs=0.002)

@@ -14,8 +14,8 @@ import json
 
 import pytest
 
-from tests.test_cli_surface import run
 from command_bridge import cli
+from tests.test_cli_surface import run
 
 REAL_NGROK_FRONTS = cli._ngrok_fronts
 """Captured at import, before `no_live_tunnel` stubs it out. The tests below that exercise the

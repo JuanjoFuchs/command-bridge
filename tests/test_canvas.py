@@ -9,8 +9,8 @@ import pathlib
 
 from command_bridge import server as cb_server
 from command_bridge import store
-from command_bridge.canvas import server as canvas
 from command_bridge.canvas import page as canvas_page
+from command_bridge.canvas import server as canvas
 
 
 def _routes(app):

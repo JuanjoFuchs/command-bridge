@@ -21,6 +21,10 @@ import pytest
 
 from command_bridge import config, tts
 
+# The synthesize() tests below reach the inline `kokoro_onnx.trim` import; on the CI floor the
+# extra is absent, so conftest's `kokoro_trim` supplies it (and stays out of the way when it isn't).
+pytestmark = pytest.mark.usefixtures("kokoro_trim")
+
 SPACE = 16          # the space token in kokoro's vocab; word boundaries are a split on it
 UNIT = tts.KOKORO_UNIT_SAMPLES
 

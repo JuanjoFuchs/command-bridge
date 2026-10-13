@@ -6,12 +6,11 @@ ending averaged with seconds of silence was dropped without being decoded.
 
 NO MODEL: the recognizer's engine call is stubbed, and the gate in front of it is the real one.
 """
-import asyncio
 import threading
 
 import numpy as np
 
-from command_bridge import asr, config, server
+from command_bridge import asr, config
 from tests.test_asr_pieces import quiet, speak, state, tone  # noqa: F401  (state is a fixture)
 
 SR = config.TARGET_SR
@@ -33,8 +32,8 @@ def recognizer() -> tuple[asr.Recognizer, list[float]]:
         decoded.append(round(samples.size / SR, 1))
         return "vault with that"
 
-    setattr(r, "_lock", threading.Lock())
-    setattr(r, "_run", run)
+    r._lock = threading.Lock()
+    r._run = run
     return r, decoded
 
 

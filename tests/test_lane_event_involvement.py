@@ -15,7 +15,6 @@ import types
 
 import command_bridge.cli as cli
 
-
 # --- the pure involvement gate ----------------------------------------------
 
 def _sig(lane, amb=0):

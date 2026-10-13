@@ -94,7 +94,8 @@ def test_the_watch_next_leads_with_the_cut_clip():
 def test_the_shell_marks_a_barge_in_before_it_stops_the_clip():
     """The mark has to be on the source BEFORE `stop()`, because `stop()` is what fires the end
     event that sends the receipt."""
-    import pathlib, re
+    import pathlib
+    import re
     shell = (pathlib.Path(server.__file__).parent / "web" / "shell.html").read_text(encoding="utf-8")
     assert re.search(r'playingSource\.__cut = "barge_in";\s*\n\s*try \{ if \(playingSource\) playingSource\.stop', shell)
     assert re.search(r'playingSource\.__cut = "channel_off";\s*\n\s*try \{ if \(playingSource\) playingSource\.stop', shell)
