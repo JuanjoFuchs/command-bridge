@@ -74,9 +74,17 @@ strictly easier than getting voice there.
   of your frames … that can help me point or give feedback directly on the diagrams. That would be
   amazing."*
 - **FR3 (the agent reads it).** The agent obtains what JJ drew as an **image it can interpret** —
-  it `shot`s the frame and reads the picture — so it can understand the sketch and respond: polish
-  it into a clean frame (mermaid/SVG), ask about it, or act on it. JJ, 2026-09-09: *"you would see
-  this by screenshotting the frame."*
+  it reads a `shot` of the frame and interprets the picture — so it can understand the sketch and
+  respond: polish it into a clean frame (mermaid/SVG), ask about it, or act on it. JJ, 2026-09-09:
+  *"you would see this by screenshotting the frame."*
+- **FR3a (the screenshot comes WITH the submit).** On `send`, the server itself fires the `shot` in
+  the background and names its path in the canvas turn, so the agent receives the *picture* rather
+  than a reminder to go run `shot`. JJ, 2026-09-09: *"wouldn't it be better that whenever I hit send,
+  whatever you receive is the screenshot? … you indirectly received the screenshot. Wouldn't that be
+  better?"* Fire-and-forget — the shot drives a private headless browser and lands a few seconds
+  behind the instant frame, so it never delays the draw; the turn carries the path the moment it is
+  surfaced, and the agent reads that file once it appears. This reuses `shot` (KD3) unchanged — what
+  moves is *who* triggers it and *when* (the server, on submit), not the read mechanism.
 - **FR4 (reach).** The drawing surface is reachable on a phone/tablet as a view that does **not**
   require a microphone secure-context — a plain LAN address is sufficient for drawing-only, so the
   device does not need the voice tunnel to draw.
@@ -153,10 +161,11 @@ derives from `command_bridge/canvas/`.
   element's node id; the server surfaces a canvas-sourced turn naming the node.
 - **Canvas-sourced turn** *(the surfacing decision)* — an inbound canvas action reaches the agent the
   **same way speech does: as a turn its `watch` returns**, tagged as canvas-sourced (e.g. a
-  `source: "canvas"` turn whose text names the frame or node: *"drew on lane magnus, frame ink-7"* /
-  *"pointed at watch-logic"*). One loop handles speech and canvas intent alike; the agent then `shot`s
-  the frame and acts. *Rationale: the whole agent contract is `watch` → turns → act; a second
-  inbound channel the agent has to poll would fork that.*
+  `source: "canvas"` turn whose text names the frame or node AND, for a draw, the path of the shot
+  the server just fired: *"drew on lane magnus, frame ink-7 · shot: …-ink-7-….png"* / *"pointed at
+  watch-logic"*). One loop handles speech and canvas intent alike; for a draw the agent reads the
+  named shot (FR3a), for a point it acts on the node. *Rationale: the whole agent contract is `watch`
+  → turns → act; a second inbound channel the agent has to poll would fork that.*
 - **Reach** — a drawing-only `/canvas` never calls `getUserMedia`, so it is **not** gated on a secure
   context and works over a plain-http LAN address; the **token still gates it**, and the CIDR
   allowlist must admit the LAN (or a tunnel fronts it, as voice does today).
@@ -165,11 +174,12 @@ derives from `command_bridge/canvas/`.
 
 Ordered so the first testable slice is the whole loop end-to-end, then the additions.
 
-- [ ] **T1 — `ink` frame kind.** Store and render an SVG-strokes frame; confirm `shot` captures it.
-- [ ] **T2 — drawing layer on `/canvas`.** Pointer/touch strokes over the canvas (including over
+- [x] **T1 — `ink` frame kind.** Store and render an SVG-strokes frame; confirm `shot` captures it.
+- [x] **T2 — drawing layer on `/canvas`.** Pointer/touch strokes over the canvas (including over
   existing frames), a **pen** and an **eraser**, and a **send** control. Freeform paths; no pressure.
-- [ ] **T3 — submit path.** `send` POSTs the strokes → an `ink` frame on the live lane, and the server
-  surfaces a canvas-sourced turn to the agent.
+- [x] **T3 — submit path.** `send` POSTs the strokes → an `ink` frame on the live lane, and the server
+  surfaces a canvas-sourced turn to the agent that also carries the path of an auto-fired background
+  `shot` (FR3a), so the picture arrives with the turn.
 - [ ] **T4 — inbound point.** Tapping a rendered element POSTs its node id → a canvas-sourced turn.
 - [ ] **T5 — reach.** `/canvas` served on a LAN bind, token-gated, drawing-only; documented in
   `status.phone` / `describe` so the phone URL is discoverable.
@@ -180,15 +190,16 @@ Ordered so the first testable slice is the whole loop end-to-end, then the addit
 ## Acceptance Criteria
 
 ### Core loop (the MVP slice)
-- [ ] **AC1** — a stored `ink` frame renders its strokes on `/canvas`. *(kittest-snapshot: `shot` the
+- [x] **AC1** — a stored `ink` frame renders its strokes on `/canvas`. *(kittest-snapshot: `shot` the
   page, the strokes appear.)*
-- [ ] **AC2** — `shot` of a lane holding an `ink` frame returns an image that contains the strokes,
+- [x] **AC2** — `shot` of a lane holding an `ink` frame returns an image that contains the strokes,
   readable by the agent. *(integration.)*
-- [ ] **AC3** — pointer/touch strokes on `/canvas` draw a path; the eraser removes strokes.
+- [x] **AC3** — pointer/touch strokes on `/canvas` draw a path; the eraser removes strokes.
   *(integration via Playwright pointer events; plus `manual` for real finger/pen — the irreducible.)*
-- [ ] **AC4** — `send` stores an `ink` frame on the live lane AND the agent's next `watch` returns a
-  `source: "canvas"` turn naming that frame. *(integration.)*
-- [ ] **AC5** — strokes drawn on top of an existing frame are captured in the submitted `ink` frame,
+- [x] **AC4** — `send` stores an `ink` frame on the live lane AND the agent's next `watch` returns a
+  `source: "canvas"` turn naming that frame — and, per FR3a, that turn also carries the path of the
+  auto-fired `shot`. *(integration.)*
+- [x] **AC5** — strokes drawn on top of an existing frame are captured in the submitted `ink` frame,
   i.e. the annotation lands on the shared canvas. *(integration.)*
 
 ### Point + reach
@@ -239,9 +250,9 @@ Ordered so the first testable slice is the whole loop end-to-end, then the addit
 
 ## References
 
-- `📦 Command Bridge` — project node: the two-way-canvas idea, the bandwidth framing, and JJ's
+- the project notes — project node: the two-way-canvas idea, the bandwidth framing, and JJ's
   verbatim words this spec came from.
 - `specs/011-speech-synced-deixis.md` — the agent's **outbound** point/deixis; FR1 is its inbound twin.
 - `specs/003-one-server-one-page.md` — the one-page UI + `/events` machinery NFR2/KD1 reuse.
-- The canvas verbs and the `shot` read path — [[Tunnel Vision Guide]] (behaviour) and
+- The canvas verbs and the `shot` read path — the canvas operating guide (behaviour) and
   `command-bridge describe`.

@@ -55,8 +55,8 @@ def test_crlf_line_endings_parse(tmp_path):
     """The file is edited on Windows; splitlines handles \\r\\n but a naive split on \\n would
     leave a trailing \\r glued to every value."""
     p = tmp_path / ".env"
-    p.write_bytes(b"COMMAND_BRIDGE_TTS=piper\r\nCOMMAND_BRIDGE_OWNER=jj\r\n")
-    assert config.read_env_file(str(p)) == {"COMMAND_BRIDGE_TTS": "piper", "COMMAND_BRIDGE_OWNER": "jj"}
+    p.write_bytes(b"COMMAND_BRIDGE_TTS=piper\r\nCOMMAND_BRIDGE_OWNER=alice\r\n")
+    assert config.read_env_file(str(p)) == {"COMMAND_BRIDGE_TTS": "piper", "COMMAND_BRIDGE_OWNER": "alice"}
 
 
 def test_the_last_duplicate_wins():
@@ -112,7 +112,7 @@ def test_a_missing_file_is_not_an_error(tmp_path):
 
 def test_a_bogus_variable_name_is_reported_not_applied(tmp_path, monkeypatch):
     p = tmp_path / ".env"
-    p.write_text("9BAD=x\nCOMMAND_BRIDGE_OWNER=jj\n", encoding="utf-8")
+    p.write_text("9BAD=x\nCOMMAND_BRIDGE_OWNER=alice\n", encoding="utf-8")
     monkeypatch.delenv("COMMAND_BRIDGE_OWNER", raising=False)
 
     report = config.load_env_file(str(p))
@@ -139,14 +139,14 @@ def test_set_replaces_in_place_and_keeps_comments_and_neighbours(tmp_path, monke
     """A config file that loses its comments the first time a tool touches it is a config file
     people stop letting tools touch."""
     p = tmp_path / ".env"
-    p.write_text("# keep me\nCOMMAND_BRIDGE_TTS=sapi\nCOMMAND_BRIDGE_OWNER=jj\n", encoding="utf-8")
+    p.write_text("# keep me\nCOMMAND_BRIDGE_TTS=sapi\nCOMMAND_BRIDGE_OWNER=alice\n", encoding="utf-8")
     monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(p))
 
     config.write_setting("COMMAND_BRIDGE_TTS", "piper")
 
     text = p.read_text(encoding="utf-8")
     assert "# keep me" in text
-    assert config.read_env_file(str(p)) == {"COMMAND_BRIDGE_TTS": "piper", "COMMAND_BRIDGE_OWNER": "jj"}
+    assert config.read_env_file(str(p)) == {"COMMAND_BRIDGE_TTS": "piper", "COMMAND_BRIDGE_OWNER": "alice"}
 
 
 def test_set_collapses_duplicate_keys(tmp_path, monkeypatch):
@@ -173,12 +173,12 @@ def test_values_needing_quotes_round_trip(tmp_path, monkeypatch):
 
 def test_unset_removes_the_key(tmp_path, monkeypatch):
     p = tmp_path / ".env"
-    p.write_text("COMMAND_BRIDGE_TTS=piper\nCOMMAND_BRIDGE_OWNER=jj\n", encoding="utf-8")
+    p.write_text("COMMAND_BRIDGE_TTS=piper\nCOMMAND_BRIDGE_OWNER=alice\n", encoding="utf-8")
     monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(p))
 
     config.write_setting("COMMAND_BRIDGE_TTS", None)
 
-    assert config.read_env_file(str(p)) == {"COMMAND_BRIDGE_OWNER": "jj"}
+    assert config.read_env_file(str(p)) == {"COMMAND_BRIDGE_OWNER": "alice"}
 
 
 # ----------------------------------------------------------------- validation
@@ -195,10 +195,10 @@ def test_only_this_tools_namespace_can_be_written(key, tmp_path, monkeypatch):
 
 
 def test_a_newline_in_a_value_is_refused(tmp_path, monkeypatch):
-    """Otherwise `command-bridge config set COMMAND_BRIDGE_OWNER $'jj\\nCOMMAND_BRIDGE_TOKEN=stolen'` forges a second setting."""
+    """Otherwise `command-bridge config set COMMAND_BRIDGE_OWNER $'alice\\nCOMMAND_BRIDGE_TOKEN=stolen'` forges a second setting."""
     monkeypatch.setenv("COMMAND_BRIDGE_ENV_FILE", str(tmp_path / ".env"))
     with pytest.raises(ValueError, match="newline or control character"):
-        config.write_setting("COMMAND_BRIDGE_OWNER", "jj\nCOMMAND_BRIDGE_TOKEN=stolen")
+        config.write_setting("COMMAND_BRIDGE_OWNER", "alice\nCOMMAND_BRIDGE_TOKEN=stolen")
 
 
 def test_a_quote_in_a_value_is_refused(tmp_path, monkeypatch):

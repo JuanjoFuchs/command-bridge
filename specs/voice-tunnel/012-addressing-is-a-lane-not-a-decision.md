@@ -26,8 +26,7 @@ nobody else, until he switches again.
 
 **The purpose is bandwidth**, which is this project's stated *why* (Voice Tunnel: *"I am trying
 to increase the bandwidth between me, my intent, my ideas, and my agents"*). Today he can only talk to
-one agent at a time and the others are idle while he does. JJ, 2026-08-21: *"I am on a critical need of
-increasing my intent per minute."*
+one agent at a time and the others are idle while he does.
 
 ## JJ's design, verbatim (dictated 2026-08-21, stitched from eight consecutive turns)
 
@@ -108,7 +107,7 @@ it has crossed into the anti-goal and the design is wrong, not the anti-goal.
 alone he can already hold two conversations from one microphone, with the existing page, because voice is
 the switch and the transcript is already shared. FR6–FR8 are a second slice.
 
-⚠ **This spec is too big for one session as a whole** (Spec Writing Rules for Agents); the
+⚠ **This spec is too big for one session as a whole** (the spec-writing rules); the
 implementer should split it at that seam rather than starting everywhere.
 
 **Split taken:** **Slice A = FR1–FR5 + FR9** (routing, CLI, server, turn schema — no page changes).
@@ -596,6 +595,6 @@ harness that proves it started no server.
   open question this spec closes.
 - `specs/007` — the refusal machinery and the loop the tool now enforces; FR9 extends its surface.
 - `specs/005` — the one wait gated on speech, which `watch --lane` must not break.
-- Voice Tunnel Guide — the standing rules for how an agent behaves in a session, all of which become
+- the voice operating guide (not in this repo) — the standing rules for how an agent behaves in a session, all of which become
   per-lane rules.
 - `ai-docs/reference/turn-log.md` — the cursor contract the `lane` filter extends.

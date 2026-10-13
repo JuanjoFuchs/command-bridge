@@ -49,6 +49,23 @@ def test_a_frame_op_sets_stores_and_reports():
     canvas._lanes.pop(lane, None)
 
 
+def test_rendered_surfaces_a_diagram_failure_on_the_frame_and_clears_it():
+    """A mermaid frame's render OUTCOME reaches the drawing agent even off the live lane (JJ,
+    2026-09-24). The page POSTs /rendered when a diagram throws; it merges onto the FRAME — not into
+    the geometry that /placed replaces wholesale — so the frame view surfaces it, which is how `set`
+    (via `_await_legibility`) tells the agent its diagram FAILED instead of returning a silent ok on a
+    blank frame. A good re-render (error=None) clears it."""
+    lane = "_t_render"
+    canvas.apply("/frame", {"id": "d", "kind": "mermaid", "content": "graph TD;A-->B", "lane": lane})
+    code, body = canvas.apply("/rendered", {"lane": lane, "id": "d", "error": "Parse error on line 2"})
+    assert code == 200 and body["ok"]
+    assert canvas._frame_view(lane, "d", measured=False).get("render_error") == "Parse error on line 2"
+    # A good re-render clears it — a stale error must not outlive the fix.
+    canvas.apply("/rendered", {"lane": lane, "id": "d", "error": None})
+    assert "render_error" not in canvas._frame_view(lane, "d", measured=False)
+    canvas._lanes.pop(lane, None)
+
+
 def test_a_camera_verb_is_refused_from_a_lane_that_is_not_live():
     """The refusal is the lane rule the whole design rests on — an off-lane agent cannot grab the
     camera. It survives the merge because the same apply() enforces it."""
@@ -95,10 +112,12 @@ def test_an_empty_selector_clears_the_stored_point():
 
 
 def test_a_bad_batch_op_is_reported_not_fatal():
-    results = canvas.run_batch([{"op": "set", "id": "b", "content": "y", "lane": "_t_b"},
-                                {"op": "nope"}])
+    results = canvas.run_batch([{"op": "relayout", "lane": "_t_b"},
+                                {"op": "nope"},
+                                {"op": "set", "id": "b", "content": "y"}])   # spec 022: no draw op
     assert results[0].get("ok")
     assert "unknown op" in results[1].get("error", "")
+    assert "unknown op" in results[2].get("error", "")
     canvas._lanes.pop("_t_b", None)
 
 
@@ -170,6 +189,32 @@ def test_draw_stores_an_ink_frame_on_the_live_lane_and_surfaces_a_canvas_turn(tm
     canvas._lanes.pop(lane, None)
 
 
+def test_draw_auto_shoots_and_names_the_shot_in_the_turn(tmp_sessions, draw_shots):
+    """JJ 2026-09-09: `send` should hand the agent the SCREENSHOT, not a pointer to run `shot`. So
+    `/draw` fires a background shot of the live lane and names its path in BOTH the response and the
+    source:canvas turn the agent reads — the picture arrives at a path the turn already carries."""
+    lane = "_ink_shot"
+    session = "inkshot"
+    canvas.set_live(lane)
+    canvas._session = session
+    code, body = canvas.apply("/draw", {"content": "<svg></svg>", "title": "sketch"})
+    assert code == 200 and body["kind"] == "ink"
+
+    # the response names the auto-shot path, and the shot was fired for the LIVE lane at that path
+    shot = body.get("shot")
+    assert shot and shot.endswith(".png"), body
+    assert len(draw_shots) == 1
+    fired_lane, fired_out = draw_shots[0]
+    assert fired_lane == lane and str(fired_out) == shot
+
+    # the agent's turn carries the same path, so `watch` delivers the picture's location, not a chore
+    turns, _ = store.watch(session, -1, timeout=0.5, addressed_only=True,
+                           lane=lane, default_lane=lane)
+    canvas_turns = [t for t in turns if t.get("source") == "canvas"]
+    assert canvas_turns and ("shot: " + shot) in canvas_turns[-1]["text"], canvas_turns
+    canvas._lanes.pop(lane, None)
+
+
 def test_draw_lands_on_the_live_lane_even_when_the_payload_names_another(tmp_sessions):
     """KD5: his ink lands on the lane he is LOOKING AT (the live one), never on a lane a payload
     names — a human on a phone has no concept of a caller's lane."""
@@ -224,3 +269,157 @@ def test_the_page_renders_ink_and_carries_the_drawing_toolbar():
                    'kind === "ink"', 'fetch("/draw"', "pointerdown"):
         assert needle in html, f"the page is missing {needle!r}"
     assert "isSecureContext" not in html, "drawing must not be gated on a secure context (FR4/TC3)"
+
+
+# ======================================================= spec 018 — frames mimic the canvas ratio
+
+
+def test_viewport_with_aspect_derives_the_ratio_and_handles_the_no_page_case():
+    """FR3/KD2: `aspect` is DERIVED (width/height, 2 dp) from the one measured viewport the page
+    reports — a single source, never a second inferable number. No page connected → no viewport →
+    None (a stale ratio is a lie); a viewport lacking dimensions is left untouched, not invented."""
+    assert canvas.viewport_with_aspect(None) is None
+    got = canvas.viewport_with_aspect({"width": 1280, "height": 720, "scale": 1.0,
+                                       "visible": ["a"], "offscreen": []})
+    assert got["aspect"] == 1.78, got                 # 1280/720 = 1.777… → 1.78
+    assert got["width"] == 1280 and got["height"] == 720
+    assert got["visible"] == ["a"], "the existing fields ride through untouched (NFR2)"
+    tall = canvas.viewport_with_aspect({"width": 400, "height": 900})
+    assert tall["aspect"] == 0.44                      # a tall canvas reads as < 1
+    # A viewport that predates width/height (an older page) is not given a made-up aspect.
+    assert "aspect" not in canvas.viewport_with_aspect({"scale": 1.0, "visible": []})
+
+
+def test_canvas_status_reports_the_live_viewport_aspect_and_null_without_a_page():
+    """AC4: `/canvas/status` (what `command-bridge status` folds in) carries the live lane's viewport
+    WITH its aspect when a page is connected, and `viewport: null` when none is (the `viewport: null`
+    contract the standalone `_status` already held)."""
+    import asyncio
+    import json as _json
+    import queue as _q
+
+    from aiohttp.test_utils import make_mocked_request
+
+    from command_bridge.canvas import aio
+
+    lane = "_vp_status"
+    canvas.set_live(lane)
+    canvas.apply("/placed", {"lane": lane,
+                             "frames": {}, "viewport": {"visible": [], "partial": [],
+                                                        "offscreen": [], "scale": 1.0,
+                                                        "width": 1600, "height": 900}})
+
+    def _body(resp):
+        return _json.loads(resp.body.decode())
+
+    # No page connected → viewport is null even though geometry was reported.
+    canvas._subscribers.clear()
+    resp = asyncio.run(aio.handle_canvas_status(make_mocked_request("GET", "/canvas/status")))
+    assert _body(resp)["viewport"] is None, "no page connected must report viewport: null"
+
+    # A page connected → the live lane's viewport rides through with its derived aspect.
+    sub = _q.Queue()
+    canvas._subscribers.append(sub)
+    try:
+        resp = asyncio.run(aio.handle_canvas_status(make_mocked_request("GET", "/canvas/status")))
+        vp = _body(resp)["viewport"]
+        assert vp is not None and vp["aspect"] == round(1600 / 900, 2), vp
+        assert vp["width"] == 1600 and vp["height"] == 900
+    finally:
+        canvas._subscribers.remove(sub)
+    canvas._viewport.pop(lane, None)
+    canvas._lanes.pop(lane, None)
+
+
+def test_describe_documents_the_viewport_aspect_field():
+    """AC5: `command-bridge describe` (the tie-break contract) documents `viewport.aspect` so an
+    agent knows to author a frame toward the canvas shape."""
+    from command_bridge import cli
+
+    returns = cli.DESCRIBE["commands"]["status"]["returns"]
+    key = next((k for k in returns if "viewport" in k), "")
+    assert key, "status.returns must document the canvas viewport"
+    assert "aspect" in returns[key]
+    assert "width/height" in returns[key], "say how aspect is derived"
+
+
+# ---- spec 019: per-frame font legibility -----------------------------------------------------
+
+def test_frame_legibility_derives_readable_and_nulls_without_a_page():
+    """FR2/KD1: `readable` is DERIVED (min_font_px >= READABLE_PX) from the effective min font the page
+    pushed to /placed — the server relays, it never computes a font size (TC1). No page connected →
+    geo is None → all null (a stale legibility is a lie), the same contract as the viewport."""
+    # None (no page) → every value null, exactly like the viewport with no page.
+    assert canvas.frame_legibility(None) == {"min_font_px": None, "readable": None, "fit_scale": None}
+    # A sub-floor reading is not readable; the fit scale rides through.
+    low = canvas.frame_legibility({"min_font_px": 8.4, "fit_scale": 0.6, "w": 1600, "h": 1200})
+    assert low["readable"] is False and low["min_font_px"] == 8.4 and low["fit_scale"] == 0.6
+    # At or above the floor is readable.
+    hi = canvas.frame_legibility({"min_font_px": canvas.READABLE_PX, "fit_scale": 2.0})
+    assert hi["readable"] is True
+    assert canvas.frame_legibility({"min_font_px": canvas.READABLE_PX + 25})["readable"] is True
+    # Geometry that predates the page-side measurement (older page) is not given a made-up verdict.
+    assert canvas.frame_legibility({"w": 100, "h": 100})["readable"] is None
+
+
+def test_canvas_status_reports_per_frame_legibility_and_null_without_a_page():
+    """AC4: `/canvas/status` (what `command-bridge status` folds in) carries per-frame
+    {min_font_px, readable, fit_scale} for the live lane when a page is connected, and null values
+    when none is — the same page-connected gate the viewport uses."""
+    import asyncio
+    import json as _json
+    import queue as _q
+
+    from aiohttp.test_utils import make_mocked_request
+
+    from command_bridge.canvas import aio
+
+    lane = "_leg_status"
+    canvas.set_live(lane)
+    canvas.apply("/frame", {"id": "dense", "kind": "svg", "content": "<svg/>", "lane": lane})
+    # The page's /placed report: geometry PLUS the effective min font + fit scale it measured.
+    canvas.apply("/placed", {"lane": lane,
+                             "frames": {"dense": {"x": 0, "y": 0, "w": 1600, "h": 1200,
+                                                  "min_font_px": 3.0, "fit_scale": 0.21}},
+                             "viewport": {"visible": ["dense"], "partial": [], "offscreen": [],
+                                          "scale": 1.0, "width": 412, "height": 915}})
+
+    def _body(resp):
+        return _json.loads(resp.body.decode())
+
+    # No page connected → the legibility values are null even though geometry was reported.
+    canvas._subscribers.clear()
+    resp = asyncio.run(aio.handle_canvas_status(make_mocked_request("GET", "/canvas/status")))
+    frame = _body(resp)["lanes"][lane][0]
+    assert frame["min_font_px"] is None and frame["readable"] is None and frame["fit_scale"] is None
+
+    # A page connected → the measured effective min font rides through, with the derived verdict.
+    sub = _q.Queue()
+    canvas._subscribers.append(sub)
+    try:
+        resp = asyncio.run(aio.handle_canvas_status(make_mocked_request("GET", "/canvas/status")))
+        frame = _body(resp)["lanes"][lane][0]
+        assert frame["min_font_px"] == 3.0 and frame["fit_scale"] == 0.21
+        assert frame["readable"] is False, "3 px is well below the readable floor"
+    finally:
+        canvas._subscribers.remove(sub)
+    canvas._viewport.pop(lane, None)
+    canvas._geometry.pop(lane, None)
+    canvas._lanes.pop(lane, None)
+
+
+def test_describe_documents_the_legibility_fields_and_floor():
+    """AC6: `command-bridge describe` documents min_font_px / readable / fit_scale, the READABLE_PX
+    value, and that `set` returns `legibility` best-effort."""
+    from command_bridge import cli, config
+
+    returns = cli.DESCRIBE["commands"]["status"]["returns"]
+    key = next((k for k in returns if "frames" in k and "min_font_px" in returns[k]), "")
+    assert key, "status.returns must document per-frame legibility"
+    doc = returns[key]
+    for field in ("min_font_px", "readable", "fit_scale"):
+        assert field in doc, f"{field} undocumented"
+    assert ("%g" % config.CANVAS_READABLE_PX) in doc, "the READABLE_PX floor value must be published"
+    # spec 022 retired `set`; the draw-time feedback lives on each frame in `status` (and `say
+    # --verify`), which `point`'s notes tell an agent where to read.
+    assert "legibility" in cli.DESCRIBE["commands"]["point"]["notes"]

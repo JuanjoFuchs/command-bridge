@@ -273,7 +273,43 @@ def test_the_page_is_told_the_moment_a_lane_starts_waiting(state, sock):
     say(state, "codex here", lane="codex")
 
     waiting = [h for h in sock.headers if h.get("type") == "lane_waiting"]
-    assert waiting and waiting[-1] == {"type": "lane_waiting", "lane": "codex", "waiting": 1}
+    # The event carries the intent/regular split alongside the total (2026-09-22 idea #2): a plain
+    # non-intent clip is one regular, zero intent.
+    assert waiting and waiting[-1] == {"type": "lane_waiting", "lane": "codex", "waiting": 1,
+                                       "split": {"intent": 0, "regular": 1}}
+
+
+def test_the_waiting_count_splits_intent_from_regular(state, sock):
+    """2026-09-22 idea #2. An off-lane backlog reports intent vs regular separately, so he can tell a
+    lane holding real replies (worth switching to) from one holding only supersedable "on it…"
+    promises (safe to ignore). Both ride on the same held clips; the split reads each clip's flag."""
+    state.lanes.switch("claude")
+    # codex holds two regular replies and one intent announcement.
+    asyncio.run(server._speak(state, "codex reply one", None, lane="codex"))
+    asyncio.run(server._speak(state, "codex reply two", None, lane="codex"))
+    asyncio.run(server._speak(state, "on it", None, lane="codex", intent=True))
+
+    assert state.lane_split_for("codex") == {"intent": 1, "regular": 2}
+    assert state.lane_waiting_split() == {"codex": {"intent": 1, "regular": 2}}
+    # A lane holding nothing is absent from the sparse map, same as the total.
+    assert "claude" not in state.lane_waiting_split()
+
+    # The last lane_waiting event carries the split, and it sums to the total the badge also shows.
+    events = [h for h in sock.headers
+              if h.get("type") == "lane_waiting" and h.get("lane") == "codex"]
+    assert events[-1]["waiting"] == 3
+    assert events[-1]["split"] == {"intent": 1, "regular": 2}
+    assert events[-1]["split"]["intent"] + events[-1]["split"]["regular"] == events[-1]["waiting"]
+
+
+def test_an_intent_clip_supersedes_and_the_split_follows(state, sock):
+    """A second intent announcement replaces the first (spec 012), and the split must move with it —
+    the count is derived from what is actually held, not tallied independently."""
+    state.lanes.switch("claude")
+    asyncio.run(server._speak(state, "on it, first", None, lane="codex", intent=True))
+    asyncio.run(server._speak(state, "on it, second", None, lane="codex", intent=True))
+    # One intent clip survives the supersede; nothing regular held.
+    assert state.lane_split_for("codex") == {"intent": 1, "regular": 0}
 
 
 def test_the_hand_comes_down_when_the_held_clips_all_expired(state, sock):

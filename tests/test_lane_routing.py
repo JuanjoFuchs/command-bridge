@@ -81,6 +81,45 @@ def test_the_turn_carrying_the_wake_word_belongs_to_the_new_lane(state):
     assert turn["text"] == "hey codex run the tests"
 
 
+def test_a_bare_summons_moves_him_and_asks_the_agent_nothing(state):
+    """JJ, 2026-10-05: *"switching lanes with the wake word, but that not triggering the agent to
+    respond"*. "hey codex" on its own switches the lane, but the turn is logged unaddressed, so it
+    reaches no agent's watch and refuses no `say`."""
+    turn = speak(state, "Hey Codex.")
+
+    assert state.lanes.current == "codex", "the summons still moves the conversation"
+    assert turn["lane"] == "codex"
+    assert turn["addressed"] is False
+    assert turn["reason"] == "summons"
+    kept, _ = store.turns_since("t", -1, lane="codex", default_lane="claude", addressed_only=True)
+    assert turn["id"] not in [t["id"] for t in kept]
+
+
+def test_after_a_bare_summons_his_next_words_reach_that_agent(state):
+    """The summons opens the conversation window like any wake, so what he says next — with no
+    greeting — is addressed to the lane he just moved to."""
+    speak(state, "hey codex", 0.0, 1.0)
+    turn = speak(state, "run the tests", 2.0, 3.0)
+
+    assert turn["lane"] == "codex"
+    assert turn["addressed"] is True
+
+
+def test_a_summons_with_anything_after_it_is_still_an_instruction(state):
+    turn = speak(state, "hey codex you there")
+    assert turn["addressed"] is True and turn.get("reason") != "summons"
+
+
+@pytest.mark.parametrize("text, bare", [
+    ("hey codex", True), ("Hey Codex.", True), ("hello claude", True), ("hey everyone", True),
+    ("hey codex run the tests", False), ("hey cloud", False), ("codex", False),
+    ("so hey codex", False), ("hey", False),
+])
+def test_what_counts_as_a_bare_summons(text, bare):
+    """Only a leading greeting and an EXACT lane name — the same evidence a switch needs."""
+    assert server.lanes_mod.is_bare_summons(text, ["claude", "codex"]) is bare
+
+
 def test_a_continuation_stays_on_the_live_lane_without_moving_it(state):
     """AC-5, FR2. Stickiness is the whole feature: he names an agent about as often as he changes
     subject, not once per sentence."""
@@ -368,17 +407,26 @@ def _watch_args(**kw):
     return ns
 
 
-def test_two_waits_on_the_same_lane_are_refused(monkeypatch):
-    """The guard is right and stays: two waits on one log race for the same turns, so one cursor
-    silently falls behind."""
+def test_the_force_flag_is_retired_with_a_pointed_error():
+    """Nothing left to force: the newest watch takes the lane by itself."""
+    args = cli.build_parser().parse_args(["watch", "--lane", "claude", "--since", "3", "--force"])
+    out = cli.cmd_watch(args)
+    assert out["code"] == "retired_flag"
+
+
+def test_a_newer_watch_on_the_same_lane_takes_it_over(monkeypatch):
+    """2026-10-01: two waits on one lane still must not race — but the old fix (refuse, offer
+    `--force`) let a forced re-arm leave TWO live watches. Now the newest wins: a watch that sees its
+    lane owned by another `watch_id` steps aside as `superseded` instead of competing."""
     monkeypatch.setattr(cli, "_request", lambda *a, **k: {
         "running": True, "watch_open": True, "watching_lanes": ["claude"], "lane": "claude",
+        "clients": 1, "consumed_cursor": -1, "lane_watch_ids": {"claude": "someone-newer"},
     })
-    out = cli.cmd_watch(_watch_args(lane="claude"))
+    monkeypatch.setattr(cli.store, "watch", lambda *a, **k: ([], -1))
+    out = cli.cmd_watch(_watch_args(lane="claude", timeout=5.0))
 
-    assert out["reason"] == "watch_open"
-    assert out["lane"] == "claude"
-    assert "--lane claude" in out["next"], "the escape hatch must name the lane it applies to"
+    assert out["reason"] == "superseded"
+    assert "newer watch" in out["next"]
 
 
 def test_two_waits_on_different_lanes_both_run(monkeypatch):

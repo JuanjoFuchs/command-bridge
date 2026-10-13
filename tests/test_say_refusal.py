@@ -249,8 +249,20 @@ def test_no_flag_anywhere_on_say_disables_the_check():
     # `--intent` (spec 012) was given the same look — NOT a bypass. It only marks a clip as a
     # supersedable announcement, which changes what the HELD-clip queue does with it AFTER it exists;
     # an intent clip is refused by the unread check exactly like any other, and nothing is synthesized.
+    # `--verify` (spec 020) was given the same look — NOT a bypass, on both halves it touches. Before
+    # the request: it widens WHEN `--show` places a frame (now also on a markless `--show --verify`),
+    # but that placement already ran BEFORE the request on every other path this test covers, so it is
+    # the same orthogonal-to-synthesis case as plain `--show` above, not a new one. After the request:
+    # `_attach_verify` is the ONE new thing this flag adds, and it runs only once `result` already
+    # exists, checking `result.get("code") == UNREAD_REFUSAL_CODE` FIRST and short-circuiting to a
+    # stated `verify.captured=false` on that exact code — it cannot run a capture against a refused
+    # clip, only annotate the refusal that already happened. Nothing it does moves earlier than the
+    # check or changes what the check itself decides.
+    # `--notify` (spec 036) was given the same look — NOT a bypass. It adds a heads-up record for a
+    # clip that has passed every check, inside `_speak` after synthesis; a refused say never reaches
+    # `_speak`, so a refused clip has no notice, and the flag changes nothing the check decides.
     assert flags == {"-h", "--help", "--session", "--voice", "--now", "--lane", "--timings", "--show",
-                     "--intent"}, (
+                     "--intent", "--verify", "--notify"}, (
         "a new flag on `say` needs a deliberate look: is it a way around the refusal?"
     )
     for banned in ("--force", "--anyway", "--no-check", "--skip-unread", "--ignore-unread",
@@ -273,19 +285,23 @@ def test_fire_and_forget_is_refused_on_the_same_condition(state, synth):
     assert "queued" not in payload
 
 
-def test_nothing_is_queued_and_the_cursor_does_not_move(state, synth):
+def test_nothing_is_queued_and_the_turn_is_read_only_by_being_handed_over(state, synth):
     """AC7, TC3. The undelivered queue is load-bearing — a reply said to a locked phone is held
-    until he is back — and the refusal must not become a new way for words to enter it, nor a new
-    way for a turn to be marked read without anybody reading it."""
+    until he is back — and the refusal must not become a new way for words to enter it.
+
+    SPEC 029 FR9 REVERSES THE CURSOR HALF: a refusal that carries the turn's full text has delivered
+    it, so it now counts as read (`marked_read`), and the agent says again without a watch. A watch
+    resumed from the OLD cursor still returns the turn, so an agent that ignored `unread` loses
+    nothing."""
     spoke(state.session, "wait")
     before = list(state.undelivered)
 
-    said(state)
+    _, payload = said(state)
 
     assert state.undelivered == before, "nothing was made, so nothing can be waiting"
-    assert state.consumed_cursor == -1, "refusing is not reading"
-    still_there, _ = store.watch(state.session, state.consumed_cursor, timeout=0.0)
-    assert len(still_there) == 1, "the next watch must still return the turn"
+    assert payload["marked_read"] is True and state.consumed_cursor == payload["cursor"]
+    still_there, _ = store.watch(state.session, payload["since"], timeout=0.0)
+    assert len(still_there) == 1, "the remedy watch still returns the turn"
 
 
 def test_a_refused_say_leaves_the_agent_holding_its_turns(state, synth):

@@ -132,6 +132,16 @@ This is a hard guarantee, not an optimization: Whisper hallucinates confident te
 ("you", "Thank you.") and an energy gate is the only thing that makes a silent room produce
 zero turns (AC-1)."""
 
+PIECE_SPEECH_WINDOW_S = 0.1
+"""Window for the speech-presence gate on a PIECE of a turn (spec 027): a piece is decoded when
+PIECE_SPEECH_MIN_WINDOWS windows this long reach SILENCE_RMS_FLOOR. Whole-buffer averaging dropped a turn's last words,
+because the tail is those words plus 1.5 s or more of closing silence. 100 ms is about a syllable:
+short enough that two soft words count."""
+
+PIECE_SPEECH_MIN_WINDOWS = 2
+"""How many PIECE_SPEECH_WINDOW_S windows must reach the floor (spec 027). One loud click lands in a
+single window and its RMS there clears 0.005 easily; any spoken word spans at least two."""
+
 NOISE_MARGIN = 3.0
 """How far above the measured room noise a window must be to count as speech.
 
@@ -278,6 +288,30 @@ disagreed about whether a microphone was exposed.
 `unread_turns`, not `error` or `busy`: convention 8 says an agent branches on the code, and the
 code has to name the CONDITION so the branch can be written before the condition is ever hit."""
 
+SPEAKING_REFUSAL_CODE = "user_speaking"
+"""The slug `say` returns when it refuses because he is speaking to that lane RIGHT NOW (spec 028
+FR1). The sibling of `UNREAD_REFUSAL_CODE`: that one covers a turn he finished and nobody read, this
+one the turn he has not finished yet. Together they are what lets an agent reply with ONE call —
+JJ, 2026-10-08: *"I think just the say command can reject immediately if I'm still speaking."*"""
+
+LANE_COLOR_MIN_DE = 25.0
+"""How far apart (CIE76 ΔE) two lane colours must be to read as different agents (spec 029 FR6/FR7).
+
+Measured 2026-10-08 on the roster: phoenix `#e0a03a` against sirius `#c9a227` is ΔE 12.7, and side by
+side on his strip they read as one amber; the closest pairs he did tell apart sit around 25-30. An
+assigned hue is chosen to clear every roster and assigned hue by at least this; a registered pair
+closer than this is reported in `color_clashes`."""
+
+SPEAK_HOLD_MAX_S = 120.0
+"""How long a finished live-lane clip may wait for him to stop talking (spec 028 FR3).
+
+It was 15 s, written as *"so a stuck VAD can never silence the agent permanently"* — and a long turn
+from him is not a stuck VAD. Measured 10-05 → 10-08: five of seven clips held for his speech were
+released at exactly 15.1 s while he was still talking, and his voice cut each one within 1.4 s. Two
+minutes is longer than any turn he has given and still bounds a genuinely stuck segmenter. And at the
+cap the clip is DROPPED, not played: playing into him is the failure, so reaching the cap while he is
+still talking can only ever end in silence plus a notice to the agent."""
+
 
 def barge_in_enabled() -> bool:
     raw = _env("COMMAND_BRIDGE_BARGE_IN")
@@ -403,6 +437,17 @@ released and he resumed a moment later.
 So after the hold clears, wait this long and re-check. If they started again, hold again. Costs
 0.8 s on every reply; buys not talking over the person you are meant to be listening to."""
 
+SHUTDOWN_QUIET_S = 1.5
+SHUTDOWN_SPEECH_WAIT_S = 120.0
+"""A shutdown or restart WAITS FOR HIM TO FINISH: until the segmenter has heard no speech and no
+utterance is open for `SHUTDOWN_QUIET_S`, capped at `SHUTDOWN_SPEECH_WAIT_S`.
+
+JJ, 2026-10-05, to rigel: *"I was giving a long turn of speech and Magnus restarted the server so
+that whole thing was lost."* The graceful drain already waited for an utterance in TRANSCRIPTION;
+one he was still SPEAKING was killed with the process. The quiet period is a pause long enough to be
+the end of a sentence; the cap stops a noisy room from holding a restart hostage forever. Uses the
+segmenter, not the mic level, so a fan cannot keep it open."""
+
 PARTIAL_INTERVAL_S = 0.7
 """How often to re-transcribe the in-flight utterance for the live preview.
 
@@ -518,12 +563,23 @@ Shortening the pause was an over-correction shipped in the same edit as the clip
 neither of us could attribute the improvement, and it made pacing worse on its own. When the only
 instrument is a person's ear, change one thing at a time."""
 
-LANE_HELD_MAX_AGE_S = 1800.0
-"""How long an OFF-LANE reply waits for him to come back to that agent. Thirty minutes.
+LANE_HELD_MAX_AGE_S = 28800.0
+"""How long an OFF-LANE reply waits for him to come back to that agent. Eight hours — a working day.
 
-🔴 **Set by JJ, 2026-08-26, after losing replies to the old ten-minute bound he had never agreed
-to:** *"But why are replies expiring after ten minutes? I haven't made that call."* · *"I think 10
-minutes is too short. I think we should make it 30 minutes."*
+🔴 **Raised to hours by JJ, 2026-09-14:** *"I'm wondering whether or not these things should expire,
+because so far we haven't seen a use case in which after expiration you successfully reissued them
+without me prompting it."* Expiry was net-negative: the re-issue path (`lane_expired` surfaced to the
+agent) does not fire reliably on its own, so a clip that expires is simply LOST until he notices and
+asks — worse than never expiring. He parks a lane deliberately and intends to return, so the reply
+should still be there when he does, however long that takes within a day. The **count cap
+(`UNDELIVERED_MAX` = 8)** remains the stale-stack safety — at most the last 8 held clips replay — and
+each flushed clip announces how long it waited, so an old one reads as old rather than as slow. This
+matches `WATCH_DISCONNECTED_MAX_S` (also 8h): the wait for him to come back is one duration.
+
+🔴 **Earlier — set to 30 min by JJ, 2026-08-26, after losing replies to a ten-minute bound:** *"But
+why are replies expiring after ten minutes? I haven't made that call."* · *"I think 10 minutes is too
+short. I think we should make it 30 minutes."* Thirty proved still too short (a 45-minute absence lost
+a report on 2026-09-14), so it is now the working-day bound above.
 
 **And it is a SEPARATE number from `UNDELIVERED_MAX_AGE_S` on purpose**, because the two situations
 are not the same one:
@@ -537,9 +593,39 @@ are not the same one:
 
 Reusing one constant for both made the second inherit a bound argued for the first."""
 
+IDLE_MIN_S = 5.0
+"""The shortest silence `watch --idle` will wake on (spec 024 FR1). Below this the wake lands inside
+his ordinary pause between sentences or while he is still taking in the clip, which makes it a nag
+rather than a nudge (a pause is not an invitation)."""
+
+IDLE_RECOMMENDED_S = 15.0
+"""The value `describe` recommends for a liaison lane (spec 024 KD5, agreed with JJ 2026-10-08). Not a
+default: `--idle` always names its seconds, so a watch's behaviour reads off its own command line."""
+
+FLEET_WORK_RECENT_S = 20.0
+"""`watch --fleet` (spec 025): a lane whose last tool work is younger than this reads `working`, older
+reads `idle`. The SAME number as the page's `WORK_RECENT_S` (web/index.html `laneBusy`), so the
+liaison's view of who is working never disagrees with the fleet view JJ is looking at."""
+
+FLEET_FETCH_TIMEOUT_S = 3.0
+"""How long a returning `watch --fleet` waits for `/fleet/state` before giving up with
+`fleet_unavailable`. Short on purpose: the snapshot rides along with a return and must never delay
+the turns it accompanies by more than a moment."""
+
 UNDELIVERED_MAX = 8
-UNDELIVERED_MAX_AGE_S = 600.0
+UNDELIVERED_MAX_AGE_S = LANE_HELD_MAX_AGE_S
 """How many replies to hold for a disconnected phone, and for how long.
+
+🔴 **Raised from ten minutes to the working-day bound by JJ, 2026-09-29**, after both of an agent's
+morning clips — said before any page had connected — never played: *"we don't need a connected page
+for clips to be held, right? Now we can hold them in the server … and they can survive restarts or
+toggles."* The ten-minute bound was making agents RE-SAY what they had already said, because the
+voice rules had to tell them an undelivered clip was lost. The same reasoning that moved
+`LANE_HELD_MAX_AGE_S` to eight hours applies here: an expired clip is simply lost until he asks, and
+the re-issue it forces is the duplicate he hears. The count cap (`UNDELIVERED_MAX`) stays the
+stale-stack safety, and every flushed clip announces how long it waited.
+
+*Superseded reasoning, kept for the record:*
 
 Bounded on BOTH axes deliberately. Unbounded, the fix is worse than the bug: you put the phone
 down for an hour, come back, and get read a stack of stale answers to questions you have stopped
@@ -606,6 +692,21 @@ def speech_speed() -> float:
         except (ValueError, ZeroDivisionError):
             pass
     return SPEECH_SPEED
+
+
+PAUSE_FLOOR_S = 0.2
+"""The shortest a sentence gap gets as speech speeds up (spec 039 follow-up): below this, sentences
+run together and a spoken list stops being parseable."""
+
+
+def effective_pause(pause: float, speed: float) -> float:
+    """The silence actually put between sentences: the stored pause is the gap at NATIVE pace
+    (1.0x), and it shrinks with the speed. JJ, 2026-10-09, at 1.6: the gaps "should shrink
+    proportionally to the speed you are applying." Never below PAUSE_FLOOR_S — unless the stored
+    pause is itself smaller, which is his explicit choice (0 means no gap at all)."""
+    pause = max(0.0, float(pause))
+    scaled = pause / max(SPEED_MIN, float(speed))
+    return max(min(pause, PAUSE_FLOOR_S), scaled)
 
 
 def sentence_pause() -> float:
@@ -693,12 +794,39 @@ choice would be a guess between several."""
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
+# Spec 030: the Android companion app's debug APK, served at GET /android/command-bridge.apk so he
+# installs it from the same link he already opens. A checkout path on purpose: the APK is built from
+# `android/` in this repo (`gradlew assembleDebug`) and an installed wheel has no app to serve.
+ANDROID_APK_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk",
+)
+
 LOOPBACK_CIDRS = ("127.0.0.0/8", "::1/128")
 """Always allowed. Everything else is opt-in."""
 
 TAILSCALE_CIDRS = ("100.64.0.0/10",)
 """The CGNAT range covering any tailnet. Only routable inside your own tailnet, which is what
 makes it a reasonable thing to allow for phone access."""
+
+# ------------------------------------------------------------------------- canvas
+
+CANVAS_READABLE_PX = 12.0
+"""The readable floor for a focused frame's smallest text (spec 019).
+
+`status.canvas` reports, per frame, `min_font_px` — the frame's smallest text element times spec
+018's contain-fit scale, i.e. the px that text renders at WHEN `look` frames the frame on his
+screen — and `readable = min_font_px >= CANVAS_READABLE_PX`. Below 12 effective px the smallest
+label on a focused frame is a strain to read at arm's length on a phone; `readable: false` is the
+agent's signal to redraw smaller-scope (fewer nodes, a split into overview + detail, or a wider
+layout — spec 018's author-to-ratio) BEFORE JJ ever focuses the frame.
+
+Calibrated with `scripts/fontfit.py`: a dense 1600x1200 frame with 14 px labels contains into a
+412x915 phone at ~0.21, so its smallest text renders at ~3 effective px (unreadable); a lean
+500x350 frame with 18 px text contains into a 1280x800 desktop at ~2.0, ~37 effective px
+(comfortable). 12 sits in the wide gap between those clusters. It is a rendering floor like
+page.py's `READABLE` contain threshold — a plain constant, not a `COMMAND_BRIDGE_*` per-run knob,
+so it is not in `SETTINGS`."""
 
 # --------------------------------------------------------------- env overrides
 
@@ -745,6 +873,18 @@ def verbose_default() -> bool:
     return (_env("COMMAND_BRIDGE_VERBOSE", "0") or "0") not in ("0", "false", "no", "off")
 
 
+def echo_guard_enabled() -> bool:
+    """Drop a transcript that matches a clip an agent just played (see `echo.py`). OFF by default:
+    JJ, 2026-09-30, *"let's build it inside of a feature toggle so that we can properly test this."*"""
+    return (_env("COMMAND_BRIDGE_ECHO_GUARD", "0") or "0") not in ("0", "false", "no", "off")
+
+
+def transcribing_cue_enabled() -> bool:
+    """The chime that plays when transcription STARTS. On by default (the old behaviour); off on his
+    desk-mic setup, where it fired on any sound — including its own echo (JJ, 2026-09-30)."""
+    return (_env("COMMAND_BRIDGE_TRANSCRIBING_CUE", "1") or "1") not in ("0", "false", "no", "off")
+
+
 def cues_enabled() -> bool:
     """Audio cues on by default. They exist so a pause is legible without looking at the page —
     disable with COMMAND_BRIDGE_CUES=0 if they ever become noise rather than information."""
@@ -773,6 +913,81 @@ def models_dir() -> str:
     return os.path.join(home, "models") if home else _default_path("models")
 
 
+def roster_path() -> str:
+    """The agent roster JSON (`agents: {name: {hue, ...}}`), or "" when none is configured.
+
+    JJ, 2026-10-01: *"agent names and colors need to be persistent with their responsibilities …
+    so that I can clearly see blue and think magnus and think command bridge."* A lane's colour used
+    to be its POSITION in the lane list, so a day running only some agents repainted them all. With a
+    roster, the colour belongs to the NAME; lanes not in the roster keep the positional fallback."""
+    return _env("COMMAND_BRIDGE_ROSTER", "") or ""
+
+
+def lane_roles() -> dict[str, str]:
+    """name -> the agent's ROLE from the roster (`agents.<name>.role`), shown beside the name on its
+    card (JJ, 2026-10-05: "display the agent's role next to its name in the agent cards … until I know
+    … what name goes with what responsibility"). Same file and same never-fail rule as lane_colors."""
+    path = roster_path()
+    if not path:
+        return {}
+    try:
+        import json as _json
+        import re as _re
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        if path.lower().endswith(".md"):
+            m = _re.search(r"```json\s*\n(.*?)\n```", text, _re.S)
+            if not m:
+                return {}
+            text = m.group(1)
+        agents = (_json.loads(text) or {}).get("agents") or {}
+        return {str(n): str(a["role"]) for n, a in agents.items()
+                if isinstance(a, dict) and isinstance(a.get("role"), str) and a["role"]}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def lane_colors() -> dict[str, str]:
+    """name -> CSS colour from the roster at `roster_path()`. Empty on no roster or a bad file —
+    colours are cosmetic and must never stop the server.
+
+    The roster may be a `.json` file or a MARKDOWN note holding it in a ```json block: JJ keeps it in
+    a markdown note so the roster is written down once (2026-10-01: *"so that we don't duplicate
+    text"*). The first ```json block in a `.md` is the roster."""
+    path = roster_path()
+    if not path:
+        return {}
+    try:
+        import json as _json
+        import re as _re
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        if path.lower().endswith(".md"):
+            m = _re.search(r"```json\s*\n(.*?)\n```", text, _re.S)
+            if not m:
+                return {}
+            text = m.group(1)
+        agents = (_json.loads(text) or {}).get("agents") or {}
+        return {str(n): str(a["hue"]) for n, a in agents.items()
+                if isinstance(a, dict) and isinstance(a.get("hue"), str) and a["hue"]}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def fleet_registry_dir() -> str:
+    """Where the per-lane fleet registry lives — the session<->lane bridge `fleet` reads to derive
+    objective activity (spec 021). One JSON file per pane, written by whoever launches the lanes.
+
+    Default is `<session dir>/.agent-fleet/panes`, so it sits beside the turn logs and moves with
+    COMMAND_BRIDGE_DIR. Point COMMAND_BRIDGE_FLEET_REGISTRY at an EXISTING registry — e.g. a herdr
+    grid that already registers its panes elsewhere — to read those lanes without re-registering.
+    """
+    explicit = _env("COMMAND_BRIDGE_FLEET_REGISTRY")
+    if explicit:
+        return explicit
+    return os.path.join(session_dir(), ".agent-fleet", "panes")
+
+
 def parakeet_dir() -> str:
     """Path to a sherpa-onnx Parakeet TDT model directory, if present.
 
@@ -791,8 +1006,57 @@ def parakeet_dir() -> str:
     explicit = _env("COMMAND_BRIDGE_PARAKEET_DIR")
     if explicit:
         return explicit
+    # ON THE GPU, THE FP32 BUILD (spec 041). The CUDA provider runs no int8 integer matmuls, so
+    # the int8 model on CUDA hands those nodes back to the CPU and is barely faster (measured p50
+    # 487 vs 469 ms); the published fp16 export computes in fp16 on CUDA and returned 20 of 21 of
+    # his turns empty or `<unk>`. So the GPU gets fp32 (`scripts/parakeet_fp32.py` builds it from
+    # the fp16 export) and NEVER fp16. The CPU keeps the int8 model it is fast on.
+    if asr_provider() == "cuda":
+        gpu = os.path.join(models_dir(), PARAKEET_GPU_DIR)
+        if os.path.isdir(gpu):
+            return gpu
     default = os.path.join(models_dir(), "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
     return default if os.path.isdir(default) else ""
+
+
+_CUDA_DLL_DIRS_ADDED: int | None = None
+
+
+def add_cuda_dll_dirs() -> int:
+    """Put the nvidia-* wheels' DLL folders (cuDNN 9, cuBLAS 12, the CUDA runtime) on this process's
+    DLL search path, ONCE, before any CUDA session is created (spec 041). Windows only; returns how
+    many folders were added.
+
+    Measured 2026-10-09: without it, sherpa-onnx's CUDA provider fails to load ("Failed to load
+    shared library") even after onnxruntime's own `preload_dlls()`, because cuDNN loads its
+    sub-libraries lazily by name — and onnxruntime-gpu 1.24 SILENTLY put Kokoro on the CPU (933 ms
+    against 373 ms). With it, Kokoro on 1.24 is bit-identical to 1.22 at the same speed."""
+    global _CUDA_DLL_DIRS_ADDED
+    if _CUDA_DLL_DIRS_ADDED is not None:
+        return _CUDA_DLL_DIRS_ADDED
+    import glob
+    import sys as _sys
+
+    added = 0
+    if _sys.platform == "win32":
+        for root in _sys.path:
+            for bin_dir in sorted(set(os.path.dirname(p) for p in glob.glob(
+                    os.path.join(root, "nvidia", "*", "bin", "*.dll")))):
+                try:
+                    os.add_dll_directory(bin_dir)
+                except OSError:
+                    continue
+                os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+                added += 1
+            if added:
+                break
+    _CUDA_DLL_DIRS_ADDED = added
+    return added
+
+
+PARAKEET_GPU_DIR = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-fp32"
+"""The GPU's model (spec 041): sherpa-onnx's fp16 export with its weights upcast to fp32 by
+`scripts/parakeet_fp32.py`, so CUDA computes in fp32."""
 
 
 def have_module(name: str) -> bool:
@@ -834,6 +1098,84 @@ def asr_threads() -> int:
         return max(1, int(_env("COMMAND_BRIDGE_ASR_THREADS", "4")))
     except ValueError:
         return 4
+
+
+def tts_threads() -> int:
+    """ONNX intra-op threads for kokoro TTS synthesis. 0 (default) = onnxruntime's own default (every
+    core). ``COMMAND_BRIDGE_TTS_THREADS``. Cap it to bound the CPU a synthesis burst uses (JJ,
+    2026-09-22: CPU caps for TTS only) — the synth queue already serializes synthesis to one at a
+    time; this limits how much of the machine that one synth grabs. Applied only when > 0, via a
+    thread-capped onnxruntime session handed to ``Kokoro.from_session``."""
+    try:
+        return max(0, int(_env("COMMAND_BRIDGE_TTS_THREADS", "0")))
+    except ValueError:
+        return 0
+
+
+def tts_stream() -> bool:
+    """Stream a live-lane reply piece by piece (default on). ``COMMAND_BRIDGE_TTS_STREAM=0`` sends
+    every clip whole again — the switch back if a page ever mishandles the streamed protocol."""
+    return _env("COMMAND_BRIDGE_TTS_STREAM", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+def tts_provider() -> str:
+    """ONNX execution provider for kokoro TTS: ``cpu`` (default) or ``cuda``.
+
+    ``COMMAND_BRIDGE_TTS_PROVIDER``. ``cuda`` moves the forward pass, which is the whole synth cost,
+    off the CPU: measured 2026-10-06 on the RTX A2000 laptop, 9.4 s of speech in 0.83 s on the GPU
+    against 3.0 s on the CPU. It needs ``onnxruntime-gpu`` built for CUDA 12 plus the matching
+    ``nvidia-*-cu12`` pip libraries; 🔴 cuDNN must match the build (onnxruntime-gpu 1.22 runs on cuDNN
+    9.8 and fails on 9.27 with ``CUDNN_BACKEND_API_FAILED``). A failure falls back to the CPU, and
+    ``doctor`` names the provider the session actually got."""
+    return (_env("COMMAND_BRIDGE_TTS_PROVIDER", "cpu").strip().lower() or "cpu")
+
+
+def asr_provider() -> str:
+    """ONNX execution provider for Parakeet ASR: ``cpu`` (default), ``cuda`` or ``directml``.
+
+    ``COMMAND_BRIDGE_ASR_PROVIDER``. Moving off ``cpu`` takes the 0.6B transducer decode off the
+    CPU (the 2026-09-21 CPU-load fix). 🔴 A CUDA/cuDNN mismatch makes sherpa-onnx **silently fall
+    back to cpu** with no error, so verify with ``nvidia-smi`` that the GPU is actually engaged
+    rather than trusting absence-of-error. ``cuda`` needs a sherpa-onnx CUDA build
+    (``pip install sherpa-onnx==...+cuda12.cudnn9``); ``directml`` needs no CUDA toolkit."""
+    return (_env("COMMAND_BRIDGE_ASR_PROVIDER", "cpu").strip().lower() or "cpu")
+
+
+def asr_commit_pause_ms() -> int:
+    """Transcribe the turn in pieces at his pauses WHILE he is still talking. 0 turns it off.
+
+    ``COMMAND_BRIDGE_ASR_COMMIT_PAUSE_MS``. Parakeet is an offline model, so a whole-turn decode
+    costs ~0.1 s per second of speech, all of it AFTER he stops: measured 2026-10-06, a 25 s turn
+    waited 2.4 s and a 100 s turn 11.5 s, and the live log showed 11-20 s on minute-long turns
+    because the old preview also re-decoded the whole turn. Committing a piece at each pause of at
+    least this long leaves only the last piece for after he stops (44 s of speech: 5.4 s -> 0.34 s,
+    identical text at 700 ms, a few commas turned to full stops at 350 ms). Keep it below
+    ``COMMAND_BRIDGE_TURN_MIN_SILENCE_MS``, or the turn ends before a pause can commit."""
+    try:
+        return max(0, int(_env("COMMAND_BRIDGE_ASR_COMMIT_PAUSE_MS", "600")))
+    except ValueError:
+        return 600
+
+
+def asr_commit_min_s() -> float:
+    """Shortest piece worth committing on its own, in seconds of audio since the last commit.
+
+    ``COMMAND_BRIDGE_ASR_COMMIT_MIN_S``. A short turn decodes in a fraction of a second whole, so
+    splitting it buys nothing and risks a sentence break at a mid-sentence pause."""
+    try:
+        return max(0.5, float(_env("COMMAND_BRIDGE_ASR_COMMIT_MIN_S", "3.0")))
+    except ValueError:
+        return 3.0
+
+
+def asr_force_greedy() -> bool:
+    """Force ``greedy_search`` decoding, bypassing hotword biasing.
+
+    ``COMMAND_BRIDGE_ASR_FORCE_GREEDY``. Hotword biasing requires ``modified_beam_search``, which on
+    NeMo TDT is documented to hallucinate or return empty text ~20% of the time (sherpa-onnx#3267)
+    and costs more CPU than greedy. When biasing is not worth that, this flag keeps the plain greedy
+    path even while ``hotwords.txt``/``bpe.vocab`` are present (JJ, 2026-09-21)."""
+    return _env("COMMAND_BRIDGE_ASR_FORCE_GREEDY", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def hotwords_file() -> str:
@@ -1043,9 +1385,28 @@ def kokoro_speed(speed: float) -> float:
 
     Clamping rather than raising, because the alternative is a reply that fails outright when a
     slightly-slower one would have been fine — and the caller is usually the server, mid-sentence.
-    Never silent, though: `tts.available()` reports the clamp so `status` and `doctor` say the
-    speech is not running at the number the settings file claims."""
+    Since spec 039 the backend asks `kokoro_speed_plan` instead, which never gets near this."""
     return max(SPEED_MIN, min(KOKORO_SPEED_MAX, float(speed)))
+
+
+KOKORO_NATIVE_SPEED_MAX = 1.3
+"""The fastest the Kokoro MODEL is ever asked to speak (spec 039). Anything faster is a time-stretch
+of its audio, not a faster model.
+
+**Why not just let the model go to 2.0.** A model asked for speed compresses unevenly, and the
+shortest, quietest sounds lose first: measured 2026-10-09 at 2.0, "Atlas finished..." came back as
+"has finished..." and "The API" lost "The" (Parakeet as the judge) — the sentence-opening consonants
+`tts._articulate` was written about. JJ heard every consonant at 1.25 (2026-08-14). A time-stretch
+compresses every sound by the same factor, so the consonant the model made at 1.3 survives."""
+
+
+def kokoro_speed_plan(speed: float) -> tuple[float, float]:
+    """`(native, stretch)` for a project speed: the model runs at `native` (never above
+    KOKORO_NATIVE_SPEED_MAX), and its audio is time-stretched by `stretch` (1.0 = untouched), so
+    `native * stretch` is the speed asked for, up to SPEED_MAX."""
+    speed = max(SPEED_MIN, min(SPEED_MAX, float(speed)))
+    native = min(speed, KOKORO_NATIVE_SPEED_MAX)
+    return native, (speed / native if speed > native else 1.0)
 
 
 KOKORO_TIMESTAMPED_MODEL = "kokoro-v1.0-timestamped.onnx"
@@ -1079,7 +1440,7 @@ def kokoro_model() -> str:
     # ONE DEFINITION OF WHICH MODEL IS LIVE. `doctor`, `status` and the loader all read this, and
     # they were briefly allowed to disagree — the backend loading the timestamped export while
     # `doctor` reported the plain one. A tool that misreports what it is running is the specific
-    # failure the runtime check in the Command Bridge Guide exists to catch.
+    # failure the `doctor` runtime check exists to catch.
     for name in (KOKORO_TIMESTAMPED_MODEL, "kokoro-v1.0.onnx"):
         path = os.path.join(models_dir(), name)
         if os.path.isfile(path):
@@ -1532,6 +1893,15 @@ SETTINGS: tuple = (
              public_url),
     _setting("COMMAND_BRIDGE_DIR", "where turn logs live", session_dir),
     _setting("COMMAND_BRIDGE_MODELS_DIR", "where downloaded models live", models_dir),
+    _setting("COMMAND_BRIDGE_ROSTER",
+             "path to the agent roster JSON (agents: {name: {hue}}); a lane in it keeps its own "
+             "colour whatever its position. Unset = colours by position",
+             roster_path),
+    _setting("COMMAND_BRIDGE_FLEET_REGISTRY",
+             "directory of per-lane fleet registry files (the session<->lane bridge `fleet` reads "
+             "to derive objective activity); default <session dir>/.agent-fleet/panes. Point it at "
+             "an existing registry to read those lanes without re-registering",
+             fleet_registry_dir),
     # `kokoro` was missing from this description while it was the backend in production use, so
     # the one list an agent reads to find out what it may set omitted the answer. Same defect as
     # the unregistered Kokoro keys below: shipped, honoured, undiscoverable.
@@ -1565,12 +1935,14 @@ SETTINGS: tuple = (
     _setting("COMMAND_BRIDGE_SPEECH_SPEED",
              f"how fast the agent talks; 1.0 is native pace, higher is faster "
              f"({SPEED_MIN}-{SPEED_MAX}). Set it live with `command-bridge rate --speed`. "
-             f"NOTE the kokoro backend caps at {KOKORO_SPEED_MAX} and clamps above it "
-             f"(piper takes the full range); `status` says when it clamped",
+             f"On kokoro the model never runs above {KOKORO_NATIVE_SPEED_MAX} (faster clips "
+             f"the first consonants); the rest of the speed is a pitch-preserving time-stretch, "
+             f"intelligible to {SPEED_MAX} (spec 039). `status` says when it stretches",
              lambda: str(speech_speed())),
     _setting("COMMAND_BRIDGE_SENTENCE_PAUSE",
-             f"seconds of silence between sentences (0-{PAUSE_MAX}); the pause IS the "
-             f"punctuation in speech. Set it live with `command-bridge rate --pause`",
+             f"seconds of silence between sentences at NATIVE pace (0-{PAUSE_MAX}); the pause IS "
+             f"the punctuation in speech. The gap heard is pause / speed, never below "
+             f"{PAUSE_FLOOR_S} s. Set it live with `command-bridge rate --pause`",
              lambda: str(sentence_pause())),
     _setting("COMMAND_BRIDGE_CONSONANT_BOOST",
              f"0-1 — how hard to lift consonants so they survive fast speech. Default "
@@ -1603,6 +1975,42 @@ SETTINGS: tuple = (
              lambda: str(hotwords_score())),
     _setting("COMMAND_BRIDGE_WHISPER_MODEL", "whisper fallback model (parakeet is preferred)", whisper_model),
     _setting("COMMAND_BRIDGE_ASR_THREADS", "ASR worker threads", lambda: str(asr_threads())),
+    _setting("COMMAND_BRIDGE_TTS_THREADS",
+             "ONNX intra-op threads for kokoro TTS synthesis; 0 = onnxruntime default (every core). "
+             "Cap it to bound the CPU a synthesis burst uses — the synth queue already serializes to "
+             "one at a time; this limits how much of the machine that one grabs",
+             lambda: str(tts_threads())),
+    _setting("COMMAND_BRIDGE_TTS_PROVIDER",
+             "cpu (default) | cuda — ONNX execution provider for kokoro synthesis. cuda needs "
+             "onnxruntime-gpu for CUDA 12 with a matching cuDNN (1.22 runs on cuDNN 9.8); a failure "
+             "falls back to the cpu, and `status` names the device the session actually got",
+             tts_provider),
+    _setting("COMMAND_BRIDGE_TTS_STREAM",
+             "1 (default) | 0 — stream a live-lane reply piece by piece so he hears its first "
+             "phrase while the rest synthesizes; 0 sends every clip whole",
+             lambda: "1" if tts_stream() else "0"),
+    # THE TWO PARAKEET DECODE KNOBS WERE READ AND NEVER REGISTERED (2026-09-21 CPU-load work),
+    # the same AC9 defect class as the hotword and turn keys above — `config get
+    # COMMAND_BRIDGE_ASR_PROVIDER` answered "unknown setting" for a knob that decides whether the
+    # 0.6B transducer decodes on the CPU or the GPU.
+    _setting("COMMAND_BRIDGE_ASR_PROVIDER",
+             "cpu (default) | cuda | directml — ONNX execution provider for the Parakeet decode. "
+             "A CUDA/cuDNN mismatch makes sherpa-onnx SILENTLY fall back to cpu, so verify the GPU "
+             "is engaged with nvidia-smi rather than trusting absence-of-error",
+             asr_provider),
+    _setting("COMMAND_BRIDGE_ASR_COMMIT_PAUSE_MS",
+             "transcribe the turn in pieces at pauses at least this long (ms) while he is still "
+             "talking, so only the last piece is decoded after he stops; 0 = whole turn at the end. "
+             "Keep it below COMMAND_BRIDGE_TURN_MIN_SILENCE_MS",
+             lambda: str(asr_commit_pause_ms())),
+    _setting("COMMAND_BRIDGE_ASR_COMMIT_MIN_S",
+             "shortest piece (seconds of audio since the last one) worth committing on its own",
+             lambda: str(asr_commit_min_s())),
+    _setting("COMMAND_BRIDGE_ASR_FORCE_GREEDY",
+             "1 | 0 — force greedy_search decoding even when hotwords.txt/bpe.vocab are present. "
+             "Hotword biasing needs modified_beam_search, which on NeMo TDT hallucinates or returns "
+             "empty ~20% of the time (sherpa-onnx#3267) and costs more CPU; 1 keeps plain greedy",
+             lambda: "1" if asr_force_greedy() else "0"),
     _setting("COMMAND_BRIDGE_ASR_BEAM", "whisper beam width; size dominates speed, not this",
              lambda: str(asr_beam_size())),
     _setting("COMMAND_BRIDGE_END_OF_UTTERANCE_MS", "silence that ends a turn; raise it if you get cut off",
@@ -1668,6 +2076,14 @@ SETTINGS: tuple = (
              lambda: str(watch_disconnected_max_s())),
     _setting("COMMAND_BRIDGE_CUES", "1 | 0 — short non-speech cues so a pause is audible",
              lambda: "1" if cues_enabled() else "0"),
+    _setting("COMMAND_BRIDGE_TRANSCRIBING_CUE",
+             "1 | 0 — the chime when transcription starts. It fires on any sound before the voice "
+             "check, so a desk mic can pick it back up and loop; set 0 there",
+             lambda: "1" if transcribing_cue_enabled() else "0"),
+    _setting("COMMAND_BRIDGE_ECHO_GUARD",
+             "1 | 0 — drop a transcript that matches a clip an agent just played (its own voice "
+             "coming back through a desk mic). Off by default; logged as reason 'echo'",
+             lambda: "1" if echo_guard_enabled() else "0"),
     _setting("COMMAND_BRIDGE_VERBOSE",
              "1 | 0 — narrate every action before doing it. Global across devices; "
              "set live with `command-bridge verbose on`",

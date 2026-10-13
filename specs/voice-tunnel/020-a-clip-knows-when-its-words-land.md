@@ -35,7 +35,7 @@ waveform. Nothing is missing; it is simply not reported.
 
 ## Findings — measured before writing this, and two of them change the design
 
-Full landscape pass in Local TTS for the Voice Tunnel - Research. What was measured **on this
+Full landscape pass in a separate TTS survey (not in this repo). What was measured **on this
 machine, against this checkout**:
 
 | # | Finding | Consequence |
@@ -193,6 +193,6 @@ voice-tunnel say --session dev --lane magnus --timings "The camera is on the lef
 ## References
 
 - `specs/008` — speech segmentation; the piece-and-gap structure FR2 must account for.
-- Local TTS for the Voice Tunnel - Research — the measurements above, and the landscape pass
+- a separate TTS survey (not in this repo) — the measurements above, and the landscape pass
   that concluded the engine does not need replacing.
 - GitHub issue #1 — the request, and why the timing is the only unsolved part of deixis.

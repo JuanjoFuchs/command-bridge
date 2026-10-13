@@ -58,7 +58,8 @@ def test_status_carries_the_verdict_beside_the_url(capsys, tmp_sessions, monkeyp
 
     assert payload["url"], "the URL is still reported"
     assert payload["phone"]["ready"] is False, "and it is reported as unusable, in the same object"
-    assert payload["phone"]["remedy"]
+    assert payload["phone"]["reachable_from"], "the lean default carries the reach verdict"
+    assert "remedy" not in payload["phone"], "the setup detail is behind `status --phone`, not on every call"
 
 
 def test_describe_tells_the_agent_to_read_it_before_handing_the_url_over():
@@ -70,12 +71,12 @@ def test_describe_tells_the_agent_to_read_it_before_handing_the_url_over():
 
 
 def test_the_backoff_text_comes_from_the_backoff_constant():
-    """Three hand-written copies of one number, no two agreeing: 15min in `watchdog.backoff`,
-    30min in `watch --timeout`, thirty minutes in the constant's own docstring, and 540 seconds in
-    the constant. Two of them contradicted each other inside a single `describe` payload."""
+    """Hand-written copies of one number, no two agreeing: 30min in `watch --timeout`, thirty
+    minutes in the constant's own docstring, and 540 seconds in the constant. They contradicted
+    each other inside a single `describe` payload, so the text is generated from the constant."""
     expected = cli._human_seconds(cli.WATCH_BACKOFF_MAX_S)
-    assert expected in cli.DESCRIBE["watchdog"]["backoff"]
-    assert expected in cli.DESCRIBE["commands"]["watch"]["args"]["--timeout"]
+    # `--timeout` retired 2026-10-01; `--background` is now the arg that states the idle wait.
+    assert expected in cli.DESCRIBE["commands"]["watch"]["args"]["--background"]
 
 
 @pytest.mark.parametrize("seconds,text", [(540.0, "9min"), (3600.0, "1h"), (30.0, "30s"),
@@ -205,7 +206,7 @@ def test_status_carries_the_exposure_beside_the_url(capsys, tmp_sessions, monkey
     front(monkeypatch)
     monkeypatch.setattr(cli, "_request", lambda *a, **k: {"session": "dev"})
 
-    _, payload, _ = run(["status", "--session", "dev"], capsys)
+    _, payload, _ = run(["status", "--session", "dev", "--phone"], capsys)
 
     assert payload["phone"]["ready"] is True
     assert payload["phone"]["exposure"]["public"] is True

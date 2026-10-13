@@ -217,6 +217,20 @@ def resolve(text: str, lanes: Iterable[str], current: str) -> Resolution:
     return Resolution("refuse", None, tuple(lane for ratio, lane in scored if ratio >= _RATIO))
 
 
+def is_bare_summons(text: str, lanes: Iterable[str]) -> bool:
+    """Is this utterance ONLY a summons — a leading greeting and an exact lane name, nothing after?
+
+    JJ, 2026-10-05: *"switching lanes with the wake word, but that not triggering the agent to
+    respond"* — "hey rigel" on its own is him walking over to rigel's desk, not a question for rigel.
+    The switch still happens (`resolve` decides that); this only says there is no instruction in it
+    for anyone to answer. Exact name only, the same evidence a switch needs: a mangled name is a
+    `stay` or a `refuse`, and is never treated as a silent summons. Pure, like `resolve`.
+    """
+    known = set(lanes) | {BROADCAST}
+    words = normalize(text).split()
+    return len(words) == 2 and words[0] in config.GREETINGS and words[1] in known
+
+
 class LaneRegistry:
     """Who is in the meeting, and who is being talked to (FR1).
 
@@ -279,6 +293,25 @@ class LaneRegistry:
         if self.current == name:
             self.current = self.default
         return name
+
+    def reorder(self, names: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+        """Put `names` first, in that order; every unlisted lane keeps its relative order after them
+        (spec 029 FR1). Validated in full BEFORE anything moves, so a refusal changes nothing.
+
+        Its own verb because the only other way to move a lane was remove + add, and removing a lane
+        kills that agent's watch — JJ: *"move lanes without tearing them down"*."""
+        names = list(names)
+        seen: set[str] = set()
+        for name in names:
+            if name not in self._lanes:
+                raise LaneError(f"no lane named '{name}'", "unknown_lane",
+                                "command-bridge lane list")
+            if name in seen:
+                raise LaneError(f"lane '{name}' is listed twice", "bad_order",
+                                "command-bridge lane order <each lane once>")
+            seen.add(name)
+        self._lanes = names + [n for n in self._lanes if n not in seen]
+        return self.names
 
     def switch(self, name: str) -> str:
         self.current = self.require(name)

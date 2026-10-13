@@ -519,7 +519,7 @@ a fixture the test owns — a temp session directory, a real subprocess). **No c
 - **Removing `next`, `remedy`, or the invariants from `describe`.** `describe` is the contract and is
   read deliberately, once. This spec governs what rides along on *every* call.
 - **The human-facing ergonomics of multi-clip answers.** Being tested live over the coming days and
-  governed by the guide, not by code — see `Voice Tunnel Guide` rule 3,
+  governed by the guide, not by code — see `the voice operating guide (not in this repo)` rule 3,
   which now caps an answer at three clips because JJ forgets the first one otherwise.
 - **Trimming the per-turn metadata inside `unread`** — `session`, `t_start`, `t_end`, `reason`,
   `final`, `wall`, measured at **~170 characters per turn against a median 74-character utterance**,
@@ -824,7 +824,7 @@ the new gate never runs.
   serves
 - JJ's own thinking on why context spend is
   the point
-- `Voice Tunnel Guide` — the operating rules the CLI's guidance
+- `the voice operating guide (not in this repo)` — the operating rules the CLI's guidance
   duplicates
 - `specs/005-one-wait-gated-on-speech.md` — the single waiting command whose cursor this spec makes
   authoritative

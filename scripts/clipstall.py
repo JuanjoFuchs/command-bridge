@@ -28,12 +28,13 @@ Needs Playwright (`pip install playwright && playwright install chromium`).
 from __future__ import annotations
 
 import functools
-import http.server
 import os
 import socketserver
 import subprocess
 import sys
 import threading
+
+from pagesplit import SplitPages
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(REPO, "command_bridge", "web")
@@ -104,16 +105,10 @@ class ServerWatch:
               f"ports {SERVED_PORTS}")
 
 
-class Quiet(http.server.SimpleHTTPRequestHandler):
-    # Signature matches the base class rather than swallowing *args: the copy of this in
-    # lanestrip.py trips pyright's incompatible-override check, and a new file should not
-    # inherit a finding it can avoid for free.
-    def log_message(self, format, *args):  # noqa: A002 — the base class names it `format`
-        pass
-
-
 def serve(root):
-    httpd = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=root))
+    # Spec 023: the stall guard lives in the audio SHELL, so `/` has to be the shell, as on the real
+    # server — `SplitPages` routes `/` and `/ui` the way it does.
+    httpd = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(SplitPages, directory=root))
     port = httpd.server_address[1]
     assert port != DEFAULT_PORT, "the OS handed out the tunnel's port; refusing to bind it"
     SERVED_PORTS.append(port)

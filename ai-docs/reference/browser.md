@@ -27,7 +27,10 @@ is what lets the automated e2e test run without any TLS setup.
 
 Per Chrome's own documentation: a site can record while you are on it, but **if you switch to
 another tab or another app, it cannot record**. True background capture needs a native
-foreground service (`FOREGROUND_SERVICE_MICROPHONE`) — i.e. an app, which is out of scope.
+foreground service (`FOREGROUND_SERVICE_MICROPHONE`) — i.e. an app. **Since 2026-10-09 that app
+exists: `android/`, spec 030.** Its foreground service owns the mic, the socket and playback and
+speaks this page's protocol; the page stays the foreground surface and, in `?spectate=1`, the canvas
+viewer beside the app. Everything below still holds for the page itself.
 
 Consequences, all deliberate:
 - The product is **session-based**: you open the page for a working block, not all day.

@@ -374,4 +374,4 @@ Status payload gains, per lane:
 - `specs/007` — the refusal machinery; FR2 rescopes its unread check and FR8 bounds its loop.
 - `specs/011` — the turn text carried in a refusal, which FR8's `fresh` complements.
 - Voice Tunnel — the roadmap rows these came from, with his verbatim words.
-- Voice Tunnel Guide — the standing rules; FR8 removes the one that could not terminate.
+- the voice operating guide (not in this repo) — the standing rules; FR8 removes the one that could not terminate.

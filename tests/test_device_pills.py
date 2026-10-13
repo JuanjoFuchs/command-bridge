@@ -369,11 +369,15 @@ def page() -> str:
 
 
 def script() -> str:
-    """Only the `<script>` block — the blanker understands JavaScript quoting and nothing else,
-    and the HTML comments above it are full of prose apostrophes it would read as strings."""
-    raw = page()
-    start = raw.index("<script>") + len("<script>")
-    return raw[start:raw.index("</script>", start)]
+    """Only the `<script>` blocks — the blanker understands JavaScript quoting and nothing else,
+    and the HTML comments above it are full of prose apostrophes it would read as strings.
+
+    Spec 023: the shell's script first (the route and the context it is read off live there), then
+    the UI frame's (the pickers and the pills)."""
+    def first(raw: str) -> str:
+        start = raw.index("<script>") + len("<script>")
+        return raw[start:raw.index("</script>", start)]
+    return first(PAGE.with_name("shell.html").read_text(encoding="utf-8")) + "\n" + first(page())
 
 
 def blanked(js: str) -> str:

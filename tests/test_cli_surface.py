@@ -53,6 +53,10 @@ def test_describe_documents_every_flag_the_parser_accepts():
         for action in p._actions:
             if isinstance(action, _ap._HelpAction) or not action.option_strings:
                 continue
+            # A RETIRED flag stays parsed only to return a pointed error (e.g. `watch --timeout`,
+            # 2026-10-01); it is hidden from --help and deliberately absent from the contract.
+            if action.help == _ap.SUPPRESS:
+                continue
             # The long form is what gets documented; `--session` is on nearly every command and
             # is documented per-command already.
             longest = max(action.option_strings, key=len)

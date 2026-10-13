@@ -37,32 +37,32 @@ def calls(monkeypatch):
 
 # ── FR1/FR5: the canvas draw/camera verbs POST to /canvas/<op> over the one _request ──────────────
 
-def test_set_posts_a_frame_op_with_the_lane_folded_in(calls):
-    cli.cmd_set(_NS(session="dev", lane="magnus", file=None, content=None, mermaid=None,
-                    markdown=None, svg=None, html="<b>x</b>", text=None, section=[], id="f1",
-                    at="", scale=0, kind="mermaid", title="t"))
-    session, path, payload = calls[0]
-    assert (session, path) == ("dev", "/canvas/frame")
-    assert payload["id"] == "f1" and payload["kind"] == "html" and payload["content"] == "<b>x</b>"
-    assert payload["lane"] == "magnus", "the --lane must be folded in so only the live lane draws"
+# spec 022 retired set/look/zoom/remove/clear (a frame is a file) — see test_set_is_gone.py.
+
+def test_point_and_relayout_reach_their_ops_with_the_lane_folded_in(calls):
+    cli.cmd_point(_NS(session="dev", lane="magnus", selector="seq:VT", look=True))
+    cli.cmd_relayout(_NS(session="dev", lane="magnus"))
+    assert [c[1] for c in calls] == ["/canvas/point", "/canvas/relayout"]
+    assert all(c[2]["lane"] == "magnus" for c in calls), "the --lane must be folded in"
 
 
-def test_point_look_remove_clear_zoom_raise_reach_their_ops(calls):
-    cli.cmd_point(_NS(session="dev", lane="", selector="seq:VT", look=True))
-    cli.cmd_look(_NS(session="dev", lane="", id="plan", all=False))
-    cli.cmd_remove(_NS(session="dev", lane="", id="plan"))
-    cli.cmd_clear(_NS(session="dev", lane=""))
-    cli.cmd_zoom(_NS(session="dev", lane="", selector="x", scale="fit"))
-    cli.cmd_raise(_NS(session="dev", lane="", why="a chart"))
-    paths = [c[1] for c in calls]
-    assert paths == ["/canvas/point", "/canvas/look", "/canvas/remove", "/canvas/clear",
-                     "/canvas/zoom", "/canvas/raise"]
+def test_a_path_with_a_query_keeps_the_token_out_of_it():
+    """`status --lane vega` asks `/canvas/status?lane=vega`; a second `?` before the token folded the
+    token into the lane name, so canvas.folder named a lane that does not exist (found 2026-09-25)."""
+    rt = {"host": "127.0.0.1", "port": 8765, "token": "t0k"}
+    assert cli._url_for(rt, "/canvas/status?lane=vega").endswith("/canvas/status?lane=vega&token=t0k")
+    assert cli._url_for(rt, "/status").endswith("/status?token=t0k")
+
+
+def test_status_scopes_the_canvas_half_to_the_lane(calls):
+    cli.cmd_status(_NS(session="dev", lane="vega", phone=False))
+    assert ("dev", "/canvas/status?lane=vega", None) in [(c[0], c[1], c[2] or None) for c in calls]
 
 
 def test_batch_posts_the_list_to_the_canvas_batch_op(calls):
     import io
     import sys
-    monkey = [{"op": "set", "id": "a", "content": "x"}]
+    monkey = [{"op": "point", "selector": "a"}]
     orig = sys.stdin
     sys.stdin = io.StringIO(__import__("json").dumps(monkey))
     try:
@@ -111,7 +111,7 @@ def test_run_reports_unavailable_without_importing_a_runtime():
 
 def test_describe_lists_the_canvas_verbs_and_the_renamed_earcon():
     cmds = cli.DESCRIBE["commands"]
-    for verb in ("set", "look", "point", "cue", "inspect", "remove", "clear", "zoom", "raise",
+    for verb in ("point", "cue", "inspect", "relayout", "canvas-doctor",
                  "chart", "batch", "switch", "run", "earcon"):
         assert verb in cmds, f"{verb} must appear in describe's command list"
     # `cue` documents the highlight now, not the earcon; `earcon` documents the tone.

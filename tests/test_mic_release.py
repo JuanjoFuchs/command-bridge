@@ -34,7 +34,7 @@ import re
 
 import pytest
 
-from tests.test_audio_route import blanked, body_of, page, script, span_of
+from tests.test_audio_route import blanked, body_of, script, span_of
 from tests.test_device_group import listener_body
 
 
@@ -122,8 +122,10 @@ def test_the_agent_state_is_not_forgotten_while_he_is_away():
     """The agent's state is the SERVER's fact. With the socket still open the agent is still
     working and still pushing `agent_state`, so clearing it on release would tell him — the instant
     he taps back on — that the work he stepped away from had finished."""
-    body = body_of("stop")
-    assert re.search(r"if\s*\(\s*!\s*keepSocket\s*\)\s*agentState\s*=", body), (
+    body = source_of("stop")
+    # Spec 023: `stop()` is the shell's and the agent's state is the UI's, so the shell asks the UI
+    # to forget it — still only when the socket is going too.
+    assert re.search(r"if\s*\(\s*!\s*keepSocket\s*\)\s*ui\(\"forgetAgentState\"\)", body), (
         "the agent's state is cleared even when the session is being kept, so reopening reports "
         "idle over an agent that is still thinking"
     )
@@ -171,7 +173,7 @@ def test_whether_the_microphone_is_held_is_read_off_the_tracks():
     while every status the page published said they had not. A boolean set by the same function
     that does the releasing would be that same lie one layer down — so the diagnostic reads the
     tracks. Same discipline as `diag.sink` reading the AudioContext."""
-    raw = page()
+    raw = script()   # the shell's diag (spec 023), where the tracks are
     m = re.search(r"micState:\s*\(\)\s*=>(.{0,160})", raw, re.S)
     assert m, "window.__voiceTunnel.micState is gone; nothing can check the release from outside"
     assert "getAudioTracks" in m.group(1) and "readyState" in m.group(1), (
@@ -212,3 +214,19 @@ def test_the_device_picker_still_tears_the_socket_down(monkeypatch=None):
         "the device picker is now using the orb's release path, which keeps a socket across a "
         "full AudioContext rebuild"
     )
+    # Spec 023: the picker asks the shell for `restartCapture`, which is where the stop happens.
+    code = blanked(script())
+    restart = code[code.index("restartCapture()"):]
+    restart = restart[: restart.index("start()") + len("start()")]
+    assert re.search(r"await\s+stop\(\{\s*rebuild:\s*true\s*\}\)\s*;\s*await\s+start\(\)", restart), (
+        "the shell's capture restart no longer does a rebuild stop() then start()"
+    )
+
+
+def test_a_capture_rebuild_does_not_announce_a_close_it_is_about_to_undo():
+    """Found 2026-10-05: the old socket's `channel: false` could reach the server AFTER the new
+    socket's `channel: true` (the close waits on an ASR flush), leaving the conversation switched off
+    after a microphone change. A rebuild says nothing about the channel; a real stop still does."""
+    body = source_of("stop")
+    gated = re.search(r"if\s*\(\s*!rebuild\s*\)\s*\{[^}]*tellServer\(\"channel\",\s*false\)", body)
+    assert gated, "stop() announces the channel closing even on a rebuild"

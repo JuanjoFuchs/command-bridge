@@ -104,9 +104,9 @@ def test_the_case_he_named_reads_as_a_term_inside_a_real_sentence(text, expected
     "There are 26 files.",
     "Version 2 shipped.",
     "100",
-    # MONEY — the engine already reads this correctly. Rewriting a correct reading is a
-    # regression that nothing else in the system would ever report.
-    "It costs $3.50 today.",
+    # MONEY IN OTHER CURRENCIES — still the engine's to read. (Dollars moved to spec 039: measured
+    # 2026-10-09, "$225" was heard as "dollar 225" at 1.2x and lost its dollar at 2.0x, so "the
+    # engine already reads this correctly" stopped being true. See tests/test_spoken_forms.py.)
     "£1.25 each",
     # AN IDENTIFIER WITH NO DOT — the underscore rule is scoped to a matched dotted token, so a
     # bare setting name in prose keeps its own spelling.
@@ -152,10 +152,11 @@ def test_a_decimal_in_prose_is_voiced_and_that_is_deliberate():
     Three statements to one, and the three carry the argument, so the requirement wins over the
     checklist. What is NOT lost is AC2's intent: the criterion exists to stop a correct reading
     being broken, and the reading here does not change — "three point five" is what "3.5" already
-    sounds like. The genuinely at-risk case, money, IS protected and is asserted above.
+    sounds like. Money is NOT a dotted number: spec 039 reads `$3.50` as dollars and cents, and the
+    dotted rule never sees it.
     """
     assert speech.normalize_for_speech("3.5 dollars") == "three point five dollars"
-    assert speech.normalize_for_speech("It costs $3.50 today.") == "It costs $3.50 today."
+    assert speech.normalize_for_speech("It costs $3.50 today.") == "It costs three dollars and fifty cents today."
 
 
 def test_a_letter_glued_to_a_number_gets_its_seam_back():

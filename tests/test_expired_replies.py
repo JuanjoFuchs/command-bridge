@@ -39,18 +39,23 @@ def hold(state, lane, text, age_s=0.0, clip="clip-1"):
 # ================================================================ the bound he actually chose
 
 
-def test_a_reply_waits_half_an_hour():
-    """FR1. Ten minutes was shorter than a single conversation with another lane, which is how a
-    reply he was still expecting evaporated while he was two lanes away."""
-    assert config.LANE_HELD_MAX_AGE_S == 1800.0
+def test_a_reply_waits_a_working_day():
+    """FR1. Raised to 8h by JJ, 2026-09-14: expiry was net-negative because the re-issue path never
+    fired on its own, so an expired clip was simply lost until he asked for it. Thirty minutes was
+    still shorter than an absence (a 45-min gap lost a report), so the hold now matches
+    WATCH_DISCONNECTED_MAX_S — one duration for "the wait for him to come back". The count cap
+    (UNDELIVERED_MAX) stays the stale-stack safety."""
+    assert config.LANE_HELD_MAX_AGE_S == 28800.0   # 8h, matching cli.WATCH_DISCONNECTED_MAX_S
 
 
-def test_the_lane_hold_does_not_share_the_disconnected_phone_bound():
-    """🔴 FR1/TC1. The two situations are different: `undelivered` is nobody listening at all,
-    `lane_held` is him listening to somebody else and intending to come back. Sharing one constant
-    is how the second inherited a bound argued for the first."""
-    assert config.LANE_HELD_MAX_AGE_S != config.UNDELIVERED_MAX_AGE_S
-    assert config.LANE_HELD_MAX_AGE_S > config.UNDELIVERED_MAX_AGE_S
+def test_a_reply_said_to_nobody_also_waits_a_working_day():
+    """🔴 JJ, 2026-09-29, overruling the ten-minute `undelivered` bound (and the old test that kept
+    the two bounds apart): *"we don't need a connected page for clips to be held … they can survive
+    restarts or toggles."* Both of an agent's morning clips, said before any page connected, expired
+    unheard — and the voice rules then told agents to re-say, which he heard as duplicates. A clip
+    said to nobody now waits as long as one held for another lane; the count cap stays the
+    stale-stack safety."""
+    assert config.UNDELIVERED_MAX_AGE_S >= config.LANE_HELD_MAX_AGE_S
 
 
 def test_a_reply_younger_than_the_bound_is_kept(state):
@@ -85,7 +90,7 @@ def test_a_reply_that_would_have_survived_the_old_bound_now_lives(state):
 def test_an_expiry_is_recorded_against_the_lane_that_lost_it(state):
     """🔴 FR2. The whole point: the agent finds out. Before this, an expiry was recorded nowhere
     and the agent went on believing its reply had been delivered."""
-    hold(state, "atlas", "the answer he never heard", age_s=2000, clip="clip-77")
+    hold(state, "atlas", "the answer he never heard", age_s=config.LANE_HELD_MAX_AGE_S + 1, clip="clip-77")
     server._prune_lane_held(state, "atlas")
 
     notice = state.lane_expired.get("atlas") or []
@@ -98,7 +103,7 @@ def test_an_expiry_is_recorded_against_the_lane_that_lost_it(state):
 
 
 def test_the_notice_does_not_leak_to_another_lane(state):
-    hold(state, "atlas", "atlas lost this", age_s=2000)
+    hold(state, "atlas", "atlas lost this", age_s=config.LANE_HELD_MAX_AGE_S + 1)
     hold(state, "kepler", "kepler keeps this", age_s=5)
     server._prune_lane_held(state, "atlas")
     server._prune_lane_held(state, "kepler")
@@ -111,7 +116,7 @@ def test_the_notice_is_bounded_like_the_queue_it_replaces(state):
     """A lane nobody ever visits must not grow this without limit — it is held in memory for an
     agent that may never come back."""
     for i in range(config.UNDELIVERED_MAX + 5):
-        hold(state, "atlas", f"reply {i}", age_s=2000, clip=f"clip-{i}")
+        hold(state, "atlas", f"reply {i}", age_s=config.LANE_HELD_MAX_AGE_S + 1, clip=f"clip-{i}")
     server._prune_lane_held(state, "atlas")
 
     assert len(state.lane_expired["atlas"]) == config.UNDELIVERED_MAX
@@ -124,7 +129,7 @@ def test_the_text_is_read_from_the_header_not_the_hold_record(state):
     """The hold wraps `{header, pcm, at}`, so reading `text` off the top level yields an empty
     string — a notice that says something expired without saying what, which is barely better
     than the silence it replaces."""
-    hold(state, "atlas", "specific words", age_s=2000)
+    hold(state, "atlas", "specific words", age_s=config.LANE_HELD_MAX_AGE_S + 1)
     server._prune_lane_held(state, "atlas")
 
     assert state.lane_expired["atlas"][0]["text"] == "specific words"
@@ -138,3 +143,53 @@ def test_a_single_agent_session_never_populates_this(state):
 
     assert state.lane_expired == {}
     assert state.lane_held == {}
+
+
+# ============================================= and `next` now tells the agent to reissue (2026-09-09)
+
+
+def test_the_next_hint_leads_with_the_reissue_when_a_reply_expired():
+    """JJ, 2026-09-09: recording the notice was not enough — the `expired` field alone was read as
+    FYI and walked past (*"you haven't reissued it ... improve the next hint telling you to
+    reissue"*). So when a watch carries expired replies, `next` — the field the agent acts on — LEADS
+    with the restate, ahead of the wait it displaced, and still names the wait."""
+    from command_bridge import cli
+
+    result = {"next": "run `command-bridge watch --since 42`",
+              "expired": [{"text": "the answer he never heard", "clip": "c1", "waited_s": 1904.3}]}
+    cli._lead_next_with_reissue(result, "magnus")
+
+    assert result["next"].startswith("FIRST, REISSUE"), "the reissue must lead, not trail"
+    assert 'command-bridge say --lane magnus --now "…"' in result["next"], "with the runnable say"
+    assert "run `command-bridge watch --since 42`" in result["next"], "the displaced wait still follows"
+
+
+def test_the_reissue_hint_is_absent_when_nothing_expired():
+    """The common case pays nothing: no `expired`, `next` is untouched."""
+    from command_bridge import cli
+
+    result = {"next": "run `command-bridge watch --since 7`"}
+    cli._lead_next_with_reissue(result, "magnus")
+
+    assert result["next"] == "run `command-bridge watch --since 7`"
+
+
+def test_the_reissue_hint_counts_and_pluralises_and_names_the_lane():
+    from command_bridge import cli
+
+    result = {"next": "X", "expired": [{"text": "a"}, {"text": "b"}]}
+    cli._lead_next_with_reissue(result, "atlas")
+
+    assert "2 earlier replies" in result["next"]
+    assert "--lane atlas" in result["next"]
+
+
+def test_the_reissue_hint_drops_the_lane_flag_for_a_single_lane_session():
+    """A single-lane session has no `--lane`; the say command must still be runnable as written."""
+    from command_bridge import cli
+
+    result = {"next": "X", "expired": [{"text": "a"}]}
+    cli._lead_next_with_reissue(result, None)
+
+    assert 'command-bridge say --now "…"' in result["next"]
+    assert "--lane" not in result["next"]

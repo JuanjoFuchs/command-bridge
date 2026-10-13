@@ -7,7 +7,7 @@ right question before anyone built it: *"Is there any way you can build that wit
 in a different like in a preview HTML so that I can see it? … Or do you think does it make sense to
 invoke codex for image generation of this UI?"*
 
-**Preview HTML, and the reason is his own rule from the blog hero** — *"instead of using AI
+**Preview HTML, and the reason is the owner's rule for diagrams** — *"instead of using AI
 generation for the image, I want us to plot it or to diagram it using tooling."* A generated picture
 of a UI asserts a layout nobody measured: it cannot be checked at 412px, it has no 44px touch
 targets, and it cannot become the page. This can, on all three counts.

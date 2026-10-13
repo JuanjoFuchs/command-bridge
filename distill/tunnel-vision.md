@@ -128,11 +128,10 @@ lane; clearing the last lane deletes the canvas file outright.
   Detection order: matplotlib figure(s) as inline theme-inheriting SVG → most-likely DataFrame as a
   table (`result`→`df`→`out`→last defined) → stdout → traceback. Code shown syntax-highlighted.
 
-**12. `raise`** — ask for attention without taking the screen.
-- `--why <str>` — one line describing what you want to show
-- POSTs `/raise`. Increments a per-lane hand count; the page shows a ✋ chip. If already live, returns a
-  no-op note. (This is the only camera-adjacent thing that is *never* refused off-lane — it exists for
-  the background lane.)
+**12. `raise`** — REMOVED (2026-09-10). There is no `raise` command; the one-command design keeps only
+`say`. Asking for attention without taking the screen is already a side effect of a HELD off-lane `say`:
+a `say` to a lane that is not live is not refused — it is held for that lane and raises a hand with a
+count on the orb, which is the signal that brings him back. Use an off-lane `say` instead.
 
 **13. `switch`** — hand the floor to a lane (a hand-off, not a grab).
 - `to` (positional, required) — target lane

@@ -14,20 +14,28 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import heapq
 import json
 import os
+import pickle
 import signal
 import threading
 import time
 import wave
+import weakref
 from typing import Any
 
 import numpy as np
 from aiohttp import WSMsgType, web
 
 from . import asr as asr_mod
-from . import config, cues, security, speech, store, timing, tts, turndetect, voiceprint
+from . import colors as colors_mod
+from . import config, cues, pairing, security, speech, store, timing, tts, turndetect, voiceprint
 from . import lanes as lanes_mod
+from . import guest
+from . import liaison as liaison_mod
+from . import native as native_mod
+from . import notices
 from .wake import WakeGate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -37,6 +45,29 @@ This used to resolve to the parent of the package — correct in a checkout, and
 wheel it points at `site-packages/web`, which does not exist. The failure would have been the
 entire user interface returning 500 while every test on a developer's machine passed, because a
 checkout always has the directory in both places."""
+
+
+class _Pieces:
+    """One turn's pieces, transcribed at his pauses while he is still talking.
+
+    Parakeet is offline: a whole-turn decode costs ~0.1 s per second of speech and all of it lands
+    AFTER he stops (2026-10-06: 11-20 s on minute-long turns). Committing a piece at each pause
+    leaves only the tail for after he stops. Indices are in the segmenter's buffer samples, valid
+    only while its `utterance_id` equals `base`."""
+
+    def __init__(self, base: int | None = None) -> None:
+        self.base = base
+        self.upto: int | None = None
+        """Buffer index the committed pieces cover up to; None until the first piece."""
+        self.texts: list[str] = []
+        self.task: asyncio.Task | None = None
+        self.failed = False
+        """A piece raised: the turn falls back to one whole decode rather than lose words."""
+        self.cut = 0
+        """The segmenter's front trim for the finished utterance, set at the close."""
+
+    def usable(self, utterance_id: int) -> bool:
+        return self.base == utterance_id and self.upto is not None and not self.failed
 
 
 class TunnelState:
@@ -59,6 +90,14 @@ class TunnelState:
         except OSError:
             self.baseline_turn_id = -1
         self.clients: set[web.WebSocketResponse] = set()
+        # The pages that said in their `hello` they can play a STREAMED clip (2026-10-07). Weak, so
+        # a closed socket drops out on its own without a second cleanup path to keep in step.
+        self.stream_clients: weakref.WeakSet = weakref.WeakSet()
+        # SPEC 044: the apps that declared the primitive protocol in their `hello`, each with what it
+        # last reported. Only these get `native` directives; a browser or an older app never does.
+        self.native_clients: dict[Any, native_mod.NativeClient] = {}
+        # His output pick on the app's caret, kept in the session dir so a restart keeps it.
+        self.native_pick: int | None = native_mod.load_pick(config.session_dir())
         self.wake = WakeGate(enabled=gate_enabled)
         self.lanes = lanes_mod.LaneRegistry(lanes_mod.lane_name_for_wake(config.wake_name()))
         """Who is in the meeting, and who is being talked to (spec 012 FR1).
@@ -74,12 +113,28 @@ class TunnelState:
         # ⚠ **The DEFAULT is not restored, only the guests.** `--wake` is what he typed on THIS
         # start; a persisted default silently overriding it would make the flag a suggestion. A
         # name that is already the default is skipped rather than re-added.
-        for _name in store.read_lanes(session):
+        _persisted = store.read_lanes(session)
+        for _name in _persisted:
             if _name != self.lanes.default:
                 try:
                     self.lanes.add(_name)
                 except lanes_mod.LaneError:
                     pass       # a stale or now-invalid name must not stop the server starting
+        # AND THEIR ORDER (spec 029 FR3). The default is always re-created first, so without this a
+        # `lane order` that moved it was undone by every restart.
+        try:
+            self.lanes.reorder([n for n in _persisted if n in self.lanes.names])
+        except lanes_mod.LaneError:
+            pass
+        # Hues assigned to lanes the roster does not colour, by name (spec 029 FR5).
+        self.lane_colors_assigned: dict[str, str] = store.read_lane_colors(session)
+        # AND THE LANE HE WAS ON (JJ, 2026-09-30: *"I want the lane that I am on to be remembered across
+        # restarts. So that this way you can just restart."*). Every restart used to drop him on the
+        # default lane, so his next sentence to dexter was delivered to magnus — twice that afternoon.
+        # Restored only if that lane is still in the room.
+        _live = store.read_live_lane(session)
+        if _live and _live in self.lanes.names:
+            self.lanes.current = _live
         self.recognizer = asr_mod.Recognizer()
         # The one place the model meets the pure segmenter. Injected rather than imported
         # so UtteranceBuffer stays testable without an 8 MB download — see its docstring.
@@ -106,6 +161,16 @@ class TunnelState:
 
         Keyed by subsystem so an unrelated failure can never hide the one you are chasing."""
         self.client_sr: int = config.TARGET_SR
+        """The rate from the most recent `hello`, kept for `status`. NOT used to resample: see
+        `client_srs`."""
+        self.client_srs: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        """Each socket's own announced rate (spec 030 review). One session-wide rate let whichever
+        client said `hello` last decide how EVERY client's frames were resampled — the Android app's
+        16 kHz audio reached ASR at a third of its speed the moment a 48 kHz canvas page opened."""
+        self.pairing = pairing.Pairing(session)
+        """Live one-time pairing codes and the bad-code lockout (spec 031); devices live on disk."""
+        self.client_mic: dict = {}
+        """The page mic's actual processing settings, from its `hello` (see handle of "hello")."""
         self.consumed_cursor: int = store.read_consumed_cursor(session)
         """Seeded from disk, not from -1: the turn log survives a restart, so the read position
         must too, or a bounced server reports the whole log as pending (the 307-of-306 bug,
@@ -177,6 +242,10 @@ class TunnelState:
         """
         self.last_audio_at: float = 0.0
         """`time.monotonic()` of the most recent audio frame. 0 means none ever arrived."""
+        self.last_speech_at: float = 0.0
+        """`time.monotonic()` of the last frame the segmenter called speech (or an open utterance).
+        0 means never. The pre-speech grace measures his silence from here instead of starting a
+        fresh 0.8 s wait every time."""
         self.muted: bool = False
         """Whether the client is holding its own microphone shut. Published for `status` only —
         the mute is enforced ON THE CLIENT by not sending frames, because a mute that still
@@ -185,6 +254,11 @@ class TunnelState:
         **Mute is one direction only.** He cannot be heard; he can still hear. That is the whole
         difference from `channel_open` below, and separating them is what lets him silence his
         own microphone in a meeting without also losing the reply he is waiting for."""
+        self.guest_lanes: set[str] = guest.load(session)
+        """Spec 042: lanes where a voice that is not his is still addressed (tagged `guest`)."""
+        self.liaisons: dict[str, list[str]] = liaison_mod.load(session)
+        """Specs 037/038: each liaison lane → the workers it manages explicitly; empty = mode off.
+        Persisted. See `liaison.py` for the rules."""
         self.channel_open: bool = False
         """Is the conversation live AT ALL — the orb.
 
@@ -209,13 +283,13 @@ class TunnelState:
         """Is an agent sitting in `watch` RIGHT NOW.
 
         Unambiguous on purpose. `agent_state == "idle"` almost means this, and cannot be used for
-        it: idle is also what a freshly started server reports before any agent has ever called.
-        A watchdog that reads idle as "someone is listening" would stay silent on exactly the
-        session where nobody ever arrived.
+        it: idle is also what a freshly started server reports before any agent has ever called, so
+        a caller that read idle as "someone is listening" would stay silent on exactly the session
+        where nobody ever arrived.
 
-        Needed because a watch run DETACHED leaves the harness idle, which is what triggers the
-        watchdog — so without this the net fires every minute against a watch that is already
-        running, and each firing starts another one.
+        It is what the concurrent-watch refusal reads: a watch run DETACHED leaves the harness
+        idle, so without a positive "an agent is in `watch`" signal the tool cannot tell a detached
+        listener from an absent one, and would let a second watch start and race the first.
 
         **Session-wide, and it stays that way**: it means literally "some agent is waiting here".
         With lanes that is no longer the question a second agent needs answered, so it is joined
@@ -253,8 +327,10 @@ class TunnelState:
         about how long Claude has kept him waiting, and a session-wide stamp would report the most
         responsive lane's clock to every other one."""
 
-        self.lane_consumed: dict[str, int] = {}
-        """How far EACH lane has actually read (spec 015 FR1).
+        self.lane_consumed: dict[str, int] = store.read_lane_consumed(session)
+        """How far EACH lane has actually read (spec 015 FR1). Seeded from disk like
+        `consumed_cursor`, so a restart does not bring every lane back having "read nothing" and
+        light up every old turn as unread on the cards (2026-09-30).
 
         🔴 **`consumed_cursor` is one integer for the whole session, and with N lanes that is a
         lie.** Whichever lane's `watch` reported last overwrites it, so a turn addressed to Claude
@@ -303,6 +379,35 @@ class TunnelState:
         # agent that wrote them the next time it opens a watch. Cleared on delivery, so each
         # expiry is reported exactly once and a re-armed watch does not keep re-announcing it.
         self.lane_expired: dict[str, list] = {}
+        # 🔴 THE OTHER HALF OF `lane_expired`: clips the PAGE CONFIRMED it played, per lane, handed to
+        # the agent that wrote them on its next watch-open (JJ, 2026-09-29: *"the client should have
+        # a way of telling you that, right?"*). The page has always sent a `played` receipt; the
+        # server used it only to free its copy, so an agent could never tell a clip he HEARD from one
+        # still held — which is what sent agents re-saying clips he had already heard. Bounded by the
+        # same count cap, cleared on delivery.
+        self.lane_played: dict[str, list] = {}
+        # THE IDLE ANCHOR (spec 024). Each lane's newest played receipt — {clip, played_at} — kept
+        # beside `lane_played` because that list is cleared when a watch takes it, while the anchor
+        # must survive every re-arm: `watch --idle` measures his silence from it. A cut clip counts
+        # (KD6): its receipt marks the moment the sound stopped. In memory only, so a restart has no
+        # anchor until a clip plays again, and therefore cannot produce a spurious idle (NFR3).
+        self.lane_last_played: dict[str, dict] = {}
+        # The anchor clip whose silence was already reported to that lane (spec 024 FR4): one idle
+        # wake per silence, shared by every watch on the lane so a re-arm cannot report it twice.
+        self.lane_idle_fired: dict[str, str] = {}
+        # clip id -> the text spoken, so a `played` receipt (which carries only the id) can report
+        # WHAT was heard. Popped on the receipt.
+        self.clip_text: dict[str, str] = {}
+        # The echo guard's memory (echo.py): recent clips as {id, text, sent_at, played_at}. Kept
+        # apart from `clip_text`, which is popped on the receipt — the echo can still be arriving
+        # after it.
+        self.recent_spoken: list[dict] = []
+        # lane -> the id of the ONE watch that owns it (the newest). See handle_watching.
+        self.lane_watch_ids: dict[str, str] = {}
+        # Clips between `say` and being stored (synthesizing, or holding for his speech), for the
+        # graceful-shutdown drain; and the moment the page confirmed the shutdown notice played.
+        self.synth_inflight: int = 0
+        self.shutdown_notice_played: asyncio.Event | None = None
         # 🔴 SENT TO THE CLIENT, NOT YET CONFIRMED PLAYED (spec 022). The flush used to POP from
         # `lane_held` and push straight to the browser — which walked the clips out of the one
         # store barge-in is documented never to touch, and into the playback queue it empties
@@ -456,6 +561,17 @@ class TunnelState:
         self.partial_busy: bool = False
         self.last_partial_at: float = 0.0
         self.partial_text: str = ""
+        self.pieces = _Pieces()
+        self.lane_briefs: dict[str, list[dict[str, Any]]] = {}
+        """Context posted for a lane's VOICE agent by the agent thinking behind it (2026-10-06).
+
+        JJ's split: a fast agent holds the conversation and a slow one does the thinking, feeding
+        it context. Claude Code delivers a message to a busy agent only between tool calls, and a
+        voice agent is always inside a blocking `watch` — so the context sat queued until he spoke.
+        `listen` is `watch` that ALSO returns when context lands here; `brief` posts it. Taken
+        (and cleared) on delivery, like `expired` and `played`. In memory: a restart drops it."""
+        """The in-flight turn's pieces, transcribed at his pauses while he is still talking. See
+        `_maybe_commit`."""
         # Failsafe capture: everything the server actually received, at 16 kHz. Borrowed from
         # a sibling project, where it repeatedly turned "the ASR is bad" into a question you can
         # answer by listening — is the audio quiet, clipped, or fine and the model just wrong?
@@ -525,7 +641,7 @@ class TunnelState:
         """How many turns he has said that nobody has read — from the LOG, never from a counter.
 
         This was `turns_logged - 1 - consumed_cursor`, and `turns_logged` is the field this file's
-        own snapshot calls its impostor and the watchdog prompt says never to use: it counts what
+        own snapshot calls its impostor and no cursor should ever resume from: it counts what
         THIS process has written since it started, so on any server that has been restarted it is
         far below the real last id. Live on 2026-08-14, mid-conversation: `last_turn_id` 209,
         `turns_logged` 133, so the arithmetic clamped to zero and `pending_turns` read 0 no matter
@@ -609,6 +725,8 @@ class TunnelState:
             "speech_active": False if stale else bool(self.buffer.speech_active),
             "user_speaking": False if stale else bool(self.user_speaking),
             "speech_pending": max(0, int(self.speech_pending)),
+            # An utterance not yet closed, even through a pause the turn model is waiting out.
+            "utterance_open": False if stale else bool(getattr(self.buffer, "utterance_open", False)),
         }
 
     def talking(self, *, amplitude: bool = True) -> bool:
@@ -630,7 +748,7 @@ class TunnelState:
         earliest warning and a moment's over-hold costs nothing.
         """
         s = self.speaking_now()
-        speech = s["speech_active"] or s["speech_pending"]
+        speech = s["speech_active"] or s["speech_pending"] or s.get("utterance_open")
         return bool(speech or s["user_speaking"]) if amplitude else bool(speech)
 
     def capture(self, samples) -> None:
@@ -682,6 +800,27 @@ class TunnelState:
             return _dt.datetime.fromisoformat(raw).timestamp()
         except ValueError:
             return None
+
+    def lane_split_for(self, lane: str | None) -> dict[str, int]:
+        """One lane's held-clip count split into `intent` vs `regular` (2026-09-22 idea #2).
+
+        A single number ("3 waiting") can't tell him whether switching lanes is worth it: an
+        intent clip is a supersedable *"on it…"* promise (spec 012) that the real reply will
+        replace, so a lane whose whole backlog is intent is one he does NOT need to interrupt his
+        current lane for. Splitting it lets the orb badge de-emphasise intent and make the regular
+        count the thing that pulls his attention.
+
+        `intent` is carried on each held clip's `header` (set where the clip is enqueued, and the
+        same flag the supersede sweep reads).
+        """
+        clips = self.lane_held.get(str(lane), [])
+        intent = sum(1 for c in clips if (c.get("header") or {}).get("intent"))
+        return {"intent": intent, "regular": len(clips) - intent}
+
+    def lane_waiting_split(self) -> dict[str, dict[str, int]]:
+        """Every held lane's `intent`/`regular` split — sparse, absent means nothing held."""
+        return {name: self.lane_split_for(name)
+                for name, clips in self.lane_held.items() if clips}
 
     def lane_unanswered(self) -> dict[str, float]:
         """Per lane, how long he has been waiting for that lane to say something (spec 013 FR8).
@@ -767,8 +906,8 @@ class TunnelState:
             # THE CURSOR TO WATCH FROM. Read from the LOG, not from this process.
             #
             # `turns_logged` below counts turns THIS SERVER has written since it started, and a
-            # watchdog took it for the cursor: 26 against a real last id of 367, which would have
-            # replayed three hundred old turns as if they had just been spoken. The two are only
+            # re-arming caller once took it for the cursor: 26 against a real last id of 367, which
+            # would have replayed three hundred old turns as if they had just been spoken. The two are only
             # equal on a server that has never restarted, which is the case every author tests in
             # and no long-running session is ever in.
             #
@@ -807,13 +946,31 @@ class TunnelState:
             "muted": self.muted,
             "capturing": self.capturing,
             "channel_open": self.channel_open,
+            # Spec 044: each connected app driven by the primitive protocol — its version, the ops it
+            # supports and what it last reported (mic, call, route, in front or not).
+            "native_clients": [c.as_status() for c in self.native_clients.values()],
+            "native_route_pick": self.native_pick,
+            # Specs 037/038: who speaks for the fleet. `liaison` is the first (back-compat); `liaisons`
+            # the whole map, liaison → its explicit workers ({} when every lane speaks for itself).
+            "liaison": next(iter(self.liaisons), None),
+            "liaisons": {k: list(v) for k, v in self.liaisons.items()},
+            # Spec 042: lanes where someone else's voice is addressed too (tagged speaker: guest).
+            "guest_lanes": sorted(self.guest_lanes),
             "watch_open": self.watch_open,
             "watching_lanes": sorted(self.watching_lanes),
+            "lane_watch_ids": dict(self.lane_watch_ids),
+            # Context posted for a lane's voice agent and not yet collected (`brief` / `listen`).
+            "lane_briefs_pending": {name: len(b) for name, b in self.lane_briefs.items() if b},
             "lane_waiting": {name: len(clips) for name, clips in self.lane_held.items() if clips},
+            # The same backlog split intent vs regular (2026-09-22 idea #2), alongside the total so
+            # every existing count-consumer is untouched; the orb badge reads this to de-emphasise
+            # intent and make the regular count the thing that pulls his attention.
+            "lane_waiting_split": self.lane_waiting_split(),
             "lane_states": dict(self.lane_states),
             "lane_unanswered": self.lane_unanswered(),
             "lane_read_through": dict(self.lane_read_through),
             "lane_consumed": dict(self.lane_consumed),
+            "client_mic": dict(self.client_mic),
             "ambiguous": self.ambiguous,
             "last_ambiguous": list(self.last_ambiguous),
             "agent_holds_turns": self.agent_holds_turns,
@@ -822,6 +979,9 @@ class TunnelState:
             # this is the fan-out a lane reads to decide whether ITS next wait is a pre-reply
             # check. Published rather than inferred — the CLI cannot see the other lanes.
             "lane_holds_turns": dict(self.lane_holds_turns),
+            # spec 024: the idle anchor per lane, and which anchor's silence was already reported.
+            "lane_last_played": {k: dict(v) for k, v in self.lane_last_played.items()},
+            "lane_idle_fired": dict(self.lane_idle_fired),
             "barges": self.barges,
             "last_barge_score": self.last_barge_score,
             "turn_detection": (self.turn.describe() if self.turn else {"enabled": False}),
@@ -842,8 +1002,10 @@ class TunnelState:
             "speech_speed": round(self.speech_speed, 2),
             "sentence_pause": self.sentence_pause,
             "asr_model": self.recognizer.model_name,
-            "log": store.log_path(self.session),
-            "capture_wav": os.path.join(config.session_dir(), f"{self.session}.wav"),
+            # `log` and `capture_wav` (the session jsonl + failsafe wav paths) were dropped here
+            # 2026-09-15: informational-only — the agent never opens them, and `command-bridge
+            # doctor` carries the paths when they are actually needed. (Server-side; landed on the
+            # restart that followed.)
         }
 
 
@@ -860,14 +1022,44 @@ def _request_token(request: web.Request) -> str | None:
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         return auth[7:]
+    # THE LAN LISTENER'S COOKIE (spec 034 FR2). Only the LAN listener sets it, after a `?token=`
+    # request, so a browser page opened over the home Wi-Fi still authenticates its own sub-requests.
+    if _on_lan(request):
+        return (getattr(request, "cookies", None) or {}).get(LAN_TOKEN_COOKIE) or None
     return None
 
 
+LAN_TOKEN_COOKIE = "cb_token"
+
+
+def _on_lan(request: web.Request) -> bool:
+    """Did this request arrive on the home-Wi-Fi listener (spec 034)? Decided by the LOCAL address
+    the socket was accepted on, which a client cannot forge, not by anything in the request."""
+    lan = request.app.get("lan") if hasattr(request, "app") else None
+    if not lan:
+        return False
+    transport = getattr(request, "transport", None)
+    sock = transport.get_extra_info("sockname") if transport is not None else None
+    return bool(sock) and str(sock[0]) == lan["ip"]
+
+
 def _check(request: web.Request, state: TunnelState) -> tuple[bool, str]:
-    gate = security.Gate(state.token)
+    # On the LAN listener the allowlist is the Wi-Fi subnet and nothing else (spec 034 FR2); the
+    # loopback listener keeps the configured allowlist exactly as before.
+    gate = (security.Gate(state.token, cidrs=(request.app["lan"]["subnet"],)) if _on_lan(request)
+            else security.Gate(state.token))
+    token = _request_token(request)
+    # A PAIRED DEVICE KEY STANDS IN FOR THE TOKEN (spec 031 FR4). The phone app cannot do the
+    # tunnel's browser sign-in, so it carries its own credential; the peer allowlist still applies.
+    # The app's WebView carries the same key as a COOKIE (spec 032 FR3): a WebView cannot add a header
+    # to its page's sub-requests or its WebSocket, but it does send a cookie with every one of them.
+    device = (request.headers.get(pairing.DEVICE_HEADER)
+              or (getattr(request, "cookies", None) or {}).get(pairing.DEVICE_COOKIE))
+    if device and pairing.device_ok(state.session, device):
+        token = state.token
     return gate.check(
         _peer_ip(request),
-        _request_token(request),
+        token,
         request.headers.get("X-Forwarded-For"),
     )
 
@@ -962,6 +1154,7 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
     else:
         timing.stamp(state.session, "latch_kept_talking", held=state.utterance_lane, to=lane)
     state.lanes.current = lane
+    store.write_live_lane(state.session, lane)   # remembered across restarts (2026-09-30)
     # Spec 004 — the voice lane IS the canvas lane. This is the ONE place the live lane moves (the
     # wake gate, the tap, and an explicit switch all reach it), so driving the canvas here, in
     # process, is what lets it follow with no `/status` poll. `set_live` is a quick lock + fan-out
@@ -977,7 +1170,11 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
          # default lane, and thousands of turns predate lanes. Sent on every lane message rather
          # than only at handshake, so a page that connected late is never the one that gets it wrong.
          "default_lane": state.lanes.default,
-         "waiting": {name: len(clips) for name, clips in state.lane_held.items() if clips}},
+         # EVERY lane's colour by NAME (2026-10-01; spec 029 FR5: unrostered lanes too, assigned once).
+         "lane_colors": _lane_colors(state),
+         "lane_roles": config.lane_roles(),     # each agent's role, shown on its card (2026-10-05)
+         "waiting": {name: len(clips) for name, clips in state.lane_held.items() if clips},
+         "waiting_split": state.lane_waiting_split()},
     )
     # HIS ATTENTION IS BACK HERE, so what this lane said while he was away stops being an
     # interruption and becomes an answer. Best-effort: a failure to play a held clip must never
@@ -988,10 +1185,28 @@ async def _set_lane(state: TunnelState, lane: str, why: str = "wake") -> None:
         state.fail("transport", f"flush lane hold failed: {exc}")
 
 
+def _native_routes(state: TunnelState) -> dict[str, Any]:
+    """The output caret's picture (spec 044 FR5), from the first driven app that reported outputs."""
+    client = next((c for c in state.native_clients.values() if c.devices), None)
+    return native_mod.routes_payload(client, state.native_pick)
+
+
+async def _broadcast_routes(state: TunnelState) -> None:
+    await _broadcast_json(state, _native_routes(state))
+
+
 async def _broadcast_json(state: TunnelState, payload: dict[str, Any]) -> None:
     dead = []
     for ws in list(state.clients):
         try:
+            # SPEC 044: a driven app gets its directives for this event first (a notification for
+            # a turn, the call released on a channel close). The policy is native_mod's; this is
+            # the one place every broadcast passes, so no event can be missed by a new sender.
+            client = state.native_clients.get(ws)
+            if client is not None:
+                for d in native_mod.on_broadcast(payload, client, channel_open=state.channel_open,
+                                                 picked=state.native_pick):
+                    await ws.send_json(d)
             await ws.send_json(payload)
         except Exception:
             dead.append(ws)
@@ -999,22 +1214,123 @@ async def _broadcast_json(state: TunnelState, payload: dict[str, Any]) -> None:
         state.clients.discard(ws)
 
 
-async def handle_index(request: web.Request) -> web.StreamResponse:
-    """The page itself is not secret — the token is. Serving it unauthenticated keeps the
-    phone flow to a single URL, and it can do nothing without a valid token on the socket."""
-    path = os.path.join(WEB_DIR, "index.html")
-    if not os.path.exists(path):
-        return web.Response(status=500, text="command_bridge/web/index.html missing")
+# --- objective fleet activity (spec 021) -------------------------------------
+# The page's live state rides THIS socket, so the objective per-lane activity (files read/edited/
+# written, git status, last commit — derived from git + the harness session logs, never self-reported)
+# rides it too: on the `ready` frame for an immediate render, and on a paced `lane_activity` broadcast
+# to keep the fleet home view live. Derivation is git + file IO, so it always runs in a thread.
+
+FLEET_REFRESH_S = 2.0
+"""How often the server recomputes and broadcasts objective per-lane activity. Paced, not instant:
+the derivation tails the session logs and shells git, and the fleet view reads as live at this
+cadence. `fleet.cached_board`'s 1s TTL collapses a burst of readers (the ready frame + this loop)."""
+
+
+def _canvas_frame_lanes() -> set:
+    """Which lanes currently hold at least one canvas frame — the 'has something to point at' gate for
+    the on-demand canvas (spec 021 FR6). Read from the canvas store's per-lane frame map; best-effort
+    (never fail the activity payload over it)."""
+    try:
+        from .canvas import server as canvas_server
+        return {ln for ln, frames in getattr(canvas_server, "_lanes", {}).items() if frames}
+    except Exception:
+        return set()
+
+
+def _fleet_activity() -> dict:
+    """Objective per-lane activity shaped for the page: {server_epoch, lanes:{name: activity}}.
+    Each lane also carries `has_frame` — whether it has a pointable canvas frame — so a card can mark
+    an openable canvas (FR6). SYNCHRONOUS (git + file IO) — always call it through an executor."""
+    from . import fleet
+    board = fleet.cached_board()
+    framed = _canvas_frame_lanes()
+    lanes = {}
+    for row in board.get("lanes", []):
+        name = row.get("lane")
+        if not name:
+            continue
+        act = row.get("activity") or {}
+        # THE FRESHEST ROW WINS, not the last one (JJ, 2026-09-28: "other agents are also editing
+        # files, but I don't see them drawn … I only see your edits"). The registry keeps one file per
+        # PANE, and a lane relaunched into a new pane leaves its old pane files behind — 26 rows for 6
+        # lanes. Plain last-write-wins let a dead duplicate (an old session, zero files in the window)
+        # overwrite the live row: kepler's 29 edited files came through as none.
+        prev = lanes.get(name)
+        if prev is not None and (prev.get("last_activity_epoch") or 0) >= (act.get("last_activity_epoch") or 0):
+            continue
+        lanes[name] = {**act, "has_frame": name in framed}
+    # Repos he asked to hide (spec 045) never reach the page: read from disk on every call, so a
+    # `fleet hide` lands on the next broadcast (FLEET_REFRESH_S) with no restart and no refresh.
+    lanes = fleet.filter_hidden(lanes, fleet.load_hidden())
+    return {"server_epoch": board.get("server_epoch"), "lanes": lanes}
+
+
+async def _broadcast_fleet_activity(app: web.Application) -> None:
+    """Push the objective activity map to every client on a fixed cadence, so the fleet home view
+    updates without the page polling. A failure logs and the loop continues rather than taking the
+    server down; it stays quiet while nobody is connected."""
+    state = app["state"]
+    loop = asyncio.get_running_loop()
+    while True:
+        await asyncio.sleep(FLEET_REFRESH_S)
+        if not state.clients:
+            continue
+        try:
+            payload = await loop.run_in_executor(None, _fleet_activity)
+            await _broadcast_json(state, {"type": "lane_activity", **payload})
+        except Exception as exc:
+            state.fail("fleet", f"activity broadcast failed: {exc}")
+
+
+async def _start_fleet_broadcaster(app: web.Application) -> None:
+    app["fleet_task"] = asyncio.create_task(_broadcast_fleet_activity(app))
+
+
+async def _stop_fleet_broadcaster(app: web.Application) -> None:
+    task = app.get("fleet_task")
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+def _serve_page(name: str) -> web.Response:
+    """One page document, stamped with its own signature (spec 023) so a pushed `reload` can tell
+    the open page whether ITS file changed.
+
+    The page itself is not secret — the token is. Serving it unauthenticated keeps the phone flow
+    to a single URL, and it can do nothing without a valid token on the socket."""
+    from .canvas import aio as canvas_aio
+    stamped = canvas_aio.stamp_page(name)
+    if stamped is None:
+        return web.Response(status=500, text=f"command_bridge/web/{name} missing")
     # Never cache the client. The page is edited constantly during development and a stale copy
     # is the worst kind of bug to chase: the server has the fix, the user reloads, and nothing
     # changes — so you conclude the fix did not work and go break something else.
-    return web.FileResponse(
-        path,
+    return web.Response(
+        text=stamped[0],
+        content_type="text/html",
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate",
             "Pragma": "no-cache",
         },
     )
+
+
+async def handle_index(request: web.Request) -> web.Response:
+    """`/` is the AUDIO SHELL (spec 023): the microphone, playback and the voice socket, with the
+    whole visible UI loaded inside it as a frame — so a UI change reloads the frame and never the
+    audio."""
+    return _serve_page("shell.html")
+
+
+async def handle_ui(request: web.Request) -> web.Response:
+    """`/ui` is everything he sees (spec 023), loaded by the shell as a same-origin frame. Opened on
+    its own it renders but holds no audio and no socket — which is what the mock and the
+    single-page harnesses want."""
+    return _serve_page("index.html")
 
 
 async def handle_meeting(request: web.Request) -> web.Response:
@@ -1031,6 +1347,196 @@ async def handle_meeting(request: web.Request) -> web.Response:
     )
 
 
+def _public_base(request: web.Request, offered: Any) -> str:
+    """The https origin the page was opened on: the one the page offers if it is https, else what the
+    tunnel forwarded (ngrok sets X-Forwarded-Proto/Host), else this request's own origin."""
+    if isinstance(offered, str) and offered.startswith("https://"):
+        return offered.rstrip("/")
+    proto = request.headers.get("X-Forwarded-Proto") or request.scheme
+    host = request.headers.get("X-Forwarded-Host") or request.host
+    return f"{proto}://{host}"
+
+
+async def handle_guest(request: web.Request) -> web.Response:
+    """`POST /guest {lane, on}` — guest mode on or off for one lane (spec 042). Token-gated."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    lane = (body or {}).get("lane")
+    if not isinstance(lane, str) or not state.lanes.knows(lane):
+        return web.json_response({"error": f"no lane named {lane!r}", "code": "unknown_lane",
+                                  "remedy": "command-bridge guest on --lane <lane>",
+                                  "lanes": list(state.lanes.names)}, status=400)
+    if (body or {}).get("on"):
+        state.guest_lanes.add(lane)
+    else:
+        state.guest_lanes.discard(lane)
+    guest.save(state.session, state.guest_lanes)
+    timing.stamp(state.session, "guest", lanes=sorted(state.guest_lanes))
+    return web.json_response({"guest_lanes": sorted(state.guest_lanes)})
+
+
+async def handle_liaison(request: web.Request) -> web.Response:
+    """`POST /liaison {on, liaisons: {lead: [workers]}}` (or `{on, lane}` for one) — turn liaison mode
+    on with that map, or off (specs 037/038). Token-gated."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body or {}
+    if body.get("on"):
+        raw = body.get("liaisons")
+        if raw is None and isinstance(body.get("lane"), str):
+            raw = {body["lane"]: []}
+        if not isinstance(raw, dict) or not raw:
+            return web.json_response({"error": "liaison on needs at least one liaison lane",
+                                      "code": "bad_request",
+                                      "remedy": "command-bridge liaison on magnus phoenix=atlas,vega"},
+                                     status=400)
+        try:
+            new = liaison_mod.parse([k + ("=" + ",".join(v) if v else "") for k, v in raw.items()])
+        except (ValueError, TypeError) as exc:
+            return web.json_response({"error": str(exc), "code": "bad_request",
+                                      "remedy": "command-bridge liaison on magnus phoenix=atlas,vega"},
+                                     status=400)
+        unknown = [n for lead, ws in new.items() for n in [lead, *ws] if not state.lanes.knows(n)]
+        if unknown:
+            return web.json_response({"error": f"no lane named {unknown[0]!r}", "code": "unknown_lane",
+                                      "remedy": "command-bridge lane list",
+                                      "lanes": list(state.lanes.names)}, status=400)
+        state.liaisons = new
+    else:
+        state.liaisons = {}
+    liaison_mod.save(state.session, state.liaisons)
+    from .canvas import server as _canvas
+    _canvas.set_liaisons(state.liaisons)
+    await _broadcast_json(state, {"type": "liaison", "liaisons": state.liaisons})
+    timing.stamp(state.session, "liaison", liaisons=list(state.liaisons))
+    return web.json_response({
+        "liaison": next(iter(state.liaisons), None),
+        "liaisons": state.liaisons,
+        "groups": liaison_mod.groups(state.liaisons, list(state.lanes.names)),
+        "camera": ("only a liaison's explicit point --look moves it; edits never do" if state.liaisons
+                   else "edits on the live lane auto-focus again (spec 022)")})
+
+
+_NOTICE_WAKE: dict[str, asyncio.Event] = {}
+"""Per session, set when a notice is added or resolved, so a waiting `/notify/wait` returns at once."""
+
+NOTICE_WAIT_MAX_S = 50
+"""How long one long poll may wait. Under typical proxy and carrier idle timeouts (60 s), so the phone's
+request ends cleanly with an empty answer instead of being cut."""
+
+
+def _notices_changed(state: TunnelState) -> None:
+    ev = _NOTICE_WAKE.pop(state.session, None)
+    if ev is not None:
+        ev.set()
+
+
+async def handle_notify_wait(request: web.Request) -> web.Response:
+    """`GET /notify/wait?since=<seq>&wait=<s>` — the phone's light connection while the orb is off
+    (spec 036). Returns every notice added or resolved after `since`, oldest change first, as soon as
+    there is one, or an empty list after `wait` seconds. Token or device key, like everything."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        since = max(0, int(request.query.get("since", "0")))
+        wait = max(0.0, min(float(request.query.get("wait", "0")), NOTICE_WAIT_MAX_S))
+    except ValueError:
+        return web.json_response({"error": "since and wait must be numbers", "code": "bad_query",
+                                  "remedy": "GET /notify/wait?since=0&wait=50"}, status=400)
+    # The event is taken BEFORE reading, so a notice landing between the read and the wait still
+    # wakes this request instead of waiting out the full poll.
+    ev = _NOTICE_WAKE.setdefault(state.session, asyncio.Event())
+    items, latest = notices.since(state.session, since)
+    if not items and wait > 0:
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=wait)
+        except asyncio.TimeoutError:
+            pass
+        items, latest = notices.since(state.session, since)
+    colours = _lane_colors(state)
+    return web.json_response({"items": [{**i, "color": colours.get(i.get("lane", ""))} for i in items],
+                              "seq": latest})
+
+
+async def handle_pair_page(request: web.Request) -> web.Response:
+    """`GET /pair` — the pairing page (spec 035): its own link, not a button on the bridge. It mints
+    with its own `?token=`, so it can do nothing without one."""
+    return _serve_page("pair.html")
+
+
+async def handle_pair_new(request: web.Request) -> web.Response:
+    """`POST /pair/new` — mint a one-time pairing code for the phone app (spec 031 FR1). Token-gated:
+    only a page that already holds the token (and is behind the tunnel's sign-in) can mint one."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    code, ttl = state.pairing.mint()
+    base = _public_base(request, (body or {}).get("base"))
+    # THE HOME ADDRESS TOO (spec 034 FR4), so the app learns it without his typing anything. A page
+    # opened over the LAN has no https origin, so then the link carries the LAN address alone.
+    lan = (request.app.get("lan") or {}).get("url")
+    tunnel = base if base.startswith("https://") else None
+    return web.json_response({"code": code, "expires_in": ttl, "base": tunnel, "lan": lan,
+                              **pairing.pair_links(tunnel, code, lan)})
+
+
+async def handle_pair_exchange(request: web.Request) -> web.Response:
+    """`POST /pair/exchange` — the app trades a one-time code for its device key (spec 031 FR2). No
+    token: the code IS the credential, consumed on first use; bad codes count toward a lockout."""
+    state: TunnelState = request.app["state"]
+    cidrs = (request.app["lan"]["subnet"],) if _on_lan(request) else None
+    if not security.peer_allowed(_peer_ip(request), request.headers.get("X-Forwarded-For"), cidrs=cidrs):
+        return web.json_response({"error": "peer not in allowlist"}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    status, out = state.pairing.exchange(str((body or {}).get("code") or ""),
+                                         str((body or {}).get("name") or ""))
+    return web.json_response(out, status=status)
+
+
+async def handle_android_apk(request: web.Request) -> web.StreamResponse:
+    """`GET /android/command-bridge.apk` — the companion app (spec 030 FR9), token-gated like
+    `/status`, so he installs it on his phone from the same link he already opens. A missing build is
+    a 404 that names the command which produces it, not a bare not-found."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    path = config.ANDROID_APK_PATH
+    if not os.path.isfile(path):
+        return web.json_response({
+            "error": "the Android app has not been built",
+            "code": "apk_not_built",
+            "remedy": "cd android && gradlew assembleDebug (JDK 17 + Android SDK; see specs/030)",
+        }, status=404)
+    return web.FileResponse(path, headers={
+        "Content-Type": "application/vnd.android.package-archive",
+        "Content-Disposition": 'attachment; filename="command-bridge.apk"',
+        "Cache-Control": "no-store",
+    })
+
+
 async def handle_health(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
@@ -1041,6 +1547,62 @@ async def handle_status(request: web.Request) -> web.Response:
     if not ok:
         return web.json_response({"error": reason}, status=403)
     return web.json_response(state.snapshot())
+
+
+# --- held clips survive a graceful restart (JJ, 2026-09-24; backlog 6277) ------------------------
+# Held per-lane clips (an agent's off-lane replies, raised as hands) live in `state.lane_held`, in
+# MEMORY — so a restart used to wipe them and JJ lost his agents' pending reports ("there are no
+# pending turns on any of the lanes"). On a graceful RESTART we pickle them to a sibling of the
+# runtime file and reload them on the next startup, so the hands stay raised across the restart. A
+# plain stop does not persist (the session is ending). The window is short — a stale file older than
+# this is ignored and cleaned up, so clips from a crash days ago never resurrect.
+_HELD_STALE_S = 120.0
+
+
+def _held_path(session: str) -> str:
+    return os.path.join(config.session_dir(), f"{session}.held.pkl")
+
+
+def _persist_held(state: "TunnelState") -> None:
+    """Write the held clips to disk so the next server can raise the same hands (best-effort).
+
+    The UNDELIVERED queue goes with them (JJ, 2026-09-29: held clips should *"survive restarts or
+    toggles"*): a clip said while nobody was connected is as much his as one held for another lane,
+    and a restart used to drop it silently."""
+    if not state.lane_held and not state.undelivered:
+        return
+    try:
+        os.makedirs(config.session_dir(), exist_ok=True)
+        with open(_held_path(state.session), "wb") as fh:
+            pickle.dump({"saved_at": time.time(), "lane_held": state.lane_held,
+                         "undelivered": state.undelivered}, fh)
+    except Exception as exc:
+        state.fail("transport", f"persist held clips failed: {exc}")
+
+
+async def _restore_held_on_startup(app: web.Application) -> None:
+    """Reload held clips a graceful restart left behind, then delete the file (best-effort, inert in
+    tests — no file, no-op). Only clips newer than the restart window are restored; anything older is
+    a stale leftover and is discarded."""
+    state: "TunnelState" = app["state"]
+    path = _held_path(state.session)
+    try:
+        if not os.path.exists(path):
+            return
+        with open(path, "rb") as fh:
+            data = pickle.load(fh)
+        os.remove(path)
+        if not isinstance(data, dict) or (time.time() - float(data.get("saved_at") or 0)) > _HELD_STALE_S:
+            return
+        held = data.get("lane_held")
+        if isinstance(held, dict) and held:
+            state.lane_held = held   # the ready/snapshot frame carries lane_waiting from this, so the
+            #                          hands come back the instant a page (re)connects — no extra push.
+        undelivered = data.get("undelivered")
+        if isinstance(undelivered, list) and undelivered:
+            state.undelivered = undelivered   # flushed on the next (re)connect, like any other
+    except Exception as exc:
+        state.fail("transport", f"restore held clips failed: {exc}")
 
 
 async def handle_shutdown(request: web.Request) -> web.Response:
@@ -1062,12 +1624,112 @@ async def handle_shutdown(request: web.Request) -> web.Response:
     if not ok:
         return web.json_response({"error": reason}, status=403)
 
+    # A RESTART announces itself; a plain stop does not (JJ, 2026-09-22). `command-bridge stop
+    # --restart` sends `restart: true` so this shutdown leaves a "restarting" hint for the other
+    # agents instead of looking like a crash.
+    body: dict = {}
+    try:
+        if request.can_read_body:
+            body = await request.json()
+    except Exception:
+        body = {}
+    restart = bool((body or {}).get("restart"))
+
+    async def _say_going_down() -> None:
+        """A SHUTDOWN IS HEARD, on whatever lane he is on (JJ, 2026-09-30: *"I would also like that
+        the graceful shutdown to play something regardless of the lane I am on. So that I know that
+        there is a shutdown coming."*). Sent straight to the page as a cue-tagged clip — not through
+        `_speak`, which could hold it behind his speech or park it on a lane — and only when he can
+        hear it: a notice queued for after the restart would announce something already over."""
+        if not state.clients or not state.channel_open:
+            return
+        try:
+            text = "Restarting the server." if restart else "Stopping the server."
+            loop = asyncio.get_running_loop()
+            pcm, rate = await loop.run_in_executor(None, lambda: tts.synthesize(
+                text, voice=None, speed=state.speech_speed, pause=state.sentence_pause))
+            state.shutdown_notice_played = asyncio.Event()
+            await _send_clip(state, {"type": "audio_header", "id": "cue-shutdown",
+                                     "sample_rate": rate, "bytes": len(pcm), "text": text,
+                                     "cue": "shutdown"}, pcm)
+            # WAIT FOR THE PAGE TO SAY IT PLAYED (JJ, 2026-09-30: *"the restarting the server thing
+            # has properly finished playing before restarting"*). A fixed sleep undercounts whenever
+            # another clip is still playing ahead of it. Capped, so a page that never answers can
+            # never hold a restart hostage.
+            clip_s = len(pcm) / 2.0 / max(1, rate)
+            try:
+                await asyncio.wait_for(state.shutdown_notice_played.wait(), timeout=clip_s + 20.0)
+            except asyncio.TimeoutError:
+                pass
+        except Exception:
+            pass
+
+    async def _drain() -> None:
+        """FINISH WHAT IS IN FLIGHT BEFORE GOING DOWN (JJ, 2026-09-30: *"the graceful shutdown should
+        make sure that any synthesization or transcription is finished and properly stored in the
+        server"*). A clip mid-synthesis and an utterance mid-transcription both lived only in this
+        process; a restart killed them after the agent had been told "queued" (dexter's "shipped and
+        live") or after he had finished speaking. Wait for both to land — as a held clip, a sent
+        clip, or a logged turn — then persistence carries them over. Capped at 60 s so a wedged
+        synthesis cannot block a restart forever."""
+        await _wait_for_him_to_finish(state)
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline and (state.synth_inflight > 0 or state.speech_pending > 0):
+            await asyncio.sleep(0.2)
+
     async def _later() -> None:
-        await asyncio.sleep(0.15)
+        await _drain()
+        await _say_going_down()
+        if restart:
+            # TWO AUDIENCES, both best-effort. The other AGENTS poll HTTP and read turns off disk, so
+            # their durable signal is the runtime file — stamp it (`mark_restarting`) and `_request`'s
+            # unreachable path reads it back as "restarting, re-arm". Any open PAGE holds a websocket,
+            # so tell it directly so it shows "reconnecting" rather than "disconnected". A restart must
+            # never be blocked by a failure to leave a hint.
+            grace = 20.0
+            try:
+                from . import cli as _cli
+                _cli.mark_restarting(state.session)
+                grace = _cli.RESTART_GRACE_S
+            except Exception:
+                pass
+            try:
+                await _broadcast_json(state, {"type": "server_restarting", "resume_after_s": grace})
+            except Exception:
+                pass
+            # Persist held clips so the restart does not wipe the agents' pending reports (JJ,
+            # 2026-09-24). Only on restart — a plain stop is ending the session, not resuming it.
+            _persist_held(state)
+            await asyncio.sleep(0.35)   # let the mark reach disk and the frame flush before we die
+        else:
+            await asyncio.sleep(0.15)
         os.kill(os.getpid(), signal.SIGTERM)
 
+    # Said up front, so the caller knows the stop may take until he finishes his sentence.
+    waits = state.talking(amplitude=False)
     asyncio.ensure_future(_later())
-    return web.json_response({"stopping": True, "session": state.session})
+    return web.json_response({"stopping": True, "restart": restart, "session": state.session,
+                              **({"waiting_for_him": True} if waits else {})})
+
+
+async def _wait_for_him_to_finish(state: TunnelState) -> None:
+    """Hold a shutdown until he has stopped speaking — see `config.SHUTDOWN_SPEECH_WAIT_S`.
+
+    Quiet means the SEGMENTER's view (`talking(amplitude=False)`: speech active or an utterance still
+    open, on any lane), held for `SHUTDOWN_QUIET_S` so a breath between sentences is not mistaken for
+    the end. The utterance it was waiting on then closes into transcription, which the drain that
+    follows already waits for — so his last sentence is logged before the process goes."""
+    deadline = time.monotonic() + config.SHUTDOWN_SPEECH_WAIT_S
+    quiet_since: float | None = None
+    while time.monotonic() < deadline:
+        if state.talking(amplitude=False):
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = time.monotonic()
+        elif time.monotonic() - quiet_since >= config.SHUTDOWN_QUIET_S:
+            return
+        await asyncio.sleep(0.1)
+    timing.stamp(state.session, "shutdown_speech_wait_capped", waited_s=config.SHUTDOWN_SPEECH_WAIT_S)
 
 
 def _say_key(text: str) -> str:
@@ -1139,8 +1801,44 @@ def _unread_turns(state: TunnelState, lane: str | None = None) -> dict[str, Any]
     if lane is not None:
         default = state.lanes.default
         turns = [t for t in turns if store.turn_is_for(t, lane, default)]
+    # Whether the list below is EVERY unread turn (spec 029 FR9): only then may a refusal that hands
+    # it over count as having delivered it.
+    complete = len(turns) <= config.UNREAD_ON_SAY_MAX
     turns = turns[-config.UNREAD_ON_SAY_MAX:]
-    return {"unread": turns, "unread_count": len(turns), "cursor": last_id, "since": since}
+    return {"unread": turns, "unread_count": len(turns), "cursor": last_id, "since": since,
+            "complete": complete}
+
+
+def _partial_so_far(state: TunnelState) -> str:
+    """The in-progress turn's text so far: committed pieces first (they are final for their span),
+    else the live partial preview, else "" (spec 029 FR10)."""
+    pieces = getattr(state, "pieces", None)
+    texts = [t for t in (getattr(pieces, "texts", None) or []) if isinstance(t, str) and t.strip()]
+    if texts:
+        return " ".join(t.strip() for t in texts)
+    return str(getattr(state, "partial_text", "") or "")
+
+
+async def _mark_read(state: TunnelState, lane: str | None, cursor: int) -> None:
+    """Advance a lane's read boundary as a `watch` delivering up to `cursor` would (spec 029 FR9):
+    the session and per-lane cursors (monotonic per lane), persistence, the lane now holding turns
+    it has not answered, and the `consumed` broadcast that moves his page's divider.
+
+    No cue: the acknowledgement belongs to an agent announcing it will respond (`handle_consumed`),
+    and a refused `say` is about to do exactly that by saying again."""
+    who = lane or state.lanes.default
+    state.consumed_cursor = cursor
+    state.lane_consumed[who] = max(state.lane_consumed.get(who, -1), cursor)
+    store.write_consumed_cursor(state.session, cursor, lanes=state.lane_consumed)
+    timing.stamp(state.session, "consumed", cursor=cursor, lane=who, via="say_refusal")
+    state.lane_holds_turns[who] = True
+    state.agent_holds_turns = True
+    await _broadcast_json(
+        state,
+        {"type": "consumed", "cursor": cursor, "pending": state.pending_turns(),
+         "read_through": dict(state.lane_read_through),
+         "lane_consumed": dict(state.lane_consumed)},
+    )
 
 
 def _unread_refusal(state: TunnelState, unread: dict[str, Any],
@@ -1274,6 +1972,10 @@ async def handle_say(request: web.Request) -> web.Response:
     fire_and_forget = bool((body or {}).get("async"))
     timings = bool((body or {}).get("timings"))
     intent = bool((body or {}).get("intent"))   # spec 012: a supersedable announcement
+    notify = bool((body or {}).get("notify"))   # spec 036: also a heads-up on his phone
+    if notify and intent:
+        return web.json_response({"error": "notify cannot be combined with intent", "code": "bad_request",
+                                  "remedy": "notify on the result, not on the announcement"}, status=400)
     if not isinstance(text, str) or not text.strip():
         return web.json_response({"error": "text is required"}, status=400)
 
@@ -1343,6 +2045,12 @@ async def handle_say(request: web.Request) -> web.Response:
         # be queued up."* A refusal makes the waiting agent's answer HIS problem to ask for again,
         # which is the opposite of the point. `_speak` holds it and releases it the moment his
         # attention comes back to that lane.
+
+    # LIAISON MODE (spec 037): only the liaison speaks to him. Refused before anything is
+    # synthesized, with the way to reach him through the liaison instead.
+    _speaker = lane or state.lanes.default
+    if liaison_mod.is_worker(state.liaisons, _speaker):
+        return web.json_response(liaison_mod.refusal(state.session, state.liaisons, _speaker), status=409)
 
     # No 409 when nobody is connected. The reply is synthesized and held; see
     # TunnelState.undelivered. Refusing here is what made a locked phone eat answers silently.
@@ -1429,7 +2137,54 @@ async def handle_say(request: web.Request) -> web.Response:
     # and a reader meeting 409 in `handle_say` again would reasonably conclude that bug had come
     # back. It has not: nothing is discarded here because nothing was ever made.
     if unread["unread_count"]:
-        return web.json_response(_unread_refusal(state, unread, lane), status=428)
+        refusal = _unread_refusal(state, unread, lane)
+        # 🔴 A REFUSAL THAT HANDS OVER THE TEXT HAS DELIVERED IT (spec 029 FR9, KD4).
+        #
+        # Spec 007 left the cursor alone here so an agent ignoring `unread` would lose nothing. Since
+        # 028 the refusal is the NORMAL path — the agent says, is refused, reads what came back — and
+        # leaving the cursor put cost a second refusal and a `watch` to re-fetch text it already
+        # held. JJ, 2026-10-08: *"Why force you to another watch?"* So when this refusal carries the
+        # full text of EVERY unread turn, it counts as reading them. A truncated list, or a repeat
+        # with the text omitted, still leaves the cursor and `remedy` as they were.
+        if unread.get("complete") and not refusal.get("unread_text_omitted"):
+            await _mark_read(state, lane, int(unread["cursor"]))
+            refusal["marked_read"] = True
+            refusal["cursor"] = int(unread["cursor"])
+        else:
+            refusal["marked_read"] = False
+        return web.json_response(refusal, status=428)
+
+    # AND IT REFUSES WHILE HE IS STILL TALKING TO THIS LANE (spec 028 FR1). The unread refusal above
+    # covers a turn he FINISHED; this covers the one he has not finished yet, and together they are
+    # the whole of what the pre-say `watch --reply` was checking — so a reply is one call, not two.
+    # JJ, 2026-10-08: *"we are wasting turns on that extra watch … the say command can reject
+    # immediately if I'm still speaking."*
+    #
+    # The SEGMENTER predicate, never raw amplitude (TC1): room noise must not refuse a reply, and
+    # barge-in covers the segmenter's lag. Only a clip that would PLAY now is refused (FR2) — an
+    # off-lane clip is held and cannot talk over him — and a muted mic cannot be mid-sentence.
+    _plays_now = not (bool(lane) and lane != state.lanes.current and lane != lanes_mod.BROADCAST)
+    if _plays_now and not state.muted and state.talking(amplitude=False):
+        _mine = lane or state.lanes.default
+        return web.json_response(
+            {"spoke": False,
+             "error": "refusing to speak: he is speaking to you right now. Nothing was synthesized "
+                      "or queued — he did not hear this.",
+             "code": config.SPEAKING_REFUSAL_CODE,
+             "remedy": (f"command-bridge watch --session {state.session} --lane {_mine} "
+                        f"--since {unread['since']} --reply"),
+             "since": unread["since"],
+             # WHAT HE HAS SAID SO FAR (spec 029 FR10): the pieces already transcribed at his
+             # pauses, else the live preview. A preview, not a turn — the finished turn still arrives
+             # through `watch`, so nothing is marked read.
+             "partial": _partial_so_far(state),
+             "live_lane": state.lanes.current},
+            status=428,
+        )
+    # THE LOG HEAD AT ACCEPTANCE (spec 028 FR4/TC2). A turn above it landed after the agent asked to
+    # speak, so the clip no longer answers everything he said — `_speak_now` drops it rather than
+    # play it into the conversation he has moved on in.
+    accepted_head = int(unread["cursor"])
 
     # SPEAKING IS WHAT ENDS THE BATCH. Whatever turns the agent was holding, it has now answered
     # them — so its next wait is a LISTEN and should block, rather than the instant pre-reply
@@ -1441,8 +2196,19 @@ async def handle_say(request: web.Request) -> web.Response:
     # THIS LANE ANSWERED, so only this lane's batch ends (spec 018 FR1). The session-wide flag is
     # then re-derived from the fan-out rather than set, so one agent speaking cannot end another
     # agent's batch — which is half of the sixty-second pause he timed.
-    state.lane_holds_turns[lane or state.lanes.default] = False
-    state.agent_holds_turns = any(state.lane_holds_turns.values())
+    #
+    # ...UNLESS THIS IS AN --intent ANNOUNCEMENT, which has NOT answered anything (spec 012). It is
+    # the supersedable "on it, running the tests" clip — a promise the real reply replaces — so the
+    # agent is still holding its turns. Ending the batch here would clear the very flag that makes
+    # the agent's NEXT pre-reply check return instantly off-lane, and JJ then hits the block this
+    # path exists to prevent: root-caused live 2026-09-11 — he ack'd with --intent while on another
+    # lane, the holds flag dropped, and the pre-say watch that followed was misread as a listen and
+    # blocked off-lane until he came back. So an intent clip leaves the batch OPEN; only a real
+    # reply ends it. (`unanswered_s`/blue-tick below still move — an ack is a spoken sign of life;
+    # only the pre-vs-listen signal must not treat it as the answer.)
+    if not intent:
+        state.lane_holds_turns[lane or state.lanes.default] = False
+        state.agent_holds_turns = any(state.lane_holds_turns.values())
 
     # THE RESET HALF OF `unanswered_s` (spec 013 FR8), and its position is the whole point: it sits
     # AFTER every refusal, so a `say` that was declined does not clear a debt it never paid. A
@@ -1462,19 +2228,26 @@ async def handle_say(request: web.Request) -> web.Response:
     # `lane_cursor` was already the reader for it; only this write was still session-wide.
     state.lane_read_through[_who] = state.lane_cursor(_who)
 
+    # `since` is the REFUSAL path's business — its remedy watches from it (see `_unread_refusal`).
+    # On a delivered or held clip it is redundant with `cursor`, and the agent acts on `next`, not on
+    # it, so it is not carried on the non-refusal responses (JJ, 2026-09-15, informational-field prune).
+    public_unread = {k: v for k, v in unread.items() if k != "since"}
     if fire_and_forget:
         # Return before synthesis so the agent can acknowledge and keep working in parallel,
         # instead of the user waiting out a TTS round trip before anything else starts.
         # The lane travels on the fire-and-forget path too. `--now` is exactly the path an
         # agent takes when it is in a hurry, which is when it would otherwise talk over him.
-        asyncio.get_running_loop().create_task(_speak(state, text, voice, lane=lane, intent=intent))
-        return web.json_response({"queued": True, "async": True, **unread})
+        asyncio.get_running_loop().create_task(_speak(state, text, voice, lane=lane, intent=intent,
+                                                      accepted_head=accepted_head, notify=notify))
+        return web.json_response({"queued": True, "async": True, **({"notify": True} if notify else {}),
+                                  **public_unread})
 
     try:
-        result = await _speak(state, text, voice, lane=lane, timings=timings, intent=intent)
+        result = await _speak(state, text, voice, lane=lane, timings=timings, intent=intent,
+                              accepted_head=accepted_head, notify=notify)
     except tts.TTSError as exc:
         return web.json_response({"error": str(exc)}, status=500)
-    return web.json_response({**result, **unread})
+    return web.json_response({**result, **public_unread})
 
 
 def record_spoken(session: str, clip_id: str, text: str, held_for: float) -> str:
@@ -1499,9 +2272,80 @@ def record_spoken(session: str, clip_id: str, text: str, held_for: float) -> str
     return normalized
 
 
+class _SynthGate:
+    """Serialize TTS synthesis to ONE at a time, in PRIORITY order (JJ, 2026-09-22, dev.jsonl turn
+    6259: *"I think the TTS queue should be next … only one TTS is running at a time. And the agent
+    that has [the] live [lane] gets priority … Regular turns get priority over intent turns."*).
+
+    Concurrent kokoro synthesis across lanes was the measured CPU spike (six agents synthesizing at
+    once on the CPU); serializing it makes the agent he is TALKING TO synthesize first and lets
+    background agents wait their turn instead of all fighting for the cores. The priority is a tuple,
+    lower first: `(0 if live else 1, 1 if intent else 0)` — so live+regular beats live+intent beats
+    off+regular beats off+intent, and arrival order (a monotonic seq) breaks ties FIFO.
+
+    **Why a heap of futures and not an `asyncio.Lock`:** a Lock hands the baton FIFO, which cannot
+    prefer the live lane over a background agent that happened to ask first. Each waiter parks on its
+    own future in a min-heap keyed by (priority, seq); whoever finishes a synth wakes the current
+    highest-priority waiter. The seq keeps the heap total-ordered so two tied priorities never
+    compare their futures (futures aren't orderable).
+    """
+
+    def __init__(self) -> None:
+        self._busy = False
+        self._waiters: list = []      # min-heap of (priority, seq, future)
+        self._seq = 0
+        self._lock = asyncio.Lock()   # guards _busy/_waiters only — held for microseconds, never over a synth
+
+    async def run(self, priority, fn):
+        loop = asyncio.get_running_loop()
+        fut = None
+        async with self._lock:
+            if not self._busy:
+                self._busy = True          # take the slot directly — nothing is synthesizing
+            else:
+                fut = loop.create_future()
+                self._seq += 1
+                heapq.heappush(self._waiters, (priority, self._seq, fut))
+        if fut is not None:
+            await fut                        # our turn, handed to us by the finishing synth
+        try:
+            return await loop.run_in_executor(None, fn)
+        finally:
+            async with self._lock:
+                if self._waiters:
+                    _, _, nxt = heapq.heappop(self._waiters)
+                    if not nxt.done():
+                        nxt.set_result(None)  # hand the baton to the highest-priority waiter
+                else:
+                    self._busy = False        # queue drained — the next caller takes the slot directly
+
+
+# ONE gate for the whole server, so every lane's synthesis shares the single ordering (module-level,
+# like the resident TTS engine it fronts).
+_SYNTH_GATE = _SynthGate()
+
+
 async def _speak(state: TunnelState, text: str, voice: str | None,
                  lane: str | None = None, timings: bool = False,
-                 intent: bool = False) -> dict[str, Any]:
+                 intent: bool = False, accepted_head: int | None = None,
+                 notify: bool = False) -> dict[str, Any]:
+    """`_speak_now`, counted in `state.synth_inflight` so a graceful shutdown can wait for it.
+
+    🔴 A restart used to kill a clip mid-synthesis (2026-09-30): dexter's "shipped and live" was
+    acknowledged to it as queued (`say` returns before synthesis) and then died with the old process,
+    so he never heard that the site was deployed. The count is what `handle_shutdown` drains on."""
+    state.synth_inflight += 1
+    try:
+        return await _speak_now(state, text, voice, lane=lane, timings=timings, intent=intent,
+                                accepted_head=accepted_head, notify=notify)
+    finally:
+        state.synth_inflight -= 1
+
+
+async def _speak_now(state: TunnelState, text: str, voice: str | None,
+                     lane: str | None = None, timings: bool = False,
+                     intent: bool = False, accepted_head: int | None = None,
+                     notify: bool = False) -> dict[str, Any]:
     """Synthesize, hold if the speaker is mid-sentence, then push the audio.
 
     Shared by the blocking and fire-and-forget paths so the interruption guard cannot be
@@ -1532,7 +2376,30 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
                 text, voice=voice, speed=state.speech_speed, pause=state.sentence_pause)
             return pcm_, rate_, None
 
-        pcm, rate, schedule = await asyncio.get_running_loop().run_in_executor(None, _synth)
+        # SERIALIZED + PRIORITISED (JJ, 2026-09-22): one synth at a time, live lane first, regular
+        # before intent — see `_SynthGate`. `owner` is this clip's lane, resolved above; the live
+        # lane is whoever he is talking to right now.
+        synth_priority = (0 if owner == state.lanes.current else 1, 1 if intent else 0)
+        # 🎯 STREAMED WHEN HE WILL HEAR IT NOW (JJ, 2026-10-07: "better improvements over the whole
+        # chain. End to end."). The whole clip used to wait on its LAST piece — 1-6 s — before he
+        # heard its first, which alone takes ~0.2 s. A clip for the live lane synthesizes its first
+        # piece, takes the hold, and then plays while the rest renders (`_send_streamed`). A clip
+        # that will be HELD (off-lane) gains nothing from streaming, and `--timings` needs the
+        # whole schedule, so both keep the one-shot path below unchanged.
+        stream = None
+        if config.tts_stream() and not timings and state.clients and all(
+                c in state.stream_clients for c in state.clients) and not (
+                bool(lane) and lane != state.lanes.current and lane != lanes_mod.BROADCAST):
+            gen = tts.synthesize_stream(text, voice=voice, speed=state.speech_speed,
+                                        pause=state.sentence_pause)
+            stream = gen
+            first = await _SYNTH_GATE.run(synth_priority, lambda: next(gen, None))
+            if first is None:
+                raise tts.TTSError("nothing to speak")
+            pcm, rate = first
+            schedule = None
+        else:
+            pcm, rate, schedule = await _SYNTH_GATE.run(synth_priority, _synth)
     except tts.TTSError as exc:
         # `tts`, so that "SAPI produced no audio" survives a later voiceprint or capture error.
         # It did not, on 2026-08-10, and the person debugging TTS spent twenty-five minutes
@@ -1544,9 +2411,25 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         await _set_agent_state(state, "idle", owner)
         raise
 
+    # On a streamed clip this is its FIRST piece — the moment playback can begin — and `audio_s` is
+    # that piece's length; `synthesized_all` marks the last one.
     timing.stamp(state.session, "synthesized", audio_s=round(len(pcm) / 2 / rate, 2),
-                 lane=owner)
+                 lane=owner, **({"streamed": True} if stream is not None else {}))
+    # A sound when THIS reply has finished synthesizing (JJ, 2026-09-14). Fired on EVERY lane, NOT
+    # gated to the live one: that is the point he clarified — from another lane he wants to hear
+    # that an agent has a reply ready. On his live lane the reply plays right after (that is the
+    # done signal); OFF his lane the reply is HELD, so this cue is the only audible "a reply is
+    # waiting on that lane."
+    await _push_cue(state, "synthesized")
     clip_id = f"clip-{int(time.time() * 1000)}"
+    # A HEADS-UP, NOT THE MESSAGE (spec 036). The clip below is held or played exactly as any other;
+    # the notice only tells his phone it exists, and its `played` receipt resolves the notice.
+    if notify:
+        try:
+            notices.add(state.session, clip_id, owner, text)
+            _notices_changed(state)
+        except OSError as exc:   # a heads-up must never cost him the clip
+            state.fail("notify", str(exc))
 
     # Do not talk over the speaker. Synthesis is done, but if they are mid-utterance, hold the
     # audio until they finish. Live, 2026-07-29: a batch of voice auditions cut across him
@@ -1577,17 +2460,43 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
     # did not — so the CLI carried a caveat telling every reader to apply the exception by hand. It
     # picks up `speech_pending` too: an utterance closed and still in transcription is speech nobody
     # has heard.
-    while waited < 15.0 and not state.muted:
+    # ONLY THE LANE HE IS TALKING TO WAITS FOR HIM (JJ, 2026-10-05: "that doesn't make sense for all
+    # agents. Of course, it makes sense for the agent I am speaking to … Dexter has shown waiting
+    # multiple times because I have been speaking with you"). A clip for any other lane is HELD for his
+    # switch-back below, never played now, so there is nothing to talk over: it skips the hold, is
+    # stored ready, and its card does not sit on "waiting".
+    off_lane_clip = owner != state.lanes.current
+    # 🔴 THE CAP WAS 15 s AND IT RELEASED INTO HIM (spec 028 FR3). Five of seven held clips measured
+    # 10-05 → 10-08 went out at exactly 15.1 s while his utterance was still running, and his voice cut
+    # each one within 1.4 s. A long turn is not a stuck VAD; the bound is now `SPEAK_HOLD_MAX_S`, and
+    # reaching it while he is still talking DROPS the clip below instead of playing it.
+    while not off_lane_clip and waited < config.SPEAK_HOLD_MAX_S and not state.muted:
         if state.talking(amplitude=False):
             if not announced:
                 await _set_agent_state(state, "waiting", owner)
                 announced = True
+                # WHICH SIGNAL HELD IT (JJ, 2026-10-07, from the car: "I distinctly remember seeing two
+                # episodes of Waiting after I saw a synthesization happen … I feel like we're missing
+                # logging"). The hold set "waiting" and left no trace, so road noise read as speech
+                # could not be told from him talking.
+                timing.stamp(state.session, "speech_hold", clip=clip_id, lane=owner,
+                             speech_active=bool(state.buffer.speech_active),
+                             utterance_open=bool(state.buffer.utterance_open),
+                             speech_pending=state.speech_pending,
+                             user_speaking=bool(state.user_speaking))
             await asyncio.sleep(0.1)
             waited += 0.1
             continue
         # Quiet — but a pause longer than END_OF_UTTERANCE_MS closes the turn, so "thinking"
         # and "finished" look identical from here. Wait a beat and re-check before committing.
-        grace = 0.0
+        # 🔴 THE BEAT IS MEASURED FROM HIS LAST SPEECH, NOT FROM NOW (JJ, 2026-10-07: "I don't want
+        # to have a deliberate pause"). A reply is ready seconds after his turn closed, so he has
+        # almost always been quiet far longer than the grace already; a fresh 0.8 s wait on every
+        # clip was pure added latency. Only the part of the grace he has NOT yet been silent for
+        # is waited, which still protects a mid-sentence pause from being talked over.
+        quiet_for = (time.monotonic() - state.last_speech_at) if state.last_speech_at else None
+        # No speech ever seen (no audio yet, or a test driving the flags directly): the full wait.
+        grace = 0.0 if quiet_for is None else min(config.SPEAK_GRACE_S, quiet_for)
         while grace < config.SPEAK_GRACE_S:
             await asyncio.sleep(0.1)
             grace += 0.1
@@ -1596,6 +2505,20 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
                 break
         if not state.talking(amplitude=False):
             break
+    if announced:
+        timing.stamp(state.session, "speech_hold_end", clip=clip_id, lane=owner,
+                     held_s=round(waited, 1), muted=state.muted)
+    # A CLIP THAT WOULD START INTO HIM, OR ANSWERS LESS THAN HE HAS NOW SAID, IS DROPPED (spec 028
+    # FR3/FR4). Decided here — after the hold, immediately before the clip would go to the page — and
+    # only for a clip that is about to PLAY: an off-lane clip is held and its fate is decided when he
+    # comes back, never here.
+    _plays_now = (not off_lane_clip and bool(state.clients) and state.channel_open
+                  and not (bool(lane) and lane != state.lanes.current
+                           and lane != lanes_mod.BROADCAST))
+    if _plays_now:
+        _why = _drop_reason(state, owner, accepted_head)
+        if _why is not None:
+            return await _drop_clip(state, clip_id, text, owner, _why, waited)
     # ⚠ **`speaking` IS NOT SET HERE ANY MORE.** It used to be, and it was a claim made before the
     # clip's fate was known: the deliverability test is thirty lines below, and a clip for a lane
     # he is not on gets HELD rather than played. So a background agent sat on "speaking" with
@@ -1637,7 +2560,35 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
     # released when his attention comes back to this lane (FR7).
     off_lane = bool(lane) and lane != state.lanes.current and lane != lanes_mod.BROADCAST
     deliverable = bool(state.clients) and state.channel_open and not off_lane
+    if stream is not None and not deliverable:
+        # Streamed for a live lane, but it will not go out now after all (he switched lanes during
+        # the hold, the orb closed, the socket dropped): the held/undelivered stores keep WHOLE clips,
+        # so finish the synthesis here and take the one-shot branches below unchanged.
+        rest = stream
+        while True:
+            nxt = await _SYNTH_GATE.run(synth_priority, lambda: next(rest, None))
+            if nxt is None:
+                break
+            pcm += nxt[0]
+        stream = None
+        header["bytes"] = len(pcm)
+        timing.stamp(state.session, "synthesized_all", audio_s=round(len(pcm) / 2 / rate, 2),
+                     lane=owner)
     if deliverable:
+        # A LIVE CLIP SUPERSEDES THIS LANE'S HELD INTENTS TOO (2026-09-30). Supersede ran only on the
+        # held path below, so an "about to" parked before a restart (held clips survive it) stayed
+        # parked after the agent's next clip went out live — and the card showed an intent pending
+        # on the very lane he was talking to: *"why does it say that there is an intent turn from you
+        # pending?"* Same rule as below: only intents, never a held result.
+        _held = state.lane_held.get(str(lane)) if lane else None
+        if _held and any((c.get("header") or {}).get("intent") for c in _held):
+            _before = len(_held)
+            _held[:] = [c for c in _held if not (c.get("header") or {}).get("intent")]
+            timing.stamp(state.session, "announcement_superseded", lane=lane,
+                         count=_before - len(_held))
+            await _broadcast_json(state, {"type": "lane_waiting", "lane": lane,
+                                          "waiting": len(_held),
+                                          "split": state.lane_split_for(lane)})
         # SPOKEN WHEN IT IS ACTUALLY GOING OUT, not when it was composed. `speaking_lane` is the
         # lane the `played` receipt will release: the receipt carries a clip id and no lane, and by
         # the time it lands he may have moved on.
@@ -1651,10 +2602,19 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         # tracked nowhere, so there was nothing to hand back if the browser's queue got dropped
         # before it played. The same guarantee, applied to one of two senders, is not a guarantee.
         # The seq is also what makes `playing_clip` derivable rather than guessed.
-        state.lane_inflight.setdefault(owner, []).append(state.hand_to_client(
-            {"header": dict(header), "pcm": pcm, "at": time.time()}))
+        inflight = state.hand_to_client({"header": dict(header), "pcm": pcm, "at": time.time()})
+        state.lane_inflight.setdefault(owner, []).append(inflight)
         await _push_cue(state, "speaking")
-        await _send_clip(state, header, pcm)
+        if stream is not None:
+            pcm = await _send_streamed(state, header, pcm, stream, synth_priority)
+            # A clip handed back later (reconnect, barge) is re-sent WHOLE from here, so the
+            # in-flight record has to hold all of it, not the first piece it started with.
+            inflight["pcm"] = pcm
+            inflight["header"] = dict(header)
+            timing.stamp(state.session, "synthesized_all",
+                         audio_s=round(len(pcm) / 2 / rate, 2), lane=owner)
+        else:
+            await _send_clip(state, header, pcm)
     elif off_lane:
         # ⚠ A SEPARATE STORE FROM `undelivered`, and TC3 is the whole reason. Nine clips queued
         # there on 2026-08-20 and none of them played; the only mechanism found that can lose all
@@ -1677,7 +2637,8 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         timing.stamp(state.session, "lane_held", clip=clip_id, lane=lane,
                      depth=len(state.lane_held.get(str(lane), [])))
         await _broadcast_json(state, {"type": "lane_waiting", "lane": lane,
-                                      "waiting": len(state.lane_held.get(str(lane), []))})
+                                      "waiting": len(state.lane_held.get(str(lane), [])),
+                                      "split": state.lane_split_for(lane)})
         # ITS STAGE ENDED HERE. The clip is composed and parked; the raised hand is what says so.
         # Reporting `idle` hands the lane back to the derivation, which — this agent being in no
         # watch at that instant — renders it as thinking rather than as an agent doing nothing.
@@ -1693,10 +2654,16 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
                      depth=len(state.undelivered),
                      why="channel_closed" if state.clients else "no_client")
     record_spoken(state.session, clip_id, text, waited)
+    state.clip_text[clip_id] = text
+    state.recent_spoken.append({"id": clip_id, "text": text, "sent_at": time.time(),
+                                "played_at": None})
+    del state.recent_spoken[:-32]
+    if len(state.clip_text) > 256:                       # clips that never get a receipt must not pile up
+        for stale in list(state.clip_text)[:-256]:
+            state.clip_text.pop(stale, None)
     return {
         "queued": True,
         "id": clip_id,
-        "seconds": round(len(pcm) / 2 / rate, 2),
         # THE SCHEDULE, WHEN IT WAS ASKED FOR AND CAN BE ANSWERED (spec 020 FR1/FR4). Absent when
         # `--timings` was not passed; `{"words": [], "aligned": false}` never stands in for an
         # engine that has no durations — `timings_unavailable` says that in words instead, so a
@@ -1723,16 +2690,54 @@ async def _speak(state: TunnelState, text: str, voice: str | None,
         # HELD BECAUSE HE IS TALKING TO SOMEBODY ELSE, which is not the same as undelivered. The
         # agent is not being told its reply failed; it is being told when he will hear it.
         "held_off_lane": off_lane,
-        # SPEC 012: how many of this agent's still-held INTENT announcements this clip superseded (0
-        # when none, or when it played live). Lets the agent see its "about to" was dropped as stale.
-        "superseded": header.get("superseded", 0),
-        "lane": lane,
         # Say WHICH kind of not-delivered, so the agent can tell "his phone dropped" from "he
         # closed the channel deliberately" without a second call.
         "reason": None if deliverable else (
             "off_lane" if off_lane else ("channel_closed" if state.clients else "no_client")
         ),
     }
+
+
+def _drop_reason(state: TunnelState, owner: str, accepted_head: int | None) -> str | None:
+    """Why a finished live-lane clip must not start now, or None to play it (spec 028 FR3/FR4).
+
+    `still_speaking` — the hold reached `SPEAK_HOLD_MAX_S` with him still talking; the loop exits
+    quiet in every other case, so this is the cap and only the cap.
+    `newer_turn` — an addressed turn for this lane landed above the log head the `say` was accepted
+    at (TC2: a turn the agent had already read is what it is answering). Read only when the head
+    moved, so a clean reply costs one integer comparison (NFR2)."""
+    if not state.muted and state.talking(amplitude=False):
+        return "still_speaking"
+    if accepted_head is None:
+        return None
+    if store.last_turn_id(state.session) <= accepted_head:
+        return None
+    default = state.lanes.default
+    for t in store.read_turns(state.session):
+        if (int(t.get("id", -1)) > accepted_head and t.get("addressed")
+                and store.turn_is_for(t, owner, default)):
+            return "newer_turn"
+    return None
+
+
+async def _drop_clip(state: TunnelState, clip_id: str, text: str, owner: str, why: str,
+                     waited: float) -> dict[str, Any]:
+    """Drop a clip instead of starting it into him, and TELL ITS AGENT (spec 028 FR5).
+
+    Nothing goes to the page. The notice rides the channel the agent already reads — the lane's
+    `played` list, which its next `watch` hands back as `played[]` — marked `cut: dropped` with
+    `heard_s: 0`, so it reads exactly like the barge-in notice it replaces, minus the interruption.
+    The idle anchor does NOT move (spec 024): he heard nothing, so no silence began after it."""
+    timing.stamp(state.session, "clip_dropped", clip=clip_id, lane=owner, why=why,
+                 held_s=round(waited, 1))
+    heard = state.lane_played.setdefault(str(owner), [])
+    heard.append({"clip": clip_id, "text": text, "played_at": round(time.time(), 1),
+                  "cut": "dropped", "heard_s": 0, "why": why})
+    del heard[:-config.UNDELIVERED_MAX]
+    await _set_agent_state(state, "idle", owner)
+    return {"queued": False, "id": clip_id, "held_for": round(waited, 1),
+            "held_for_speech": why == "still_speaking", "delivered": False,
+            "held_off_lane": False, "dropped": why, "reason": "dropped"}
 
 
 def _prune_lane_held(state: TunnelState, lane: str) -> None:
@@ -1783,6 +2788,10 @@ async def _flush_lane_held(state: TunnelState, lane: str) -> int:
     four minutes after the question, with no acknowledgement that time passed, reads as the agent
     being slow rather than as him having been elsewhere.
     """
+    # LIAISON MODE (spec 037): another lane's clips never play to him; they stay held (the hand stays
+    # up, the agent's watch still reports them unheard) until liaison mode ends.
+    if liaison_mod.is_worker(state.liaisons, lane):
+        return 0
     # Read BEFORE the prune, so a lane whose held clips have ALL expired still counts as having had
     # a raised hand to lower. See the broadcast at the end of this function.
     had = bool(state.lane_held.get(lane))
@@ -1836,15 +2845,26 @@ def _clip_played(state: TunnelState, clip_id: str) -> None:
     lane switch interleaves two flushes, and dropping the wrong one would keep a played clip
     forever while discarding an unplayed one.
     """
+    def _not_it(c: dict) -> bool:
+        return (c.get("header") or {}).get("id") != clip_id
+
     for lane, clips in list(state.lane_inflight.items()):
-        kept = [c for c in clips if (c.get("header") or {}).get("id") != clip_id]
+        kept = [c for c in clips if _not_it(c)]
         if len(kept) == len(clips):
             continue
         if kept:
             state.lane_inflight[lane] = kept
         else:
             state.lane_inflight.pop(lane, None)
-        return
+        break
+    # HEARD ANYWHERE IS HEARD (spec 032). With two devices connected a clip can be heard on one while
+    # a race on the other (a drop, a barge) has already put it back on a hold or the undelivered queue;
+    # a receipt from either device retires every copy, so no later page replays it.
+    for lane, clips in list(state.lane_held.items()):
+        kept = [c for c in clips if _not_it(c)]
+        if len(kept) != len(clips):
+            state.lane_held[lane] = kept
+    state.undelivered = [c for c in state.undelivered if _not_it(c)]
 
 
 async def _return_inflight(state: TunnelState, keep_playing: bool = True) -> int:
@@ -1887,7 +2907,8 @@ async def _return_inflight(state: TunnelState, keep_playing: bool = True) -> int
         _prune_lane_held(state, lane)
         returned += len(clips)
         await _broadcast_json(state, {"type": "lane_waiting", "lane": lane,
-                                      "waiting": len(state.lane_held.get(lane, []))})
+                                      "waiting": len(state.lane_held.get(lane, [])),
+                                      "split": state.lane_split_for(lane)})
     state.lane_inflight.clear()
     if returned:
         timing.stamp(state.session, "inflight_returned", count=returned)
@@ -1914,8 +2935,15 @@ async def _flush_undelivered(state: TunnelState) -> int:
     *"DELIBERATELY NOT"* shared so this bug is not inherited — and the flush side never got the
     check the hold side has. **A guarantee enforced on one side of a queue is not a guarantee**,
     which is the same lesson spec `022` learned about `lane_held`.
+
+    🔴 **AND THE ORB IS RE-TESTED HERE (spec 036).** A new SOCKET also flushes (`handle_ws`), and that
+    flush used to ignore `channel_open`: on 2026-10-09 his app's socket reconnected at 13:10:38 with the
+    orb still off, the flush sent the held "Enjoy lunch" clip, and the app played it. JJ: *"I had the orb
+    turned off and you still spoke to me."* A closed channel holds; only opening it releases.
     """
     _prune_undelivered(state)
+    if not state.channel_open:
+        return 0
     queued, state.undelivered = state.undelivered, []
     lanes_parked: set[str] = set()
     for clip in queued:
@@ -1939,7 +2967,8 @@ async def _flush_undelivered(state: TunnelState) -> int:
         timing.stamp(state.session, "undelivered_parked", lane=lane,
                      depth=len(state.lane_held.get(lane, [])))
         await _broadcast_json(state, {"type": "lane_waiting", "lane": lane,
-                                      "waiting": len(state.lane_held.get(lane, []))})
+                                      "waiting": len(state.lane_held.get(lane, [])),
+                                      "split": state.lane_split_for(lane)})
     # ⚠ **DELIVERED, NOT DEQUEUED.** The caller broadcasts this as `resumed.delivered` and the page
     # tells him that many replies just arrived; counting the parked ones would announce audio he is
     # not about to hear. The hand going up on their lanes is how those are reported.
@@ -1966,6 +2995,129 @@ async def _send_clip(state: TunnelState, header: dict[str, Any], pcm: bytes) -> 
                 await ws.send_bytes(pcm)
             except Exception:
                 state.clients.discard(ws)
+    # THE AGENT'S HALF OF THE TRANSCRIPT, ON DISK (JJ, 2026-09-25, phone after the laptop: "the turns
+    # that I did while in the computer are not showing up here, why"). His turns were always in the
+    # turn log, but a reply existed only in the browser that played it, so a second device showed a
+    # one-sided — or empty — conversation. Logged HERE because every clip that reaches a page goes
+    # through this function exactly once; a cue is punctuation and carries no text.
+    if header.get("text") and not header.get("cue"):
+        _log_said(state.session, header)
+
+
+async def _send_streamed(state: TunnelState, header: dict[str, Any], first: bytes,
+                         stream, priority) -> bytes:
+    """Send a clip piece by piece as it synthesizes; return the whole PCM.
+
+    The header goes out with `streamed: true` and no byte count, then the first piece, then each
+    later piece the moment it renders, then `{"type": "audio_end", "id"}`. The page starts playing
+    on the first piece (`playStream` in shell.html), so he hears a reply ~0.2 s after synthesis
+    starts instead of after its last piece.
+
+    🔴 **THE CLIP LOCK IS HELD FOR THE WHOLE STREAM**, for the reason `_send_clip` takes it at all:
+    anything that slipped between this header and its bytes — a cue, another lane's clip — would be
+    read by the page as part of this reply. Holding it across synthesis delays other audio only by
+    what playback would have delayed it anyway, since the page plays one clip at a time.
+    Each later piece takes the synth gate again, so the live lane's priority still applies per piece.
+    """
+    header["streamed"] = True
+    header["bytes"] = None
+    parts = [first]
+    async with state._clip_lock:
+        await _broadcast_json(state, header)
+        await _broadcast_bytes(state, first)
+        try:
+            while True:
+                nxt = await _SYNTH_GATE.run(priority, lambda: next(stream, None))
+                if nxt is None:
+                    break
+                parts.append(nxt[0])
+                await _broadcast_bytes(state, nxt[0])
+        except tts.TTSError as exc:
+            # A later piece failed: he has already heard the start, so end the clip where it got
+            # to rather than leave the page waiting on bytes that will never come.
+            state.fail("tts", str(exc))
+        finally:
+            await _broadcast_json(state, {"type": "audio_end", "id": header["id"]})
+    pcm = b"".join(parts)
+    header["bytes"] = len(pcm)
+    if header.get("text"):
+        _log_said(state.session, header)
+    return pcm
+
+
+async def _broadcast_bytes(state: TunnelState, data: bytes) -> None:
+    for ws in list(state.clients):
+        try:
+            await ws.send_bytes(data)
+        except Exception:
+            state.clients.discard(ws)
+
+
+def _said_path(session: str) -> str:
+    return os.path.join(config.session_dir(), f"{session}.said.jsonl")
+
+
+def _log_said(session: str, header: dict[str, Any]) -> None:
+    """Append one spoken reply to `<session>.said.jsonl` — best-effort, never fails the clip."""
+    try:
+        os.makedirs(config.session_dir(), exist_ok=True)
+        rec = {"id": header.get("id"), "lane": header.get("lane"), "text": header.get("text"),
+               "wall": _dt.datetime.now().astimezone().isoformat(timespec="seconds")}
+        with open(_said_path(session), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def transcript_history(session: str, limit: int = 200) -> list[dict[str, Any]]:
+    """His turns and the agents' spoken replies, merged in wall-clock order, newest `limit`.
+
+    What a page rebuilds its transcript from on load, so every device shows the same conversation
+    instead of only what it happened to hear live. Each row carries a stable `key` (`t:<turn id>` /
+    `c:<clip id>`) so a row that also arrives live is not rendered twice."""
+    rows: list[dict[str, Any]] = []
+    try:
+        for t in store.read_turns(session)[-limit * 2:]:
+            if not t.get("final", True) or not t.get("text"):
+                continue
+            rows.append({"key": f"t:{t['id']}", "from": "you", "id": t["id"], "text": t["text"],
+                         "lane": t.get("lane"), "addressed": bool(t.get("addressed")),
+                         "wall": t.get("wall") or ""})
+    except Exception:
+        pass
+    try:
+        with open(_said_path(session), encoding="utf-8") as fh:
+            said = fh.readlines()[-limit * 2:]
+        seen: set[str] = set()
+        for line in said:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            key = f"c:{r.get('id')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({"key": key, "from": "agent", "text": r.get("text") or "",
+                         "lane": r.get("lane"), "wall": r.get("wall") or ""})
+    except OSError:
+        pass
+    rows.sort(key=lambda r: r["wall"])
+    return rows[-limit:]
+
+
+async def handle_history(request: web.Request) -> web.Response:
+    """`GET /history` — the recent transcript for a page to rebuild from (token-gated: it is his
+    conversation)."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        limit = max(1, min(500, int(request.query.get("limit", "200"))))
+    except ValueError:
+        limit = 200
+    return web.json_response({"rows": transcript_history(state.session, limit)})
 
 
 async def _push_cue(state: TunnelState, name: str) -> None:
@@ -2089,6 +3241,38 @@ async def handle_verbose(request: web.Request) -> web.Response:
     return web.json_response({"verbose": state.verbose, "previous": previous})
 
 
+def _lane_colors(state: TunnelState) -> dict[str, str]:
+    """Every registered lane's colour (spec 029 FR5): the roster's for a roster agent, else a hue
+    assigned once by name and persisted. Never raises — colour is cosmetic (NFR2)."""
+    try:
+        roster = config.lane_colors()
+        assigned = getattr(state, "lane_colors_assigned", None) or {}
+        colours, grown = colors_mod.resolve(state.lanes.names, roster, assigned)
+        if grown != assigned:
+            state.lane_colors_assigned = grown
+            store.write_lane_colors(state.session, grown)
+        # Roster agents not in the room keep their colour on the page too (a transcript row from an
+        # agent that has since left still paints in its own hue).
+        return {**roster, **colours}
+    except Exception:  # noqa: BLE001
+        return config.lane_colors()
+
+
+def _lane_reply(state: TunnelState) -> dict[str, Any]:
+    """The whole registry, as every `/lane` reply returns it — plus each lane's colour and any pair
+    too close to tell apart (spec 029 FR7)."""
+    registered = {n: c for n, c in _lane_colors(state).items() if n in state.lanes.names}
+    return {
+        "lane": state.lanes.current,
+        "lanes": list(state.lanes.names),
+        "default_lane": state.lanes.default,
+        "broadcast": lanes_mod.BROADCAST,
+        "watching_lanes": sorted(state.watching_lanes),
+        "colors": registered,
+        "color_clashes": colors_mod.clashes(registered, config.LANE_COLOR_MIN_DE),
+    }
+
+
 async def handle_lane(request: web.Request) -> web.Response:
     """Who is in the meeting, and who is being talked to (spec 012 FR1, FR5, FR6).
 
@@ -2113,6 +3297,18 @@ async def handle_lane(request: web.Request) -> web.Response:
     try:
         if action == "list":
             pass
+        elif action == "order":
+            # MOVE LANES WITHOUT TEARING THEM DOWN (spec 029 FR1-FR3). Only the list's order changes:
+            # the live lane, watches, holds, briefs and cursors are keyed by name and untouched.
+            names = (body or {}).get("names")
+            if not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names):
+                return web.json_response(
+                    {"error": "names must be a non-empty list of lane names", "code": "bad_request",
+                     "remedy": "command-bridge lane order <lane> <lane> ..."},
+                    status=400,
+                )
+            state.lanes.reorder(names)
+            store.write_lanes(state.session, state.lanes.names)
         elif action in ("add", "remove", "switch"):
             if not isinstance(name, str) or not name.strip():
                 return web.json_response(
@@ -2136,6 +3332,13 @@ async def handle_lane(request: web.Request) -> web.Response:
                 # Switching by tap is the hands-free path's twin, not a lesser one — he asked for
                 # both. It goes through the same publish as the spoken switch so a page, a second
                 # device and a waiting agent all learn about it the same way.
+                # LIAISON MODE (spec 038): he speaks to liaisons only, so a worker is not a lane to
+                # switch to — its liaison speaks for it.
+                if liaison_mod.is_worker(state.liaisons, name):
+                    lead = liaison_mod.liaison_for(state.liaisons, name)
+                    return web.json_response(
+                        {"error": f"liaison mode: {name} speaks through {lead}", "code": "liaison_mode",
+                         "liaison": lead, "remedy": f"command-bridge lane switch {lead}"}, status=409)
                 await _set_lane(state, state.lanes.require(name), why="tap")
         else:
             return web.json_response(
@@ -2148,17 +3351,11 @@ async def handle_lane(request: web.Request) -> web.Response:
             {"error": str(exc), "code": exc.code, "remedy": exc.remedy}, status=400
         )
 
-    if action in ("add", "remove"):
+    if action in ("add", "remove", "order"):
         # The set changed even though the live lane may not have. Publish it, or the page keeps
-        # offering a lane that is gone.
+        # offering a lane that is gone (or in the old order).
         await _set_lane(state, state.lanes.current, why=action)
-    return web.json_response({
-        "lane": state.lanes.current,
-        "lanes": list(state.lanes.names),
-        "default_lane": state.lanes.default,
-        "broadcast": lanes_mod.BROADCAST,
-        "watching_lanes": sorted(state.watching_lanes),
-    })
+    return web.json_response(_lane_reply(state))
 
 
 async def handle_wake(request: web.Request) -> web.Response:
@@ -2198,6 +3395,81 @@ async def handle_wake(request: web.Request) -> web.Response:
     return web.json_response(
         {"wake": config.wake_name(), "previous": previous, "phrases": list(state.wake.phrases)}
     )
+
+
+async def handle_brief(request: web.Request) -> web.Response:
+    """Post context for a lane's voice agent. Its open `listen` returns with it within a poll."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    lane = str((body or {}).get("lane") or state.lanes.default)
+    text = str((body or {}).get("text") or "").strip()
+    if not text:
+        return web.json_response({"error": "empty brief", "code": "empty"}, status=400)
+    pending = state.lane_briefs.setdefault(lane, [])
+    pending.append({"text": text, "at": _dt.datetime.now().astimezone().isoformat(timespec="seconds")})
+    timing.stamp(state.session, "brief", lane=lane, chars=len(text))
+    return web.json_response({"queued": True, "lane": lane, "pending": len(pending)})
+
+
+async def handle_briefs_take(request: web.Request) -> web.Response:
+    """Hand a lane's pending context to its `listen` and clear it — delivered exactly once."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    lane = str((body or {}).get("lane") or state.lanes.default)
+    briefs = state.lane_briefs.pop(lane, [])
+    return web.json_response({"lane": lane, "context": briefs})
+
+
+async def handle_idle_fired(request: web.Request) -> web.Response:
+    """Record that a lane's watch reported the silence after this anchor clip (spec 024 FR4/TC2)."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    lane = str((body or {}).get("lane") or state.lanes.default)
+    clip = str((body or {}).get("clip") or "")
+    if clip:
+        state.lane_idle_fired[lane] = clip
+    return web.json_response({"lane": lane, "fired": clip or None})
+
+
+async def handle_fleet_state(request: web.Request) -> web.Response:
+    """Each lane's working / idle / unknown state, for `watch --fleet` (spec 025 FR4).
+
+    Same activity the page's fleet view reads (`_fleet_activity`, cached), shaped by the pure
+    `fleet.lane_states` with the page's own working threshold. Runs the derivation in an executor:
+    it is git + file IO."""
+    state: TunnelState = request.app["state"]
+    ok, reason = _check(request, state)
+    if not ok:
+        return web.json_response({"error": reason}, status=403)
+    from . import fleet
+    loop = asyncio.get_running_loop()
+    try:
+        payload = await loop.run_in_executor(None, _fleet_activity)
+    except Exception as exc:
+        return web.json_response({"error": f"fleet activity unavailable: {exc}",
+                                  "code": "fleet_unavailable"}, status=500)
+    now = payload.get("server_epoch") or time.time()
+    lanes = fleet.lane_states(payload.get("lanes") or {}, list(state.lanes.names), now,
+                              config.FLEET_WORK_RECENT_S)
+    return web.json_response({"server_epoch": now, "lanes": lanes})
 
 
 async def handle_watching(request: web.Request) -> web.Response:
@@ -2257,6 +3529,17 @@ async def handle_watching(request: web.Request) -> web.Response:
     # that names no lane is the single-agent case and is recorded against the default lane, which
     # is the lane it is in fact watching.
     lane = str((body or {}).get("lane") or state.lanes.default)
+    # ONE WATCH PER LANE, THE NEWEST WINS (2026-10-01). An open records its `watch_id` as the lane's
+    # owner (published on /status as `lane_watch_ids`, which the older watch polls and steps aside
+    # on). A close from a watch that is no longer the owner is a superseded watch saying goodbye —
+    # ignored entirely, or it would mark the lane unwatched while its replacement is listening.
+    _wid = (body or {}).get("watch_id")
+    if watching and _wid:
+        state.lane_watch_ids[lane] = str(_wid)
+    elif not watching and _wid and state.lane_watch_ids.get(lane) not in (None, str(_wid)):
+        return web.json_response({"ok": True, "superseded": True})
+    elif not watching and _wid:
+        state.lane_watch_ids.pop(lane, None)
     # ⚠ ONLY THIS LANE'S BATCH ENDS (spec 018 FR1). This clear used to be session-wide, so a
     # BYSTANDER lane's empty watch ended the batch of an agent that was still composing an answer
     # — and that agent's next pre-reply check was downgraded to a listen and waited a full rung.
@@ -2270,6 +3553,22 @@ async def handle_watching(request: web.Request) -> web.Response:
     else:
         state.watching_lanes.discard(lane)
     state.watch_open = bool(state.watching_lanes)
+    # A WATCH OPENING FROM `--since N` IS THIS LANE SAYING IT HAS READ THROUGH N (2026-09-30).
+    # Only a watch that RETURNS turns ever posted `/consumed`, so a lane that booted and sat in quiet
+    # watches never reported a read position, and the page counted every turn he ever spoke to it as
+    # unread. Monotonic like the consume path, persisted and broadcast the same way.
+    _raw_since = (body or {}).get("since")
+    try:
+        _since = int(_raw_since) if _raw_since is not None else None
+    except (TypeError, ValueError):
+        _since = None
+    if watching and _since is not None and _since > state.lane_consumed.get(lane, -1):
+        state.lane_consumed[lane] = _since
+        store.write_consumed_cursor(state.session, state.consumed_cursor, lanes=state.lane_consumed)
+        await _broadcast_json(state, {"type": "consumed", "cursor": state.consumed_cursor,
+                                      "pending": state.pending_turns(),
+                                      "read_through": dict(state.lane_read_through),
+                                      "lane_consumed": dict(state.lane_consumed)})
     # 🔴 THE EVENT THE TIMING LOG NEVER HAD (spec 018 FR5). Every other stage of an exchange was
     # stamped and the WAIT was not — so the log could show how long an agent took to answer and
     # never why, and the sixty-second pause JJ timed was invisible in the one place built to make
@@ -2293,9 +3592,13 @@ async def handle_watching(request: web.Request) -> web.Response:
     # is still worth acting on — it can restate before he asks again. Clearing on delivery is what
     # stops a re-armed watch announcing the same dead reply every 30 seconds forever.
     expired = state.lane_expired.pop(lane, []) if watching else []
+    # …and what DID reach him, the same way (JJ, 2026-09-29): the agent can stop wondering whether a
+    # held clip was heard, and never re-says one that was.
+    played = state.lane_played.pop(lane, []) if watching else []
     return web.json_response({"agent_state": state.agent_state, "verbose": state.verbose,
                               "lane": lane, "watching_lanes": sorted(state.watching_lanes),
-                              **({"expired": expired} if expired else {})})
+                              **({"expired": expired} if expired else {}),
+                              **({"played": played} if played else {})})
 
 
 def _will_respond(agent_state: str) -> bool:
@@ -2357,7 +3660,7 @@ async def handle_consumed(request: web.Request) -> web.Response:
         state.lane_consumed[_lane] = max(state.lane_consumed.get(_lane, -1), cursor)
     # Persisted beside the log so a server restart resumes from the real read position instead
     # of reporting every turn ever logged as pending. Best-effort: see write_consumed_cursor.
-    store.write_consumed_cursor(state.session, cursor)
+    store.write_consumed_cursor(state.session, cursor, lanes=state.lane_consumed)
     # The agent has the turn in hand. Everything from here to `say_requested` is IT thinking —
     # the stage that dominated every measurement and was invisible until it had a name.
     # THE LANE THAT TOOK THE TURN (spec 018 FR5). `consumed` is the stamp that opens the agent's
@@ -2420,29 +3723,7 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
     ws = web.WebSocketResponse(heartbeat=30.0, max_msg_size=8 * 1024 * 1024)
     await ws.prepare(request)
     state.clients.add(ws)
-    # `verbose` rides on the ready frame so the client ADOPTS it rather than pushing its own.
-    # `muted` deliberately does NOT — that is a fact about this device's microphone, and a phone
-    # muting a desktop in another room would be wrong.
-    # The wake name travels too, so the page's prompt cannot drift from what the gate accepts.
-    # Hardcoding "hey claude" in the copy is how a renamed assistant keeps telling people to say
-    # the old name.
-    await ws.send_json(
-        {"type": "ready", "session": state.session, "verbose": state.verbose,
-         "wake": config.wake_name(), "wake_phrases": list(state.wake.phrases),
-         # THE WHOLE LANE PICTURE ON CONNECT. A page that learned about lanes only from the next
-         # change event would show an empty room until somebody moved — and a phone reconnects
-         # every time it locks, so that is the common case rather than the edge one.
-         "lane": state.lanes.current, "lanes": list(state.lanes.names),
-         "broadcast": lanes_mod.BROADCAST,
-         "lane_states": dict(state.lane_states),
-         # A page that reconnects must be able to tell "listening" from "working" immediately
-         # (015 FR2), not only after the next state change — a phone reconnects every time it
-         # locks, so that is the common case rather than the edge one.
-         "watching_lanes": sorted(state.watching_lanes),
-         "lane_consumed": dict(state.lane_consumed),
-         "default_lane": state.lanes.default,
-         "waiting": {n: len(c) for n, c in state.lane_held.items() if c}}
-    )
+    await ws.send_json(await _ready_frame(state))
     # Deliver anything said while the phone was asleep, before any new audio arrives.
     try:
         delivered = await _flush_undelivered(state)
@@ -2457,7 +3738,7 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
     try:
         async for msg in ws:
             if msg.type == WSMsgType.BINARY:
-                await _on_audio(state, msg.data, loop)
+                await _on_audio(state, msg.data, loop, ws)
             elif msg.type == WSMsgType.TEXT:
                 await _on_control(state, msg.data, ws)
             elif msg.type == WSMsgType.ERROR:
@@ -2475,6 +3756,47 @@ async def handle_ws(request: web.Request) -> web.StreamResponse:
     return ws
 
 
+async def _ready_frame(state: TunnelState) -> dict:
+    """The whole picture a page needs to render, sent on connect and again on `resync`."""
+    # `verbose` rides on the ready frame so the client ADOPTS it rather than pushing its own.
+    # `muted` deliberately does NOT — that is a fact about this device's microphone, and a phone
+    # muting a desktop in another room would be wrong.
+    # The wake name travels too, so the page's prompt cannot drift from what the gate accepts.
+    # Hardcoding "hey claude" in the copy is how a renamed assistant keeps telling people to say
+    # the old name.
+    # Objective per-lane activity on the ready frame, so the fleet home view renders immediately on
+    # connect (a phone reconnects every lock) instead of waiting for the first broadcast tick.
+    # Computed in a thread — the derivation shells git and tails the logs — and cached, so cheap.
+    _activity = await asyncio.get_running_loop().run_in_executor(None, _fleet_activity)
+    return (
+        {"type": "ready", "session": state.session, "verbose": state.verbose,
+         "wake": config.wake_name(), "wake_phrases": list(state.wake.phrases),
+         # The echo guard's page half: silence the mic while a cue plays (shell.html CUE GATE).
+         "echo_guard": config.echo_guard_enabled(),
+         # THE WHOLE LANE PICTURE ON CONNECT. A page that learned about lanes only from the next
+         # change event would show an empty room until somebody moved — and a phone reconnects
+         # every time it locks, so that is the common case rather than the edge one.
+         "lane": state.lanes.current, "lanes": list(state.lanes.names),
+         # Each roster agent's own colour, so blue is magnus whoever else is up (2026-10-01).
+         "lane_colors": _lane_colors(state),
+         "lane_roles": config.lane_roles(),
+         "broadcast": lanes_mod.BROADCAST,
+         "lane_states": dict(state.lane_states),
+         # A page that reconnects must be able to tell "listening" from "working" immediately
+         # (015 FR2), not only after the next state change — a phone reconnects every time it
+         # locks, so that is the common case rather than the edge one.
+         "watching_lanes": sorted(state.watching_lanes),
+         "lane_consumed": dict(state.lane_consumed),
+         "default_lane": state.lanes.default,
+         "lane_activity": _activity,
+         "waiting": {n: len(c) for n, c in state.lane_held.items() if c},
+         "waiting_split": state.lane_waiting_split(),
+         "liaisons": {k: list(v) for k, v in state.liaisons.items()},
+         # Spec 044: the app's outputs for the page's caret, so a page that (re)loads paints it now.
+         "native_routes": _native_routes(state)}
+    )
+
+
 async def _drop_client(state: TunnelState, ws) -> None:
     """Forget a page, and everything that was only true because it existed.
 
@@ -2483,6 +3805,7 @@ async def _drop_client(state: TunnelState, ws) -> None:
     block would prove nothing about the server.
     """
     state.clients.discard(ws)
+    state.native_clients.pop(ws, None)
     if state.clients:
         return
     # The last page went away, so nothing is capturing regardless of what it last said.
@@ -2520,18 +3843,125 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
     if kind == "hello":
         sr = int(msg.get("sample_rate") or config.TARGET_SR)
         state.client_sr = sr
-        await ws.send_json({"type": "hello_ack", "server_sample_rate": config.TARGET_SR})
+        state.client_srs[ws] = sr
+        # What the page's mic ACTUALLY got — which echo canceller, NS, AGC (2026-09-30). Reported
+        # by the browser, published on `status` as `client_mic`, so an A/B of `?ec=system` can be
+        # read rather than guessed.
+        if isinstance(msg.get("mic"), dict):
+            state.client_mic = msg["mic"]
+        # A page that can play a streamed clip says so. An older shell still open in a tab would
+        # play only the FIRST piece of one and drop the rest, so `_speak_now` streams only when
+        # every connected page has declared it (a shell reload lands at the next orb-off).
+        if msg.get("streams"):
+            state.stream_clients.add(ws)
+        else:
+            state.stream_clients.discard(ws)
+        # SPEC 044: the primitive handshake. An app that lists `native` is driven from here on, and
+        # told so in the ack; anything else (a browser, an app before 0.8.0) never sees a directive.
+        client = native_mod.from_hello(msg)
+        ack: dict[str, Any] = {"type": "hello_ack", "server_sample_rate": config.TARGET_SR}
+        if client is not None:
+            state.native_clients[ws] = client
+            ack["native"] = {"protocol": client.protocol}
+        else:
+            state.native_clients.pop(ws, None)
+        await ws.send_json(ack)
+        if client is not None and "awake" in client.ops:
+            await ws.send_json({"type": "native", "op": "awake", "on": bool(state.channel_open)})
+    elif kind == "native_state":
+        # SPEC 044 FR2: what the app holds now. Correct it if it differs from the policy, and repaint
+        # every page's output caret from it.
+        client = state.native_clients.get(ws)
+        if client is None:
+            return
+        native_mod.apply_report(client, msg)
+        for d in native_mod.audio_if_needed(state.channel_open, client, state.native_pick):
+            await ws.send_json(d)
+        await _broadcast_routes(state)
+    elif kind == "route_pick":
+        # SPEC 044 FR5: his pick on the page's caret. Stored, so a restart keeps it, and applied to
+        # every driven app at once.
+        v = msg.get("value")
+        state.native_pick = int(v) if isinstance(v, (int, float)) and int(v) >= 0 else None
+        try:
+            native_mod.save_pick(config.session_dir(), state.native_pick)
+        except OSError as exc:
+            state.fail("transport", f"saving the route pick failed: {exc}")
+        for nws, client in list(state.native_clients.items()):
+            try:
+                for d in native_mod.audio_if_needed(state.channel_open, client, state.native_pick):
+                    await nws.send_json(d)
+            except Exception:
+                pass
+        await _broadcast_routes(state)
+    elif kind == "resync":
+        # The UI frame (re)loaded inside a shell whose socket never dropped (spec 023 FR4), so it
+        # asks for the ready frame again rather than a replay the shell would have to keep current.
+        # To this socket only: no other page is starting over.
+        await ws.send_json(await _ready_frame(state))
+    elif kind == "played" and str(msg.get("id") or "") == "cue-shutdown":
+        # The shutdown notice finished on the page — release the waiting shutdown. It is not an
+        # agent's clip, so none of the receipt bookkeeping below applies to it.
+        if state.shutdown_notice_played is not None:
+            state.shutdown_notice_played.set()
     elif kind == "played":
         state.last_played = str(msg.get("id") or "")
         # THE RECEIPT IS WHAT LETS THE SERVER FORGET IT (spec 022 FR2). Until this arrives the
         # clip is still the server's problem, because everything between here and his ear can
         # still drop it.
         _clip_played(state, state.last_played)
+        # HE HEARD IT, SO ITS HEADS-UP IS DONE (spec 036): the phone clears the notification. Only
+        # an UNCUT receipt does this: showing the notification never counts as hearing the clip, and
+        # neither does a clip he switched off or talked over halfway.
+        try:
+            if not msg.get("cut") and notices.resolve(state.session, state.last_played):
+                _notices_changed(state)
+        except OSError:
+            pass
+        # TELL THE OTHER DEVICES (spec 032). Every clip goes to every socket, so a backgrounded browser
+        # tab holds a copy in its queue and would play it on resume. JJ, 2026-10-09: *"when I switched
+        # back to the browser, the two turns from you played back in the browser again, as if I hadn't
+        # heard them in the app."* The receiving pages drop that id from their queues.
+        if state.last_played:
+            for other in list(state.clients):
+                if other is ws:
+                    continue
+                try:
+                    await other.send_json({"type": "clip_played", "id": state.last_played})
+                except Exception:
+                    state.clients.discard(other)
+        for _r in state.recent_spoken:                   # the echo window runs from here (echo.py)
+            if _r.get("id") == state.last_played:
+                _r["played_at"] = time.time()
         # 🔴 THE LANE THIS CLIP ACTUALLY BELONGED TO (spec 024), looked up by its own id rather
         # than read from a slot the next clip may already have overwritten.
         owner = state.clip_owner.pop(state.last_played, None) \
             or state.speaking_lane or state.lanes.current
-        timing.stamp(state.session, "played", clip=state.last_played, lane=owner)
+        # HOW IT ENDED (JJ, 2026-10-05: *"an agent should be aware of whether or not their turn
+        # played or not or was interrupted by me speaking"*). The page sends `cut` when something
+        # stopped the clip before its end — `barge_in` (he talked over it), `channel_off` (he turned
+        # the orb off), `stopped` (capture was rebuilt) — with how far in he got. Without it a clip
+        # he cut off after two seconds was reported as heard, and its agent built on an answer he
+        # never got. Measured 2026-10-05: a barge-in on rigel at 17:38:46.990, `played` 13 ms later.
+        cut = msg.get("cut") if isinstance(msg.get("cut"), str) else None
+        cut_info = {}
+        if cut:
+            cut_info = {"cut": cut[:20]}
+            for k in ("heard_s", "duration_s"):
+                v = msg.get(k)
+                if isinstance(v, (int, float)):
+                    cut_info[k] = round(float(v), 1)
+        timing.stamp(state.session, "played", clip=state.last_played, lane=owner, **cut_info)
+        # TELL THE AGENT (JJ, 2026-09-29) — recorded for its next watch-open, see `lane_played`.
+        if state.last_played and owner:
+            heard = state.lane_played.setdefault(str(owner), [])
+            heard.append({"clip": state.last_played,
+                          "text": state.clip_text.pop(state.last_played, ""),
+                          "played_at": round(time.time(), 1), **cut_info})
+            del heard[:-config.UNDELIVERED_MAX]
+            # The idle anchor moves with every receipt, cut or not (spec 024 FR2/KD6).
+            state.lane_last_played[str(owner)] = {"clip": state.last_played,
+                                                  "played_at": round(time.time(), 2)}
         # Playback finished, so the agent is no longer speaking. The client is the only party
         # that knows when a clip actually ended — the server only knows when it finished
         # sending — so the receipt is what closes the state machine back to idle.
@@ -2613,6 +4043,11 @@ async def _on_control(state: TunnelState, raw: str, ws: web.WebSocketResponse) -
                 # buried another's.
                 state.clear_error("transport")
                 state.last_error = state.errors.get("tts") or None
+            # NOTE (JJ, 2026-09-24): held per-lane clips are deliberately NOT flushed on reopen. He
+            # wants them WAITING as raised hands until he goes to each lane — "I would want the turns
+            # waiting for me ... so I hear my agent's reports." The real cause of "no sound after a
+            # toggle" was a CLIENT bug (a stale cross-context audio analyser), fixed in index.html;
+            # flushing here would auto-play and, worse, pop clips the dead context never played.
         await _broadcast_json(state, {"type": "channel", "value": state.channel_open})
         # Same reason as mute above: closing the channel is HIS state, not the agent's, and
         # publishing it as agent_state destroys the agent's.
@@ -2742,10 +4177,19 @@ async def _maybe_barge(state: TunnelState, samples: np.ndarray) -> None:
         state.clip_owner[interrupted_clip] = _owner
 
 
-async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventLoop) -> None:
+def _client_rate(state: TunnelState, ws: Any) -> int:
+    """The rate THIS socket announced; a socket that never said `hello` is taken at the target rate."""
+    if ws is None:
+        return state.client_sr
+    return state.client_srs.get(ws, config.TARGET_SR)
+
+
+async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventLoop,
+                    ws: Any = None) -> None:
     samples = asr_mod.pcm16_to_float32(raw)
-    if state.client_sr != config.TARGET_SR:
-        samples = asr_mod.resample_linear(samples, state.client_sr, config.TARGET_SR)
+    rate = _client_rate(state, ws)
+    if rate != config.TARGET_SR:
+        samples = asr_mod.resample_linear(samples, rate, config.TARGET_SR)
     state.frames_received += 1
     state.samples_received += samples.size
     state.last_audio_at = time.monotonic()
@@ -2762,7 +4206,10 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
     # Reading the live lane at the END of that pipeline delivers his words to whoever he switched
     # TO, which is an agent he was never talking to and cannot un-hear them.
     speaking_before = bool(state.buffer.speech_active)
+    utterance_before = state.buffer.utterance_id
     completed = state.buffer.feed(samples)
+    if state.buffer.speech_active or getattr(state.buffer, "utterance_open", False):
+        state.last_speech_at = time.monotonic()
     if not speaking_before and state.buffer.speech_active:
         # 🔬 EVIDENCE (2026-09-02): a turn routed to a lane he had not tapped, and the logs could not
         # say why because the latch was never stamped. Now the silence→speech edge records which lane
@@ -2776,15 +4223,19 @@ async def _on_audio(state: TunnelState, raw: bytes, loop: asyncio.AbstractEventL
             timing.stamp(state.session, "utterance_latch_stale",
                          held=state.utterance_lane, live=state.lanes.current)
     if completed is None:
+        _maybe_commit(state, loop)
         _maybe_partial(state, loop)
         return
+    # This turn's pieces leave with it, BEFORE any await: the next utterance can start committing
+    # while `_emit` is still transcribing this one's tail.
+    pieces = _take_pieces(state, utterance_before)
     # RAISED BEFORE THE FIRST AWAIT, and that ordering is the whole point. Between the buffer
     # emptying and the turn reaching the log, both speech signals read false while he has in fact
     # just spoken — and `_emit` awaits the recognizer, so `/status` IS served inside that window.
     # Counting from here closes it. See TunnelState.speech_pending.
     state.speech_pending += 1
     try:
-        await _emit(state, completed, loop)
+        await _emit(state, completed, loop, pieces)
     finally:
         state.speech_pending = max(0, state.speech_pending - 1)
 
@@ -2804,7 +4255,16 @@ def _maybe_partial(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
         return
     if not state.buffer.speech_active:
         return
-    audio = state.buffer.snapshot()
+    # ONLY THE UNCOMMITTED TAIL (2026-10-06). The preview used to re-decode the WHOLE turn every
+    # 0.7 s: on a minute-long turn that held the model, and four cores, for seconds at a time, and
+    # the final decode queued behind it. The pieces already committed are text; prefix them.
+    p = state.pieces
+    prefix = ""
+    if p.usable(state.buffer.utterance_id) and p.upto is not None:
+        audio = state.buffer.span(p.upto)
+        prefix = asr_mod.join_pieces(p.texts)
+    else:
+        audio = state.buffer.snapshot()
     if audio is None or audio.size == 0:
         return
     state.partial_busy = True
@@ -2812,7 +4272,8 @@ def _maybe_partial(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
 
     async def run() -> None:
         try:
-            text = await loop.run_in_executor(None, state.recognizer.try_transcribe, audio)
+            tail = await loop.run_in_executor(None, state.recognizer.try_transcribe, audio)
+            text = asr_mod.join_pieces([prefix, tail or ""]) if prefix else tail
             if text and text != state.partial_text:
                 state.partial_text = text
                 await _broadcast_json(state, {"type": "partial", "text": text})
@@ -2824,20 +4285,87 @@ def _maybe_partial(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
     loop.create_task(run())
 
 
+def _maybe_commit(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
+    """Transcribe the next piece of the in-flight turn if he is pausing right now.
+
+    One piece in flight at a time, so pieces finish in order; a pause that arrives while one is
+    still decoding is skipped and the next piece simply runs longer. Scheduled, never awaited:
+    audio ingest must not block on ASR."""
+    pause_ms = config.asr_commit_pause_ms()
+    if pause_ms <= 0:
+        return
+    b = state.buffer
+    p = state.pieces
+    if p.base != b.utterance_id:
+        # A new utterance — or the last one was discarded as noise, which `feed` reports the same
+        # way as "not finished". Old indices would point into the wrong audio.
+        p = state.pieces = _Pieces(b.utterance_id)
+    if p.failed or (p.task is not None and not p.task.done()):
+        return
+    start = p.upto if p.upto is not None else b.onset_index()
+    end = b.commit_point(start, int(b.sr * pause_ms / 1000), int(b.sr * config.asr_commit_min_s()))
+    if end is None:
+        return
+    audio = b.span(start, end)
+    p.upto = end  # claimed synchronously, so the same pause cannot cut the piece twice
+    slot = len(p.texts)
+    p.texts.append("")
+
+    async def run() -> None:
+        try:
+            text = await loop.run_in_executor(
+                None, lambda: state.recognizer.transcribe(audio, piece=True))
+            p.texts[slot] = text
+            timing.stamp(state.session, "asr_piece", audio_s=round(audio.size / b.sr, 2),
+                         chars=len(text))
+        except Exception as exc:  # a lost piece must not lose words: fall back to a whole decode
+            p.failed = True
+            state.fail("asr", f"piece: {exc}")
+
+    p.task = loop.create_task(run())
+
+
+def _take_pieces(state: TunnelState, utterance_id: int) -> _Pieces | None:
+    """Hand the closed turn its pieces and start the next turn clean. None when the pieces belong
+    to some other utterance, so the turn decodes whole."""
+    p, state.pieces = state.pieces, _Pieces()
+    if not p.usable(utterance_id):
+        return None
+    p.cut = state.buffer.last_cut
+    return p
+
+
+async def _transcribe_turn(state: TunnelState, samples, loop: asyncio.AbstractEventLoop,
+                           pieces: _Pieces | None) -> str:
+    """The turn's text: the pieces already transcribed at his pauses plus the tail, or one whole
+    decode when there are no usable pieces."""
+    if pieces is not None and pieces.task is not None:
+        await pieces.task  # the last piece may still be decoding; it never raises
+    if pieces is None or pieces.failed or pieces.upto is None or pieces.upto <= pieces.cut:
+        return await loop.run_in_executor(None, state.recognizer.transcribe, samples)
+    tail = samples[pieces.upto - pieces.cut:]
+    tail_text = await loop.run_in_executor(
+        None, lambda: state.recognizer.transcribe(tail, piece=True))
+    return asr_mod.join_pieces([*pieces.texts, tail_text])
+
+
 async def _flush(state: TunnelState, loop: asyncio.AbstractEventLoop) -> None:
+    utterance_before = state.buffer.utterance_id
     completed = state.buffer.flush()
+    pieces = _take_pieces(state, utterance_before)
     if completed is not None:
         # Same accounting as the ingest path: a flush is a close, and its turn is pending until
         # it is in the log. This is the path a mute, an orb tap or a dropped socket takes, which
         # is exactly when an agent is most likely to be asking whether he has finished.
         state.speech_pending += 1
         try:
-            await _emit(state, completed, loop)
+            await _emit(state, completed, loop, pieces)
         finally:
             state.speech_pending = max(0, state.speech_pending - 1)
 
 
-async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) -> None:
+async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop,
+                pieces: _Pieces | None = None) -> None:
     """Transcribe a completed utterance, gate it, log it, and tell the client."""
     samples, t_start, t_end = completed
     # The clock the USER experiences starts the moment they stop talking, not when we finish
@@ -2855,9 +4383,21 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # transcribing."* Holding the name is the entire fix.
     opener = state.lanes.current
     await _set_agent_state(state, "transcribing", opener)
-    # ASR is CPU-bound; keep it off the event loop or audio ingest stalls.
-    text = await loop.run_in_executor(None, state.recognizer.transcribe, samples)
-    timing.stamp(state.session, "transcribed", chars=len(text or ""))
+    # A sound the instant transcription starts, so the gap after he stops speaking is audible as
+    # "working on your words" rather than silence (JJ, 2026-09-14). This is the live lane by
+    # construction — `opener` is the lane that had the floor when he spoke.
+    # ⚠ BEHIND A TOGGLE since 2026-09-30 (COMMAND_BRIDGE_TRANSCRIBING_CUE). It fires on ANY sound
+    # the endpointer closes — before ASR and the voiceprint have said whether it was him — so on a desk
+    # mic its own chime, picked back up, closed another "utterance" and fired it again. JJ: *"that cue
+    # sound when you hear me plays regardless of … you recognize me or just any sound … can we put it
+    # behind a toggle and turn off that toggle?"*
+    if config.transcribing_cue_enabled():
+        await _push_cue(state, "transcribing")
+    # ASR is CPU-bound; keep it off the event loop or audio ingest stalls. With pieces committed at
+    # his pauses, only the tail is decoded here.
+    text = await _transcribe_turn(state, samples, loop, pieces)
+    timing.stamp(state.session, "transcribed", chars=len(text or ""),
+                 pieces=len(pieces.texts) if pieces is not None else 0)
     if not text:
         # No cue here: nothing was heard, and a sound would announce a turn that does not exist.
         await _set_agent_state(state, "idle", opener)
@@ -2893,6 +4433,21 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         wake_said, speaker, similarity, owner=config.owner_name(),
         grant=grant, scored=scored,
     )
+    # THE ECHO GUARD (echo.py, behind COMMAND_BRIDGE_ECHO_GUARD). An agent's own clip coming back
+    # through his desk mic can pass both gates above — it was spoken inside the conversation window,
+    # and the voiceprint is not a hard veto — so it is checked against what was just played, which is
+    # the one thing the tool knows for certain. Logged, not discarded, so a false drop is findable.
+    if config.echo_guard_enabled():
+        from . import echo as echo_mod
+        _echoed = echo_mod.match(text, echo_mod.candidates(state.recent_spoken, time.time()))
+        # (The server-side CUE check — `echo.cue_blip` — ran here and was REMOVED the same day: at
+        # 14:08 it dropped his real "ship it" to dexter, which overlapped a cue. The page now ships
+        # silence while a cue plays (shell.html CUE GATE), which stops cue blips at the source, so a
+        # text rule that can only guess from word count was all risk and no remaining benefit.)
+        if _echoed is not None:
+            addressed, reason = False, "echo"
+            timing.stamp(state.session, "echo_dropped", text=(text or "")[:80],
+                         clip=_echoed[:80])
 
     # WHICH agent was this for (spec 012). Resolved here, ONCE, on the same pass as the wake
     # verdict — before the window bookkeeping below, because a refusal has to wind the window back
@@ -2939,6 +4494,9 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
         state.ambiguous += 1
         state.last_ambiguous = list(routing.candidates)
     lane = routing.lane
+    # GUEST MODE (spec 042): on a guest lane a voice the voiceprint does not know (a guest in the
+    # room) is addressed anyway and tagged, so the lane's agent hears him. Echo and refusals stand.
+    addressed, reason, guest_speaker = guest.admit(addressed, reason, lane, state.guest_lanes)
 
     if not addressed:
         state.wake.mark_addressed(window_anchor)
@@ -2950,21 +4508,31 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     # A SWITCH ONLY LANDS ON AN ADDRESSED TURN. The wake gate can reject a greeting-led utterance
     # it heard from a confident stranger, and a stranger must not be able to move his conversation
     # to a different agent by saying a name out loud in the room.
-    moved = state.lanes.apply(routing) if addressed else False
+    # A GUEST NEVER SWITCHES (spec 042): a guest saying an agent's name reaches the guest lane's
+    # agent, it does not move the owner's conversation.
+    moved = state.lanes.apply(routing) if (addressed and not guest_speaker) else False
     if moved:
         await _set_lane(state, state.lanes.current, why="wake")
+
+    # A BARE SUMMONS — "hey rigel" and nothing else — moves him and asks nobody anything (JJ,
+    # 2026-10-05: *"switching lanes with the wake word, but that not triggering the agent to
+    # respond"*). So it is logged UNADDRESSED, which keeps it out of every agent's `watch` and out of
+    # the unread count that would refuse their next `say`. Only the LOG entry: the window above was
+    # already opened by it, so what he says next still reaches the lane he just moved to.
+    summons_only = addressed and lanes_mod.is_bare_summons(text, state.lanes.names)
 
     turn = store.append_turn(
         session=state.session,
         text=agent_text,
         t_start=t_start,
         t_end=t_end,
-        addressed=addressed,
-        reason=reason,
+        addressed=addressed and not summons_only,
+        reason="summons" if summons_only else reason,
         # FR3: the turn carrying the wake word belongs to the NEW lane, instruction and all —
         # switching on turn N and routing on N+1 would lose the sentence he cared about.
         lane=lane,
         stamp_lane=True,
+        speaker=guest_speaker,
     )
     state.turns_logged += 1
     timing.stamp(state.session, "turn_logged", turn=turn.get("id"),
@@ -3017,19 +4585,66 @@ async def _emit(state: TunnelState, completed, loop: asyncio.AbstractEventLoop) 
     await _set_agent_state(state, "idle", opener)
 
 
-def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web.Application:
-    app = web.Application()
+LAN_OPEN_PATHS = frozenset({"/pair/exchange"})
+"""The only LAN route a request may reach without the key or the token: its one-time code is the
+credential (spec 031), and `_check`-free handlers still enforce the Wi-Fi subnet."""
+
+
+@web.middleware
+async def _lan_gate(request: web.Request, handler):
+    """NOTHING ANONYMOUS ON THE HOME WI-FI (spec 034 FR2). On the tunnel a browser sign-in stood in
+    front of every route, so the pages and the canvas were left open on loopback. The LAN has nothing
+    in front of it: every request that arrives there needs a subnet peer AND the device key or the
+    token, before any handler runs. The loopback listener is untouched."""
+    if not _on_lan(request) or request.path in LAN_OPEN_PATHS:
+        return await handler(request)
+    ok, reason = _check(request, request.app["state"])
+    if not ok:
+        return web.json_response({"error": reason, "code": "lan_auth",
+                                  "remedy": "pair the phone app, or open the page with ?token="},
+                                 status=403)
+    resp = await handler(request)
+    # A browser page opened with ?token= gets the token as an HttpOnly cookie, so the frames and
+    # requests it makes afterwards (which carry no query) are authenticated too.
+    tok = request.query.get("token")
+    if tok and isinstance(resp, web.Response) and not resp.prepared:
+        resp.set_cookie(LAN_TOKEN_COOKIE, tok, httponly=True, samesite="Strict", path="/")
+    return resp
+
+
+def build_app(session: str, token: str | None, gate_enabled: bool = True,
+              lan: dict[str, Any] | None = None) -> web.Application:
+    app = web.Application(middlewares=[_lan_gate])
+    # The home-Wi-Fi listener (spec 034): {ip, subnet, url}, or None when `serve` ran without --lan.
+    app["lan"] = lan
     app["state"] = TunnelState(session, token, gate_enabled)
     app.add_routes(
         [
             web.get("/", handle_index),
+            web.get("/ui", handle_ui),
+            # Vendored JS the self-contained parent page needs (d3-force for the fleet layout, spec
+            # 021). Local, not a CDN — the parent holds the audio and must not depend on the network;
+            # unauthenticated like the page (the library is not secret, the token gates the socket).
+            web.static("/vendor/", os.path.join(WEB_DIR, "vendor")),
             web.get("/meeting", handle_meeting),
             web.get("/health", handle_health),
+            web.get("/android/command-bridge.apk", handle_android_apk),
+            web.get("/pair", handle_pair_page),
+            web.get("/notify/wait", handle_notify_wait),
+            web.post("/liaison", handle_liaison),
+            web.post("/guest", handle_guest),
+            web.post("/pair/new", handle_pair_new),
+            web.post("/pair/exchange", handle_pair_exchange),
             web.get("/status", handle_status),
+            web.get("/history", handle_history),
             web.post("/say", handle_say),
             web.post("/shutdown", handle_shutdown),
             web.post("/consumed", handle_consumed),
             web.post("/watching", handle_watching),
+            web.post("/brief", handle_brief),
+            web.post("/briefs/take", handle_briefs_take),
+            web.post("/idle/fired", handle_idle_fired),
+            web.get("/fleet/state", handle_fleet_state),
             web.post("/cue", handle_cue),
             web.post("/rate", handle_rate),
             web.post("/verbose", handle_verbose),
@@ -3043,6 +4658,14 @@ def build_app(session: str, token: str | None, gate_enabled: bool = True) -> web
     # time; the store/follower threads start on serve (init_canvas), not here, so tests stay inert.
     from .canvas import aio as canvas_aio
     canvas_aio.setup(app)
+    # Objective fleet activity is pushed on a cadence while the server runs (spec 021). Created on
+    # startup and cancelled on cleanup, so a test that only BUILDS the app (never serves it) stays
+    # inert — the task starts with the event loop, not at build time.
+    app.on_startup.append(_start_fleet_broadcaster)
+    # Reload held clips a graceful restart left behind, so the agents' raised hands survive it (JJ,
+    # 2026-09-24). Inert in tests: no leftover file, no-op.
+    app.on_startup.append(_restore_held_on_startup)
+    app.on_cleanup.append(_stop_fleet_broadcaster)
     return app
 
 
@@ -3052,6 +4675,7 @@ def run(
     port: int = config.DEFAULT_PORT,
     token: str | None = None,
     gate_enabled: bool = True,
+    lan: dict[str, Any] | None = None,
 ) -> None:
     store.validate_session(session)
     if token is None:
@@ -3063,7 +4687,9 @@ def run(
             "refusing to bind a non-loopback interface without a token; set COMMAND_BRIDGE_TOKEN"
         )
 
-    app = build_app(session, token, gate_enabled)
+    if lan and not token:
+        raise SystemExit("refusing to listen on the home Wi-Fi without a token")
+    app = build_app(session, token, gate_enabled, lan)
 
     # Load the voice model NOW, on a background thread, so the ~4 s load does not land on the
     # first thing the agent says. That is the worst possible place for it: the user has just
@@ -3087,13 +4713,14 @@ def run(
     print("  ^ GIVE THIS URL to whoever will talk — including the ?token=, which the mic needs",
           flush=True)
     print(f"  session            {session}", flush=True)
-    # The FIRST thing an agent reads after starting the tunnel, because it is the one instruction
-    # this CLI cannot enforce on its own. Everything else here makes staying in `watch` the easy
-    # path; nothing makes an agent RE-ENTER once it has fallen out, and that is the failure this
-    # project keeps hitting — five times in one session, always the same shape: answer in prose,
-    # end the turn, and the person on the phone is talking to nobody.
-    print("  watchdog           register a ~1/min job in YOUR harness that re-arms `watch` "
-          "(see `command-bridge describe` -> watchdog)", flush=True)
+    # The re-entry reality, stated where an agent reads it after starting the tunnel. Everything
+    # here makes staying in `watch` the easy path, and a blocking watch — re-invoked by the harness
+    # when a long one is backgrounded — is what re-enters you. The failure this project keeps
+    # hitting is a turn that ENDS ON PROSE: answer in prose, end the turn without re-arming, and the
+    # person on the phone is talking to nobody. (The watchdog job that used to guard this was
+    # retired 2026-09-17.)
+    print("  re-arm             end every turn in `watch` — FOREGROUND by default (it blocks and "
+          "returns when he speaks); background it only while you have OTHER work or he is away", flush=True)
     print(f"  log                {store.log_path(session)}", flush=True)
     # The banner is what the operator reads before speaking, so it has to say the phrase. Without
     # this line the one thing you must know to use the tool at all was the one thing it never
@@ -3147,5 +4774,14 @@ def run(
     # canvas is not showing. Sync the canvas to the voice live lane once, here, where both are known.
     from .canvas import server as _canvas
     _canvas.set_live(app["state"].lanes.current)
+    # Liaison mode survives a restart (spec 037): the canvas learns it before any edit arrives.
+    _canvas.set_liaisons(app["state"].liaisons)
     print(f"  canvas             {restored} frame(s) restored, on this same server", flush=True)
-    web.run_app(app, host=host, port=port, print=None)
+    if lan:
+        # ALSO the Wi-Fi address and only that one (spec 034 FR1): never 0.0.0.0, never the
+        # corporate Ethernet or a VPN adapter. Same app, so the LAN gate sees every request.
+        print(f"  home wi-fi         {lan['url']}  (key or token required on every route; "
+              f"peers in {lan['subnet']} only)", flush=True)
+        web.run_app(app, host=[host, lan["ip"]], port=port, print=None)
+    else:
+        web.run_app(app, host=host, port=port, print=None)

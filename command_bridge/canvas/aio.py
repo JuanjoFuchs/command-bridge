@@ -32,38 +32,66 @@ def _sse(event: str, payload: dict) -> bytes:
     return ("event: %s\ndata: %s\n\n" % (event, json.dumps(payload))).encode()
 
 
-# THE PARENT DOCUMENT'S SIGNATURE, so a `reload` can tell a canvas change from a parent change
-# (spec 013 FR5). `web/index.html` is the PARENT — it holds the AudioContext and the voice socket —
-# and the canvas is an iframe inside it. A page.py edit reloads only the iframe (audio untouched); an
-# index.html edit is the one that still needs a full parent reload. This tracks what the parent was
-# last known to hold so `handle_reload` can spot when index.html itself moved. Seeded in `setup()`.
-_index_sig: str | None = None
+# THE TWO PAGE DOCUMENTS' SIGNATURES (spec 023). `web/shell.html` is the top-level AUDIO SHELL — it
+# holds the AudioContext, the microphone and the voice socket — and `web/index.html` is the UI frame
+# inside it, which in turn holds the canvas iframe. A UI edit reloads only the UI frame, live; a
+# shell edit is the one change that still needs a full, deferred reload (FR6).
+#
+# Each page is SERVED stamped with the signature of the file it came from (`stamp_page`), and a
+# `reload` event carries the signatures now on disk, so the open page compares the two and decides
+# for itself. That is what closes the old gap where a server restart re-baselined the server's own
+# record and a pushed reload then reported `canvas` to a tab still running the old page.
+#
+# `_sigs` is only what `reload` REPORTS back to the CLI (which file moved since the last reload);
+# the page never depends on it. Seeded in `setup()`.
+SHELL_PAGE = "shell.html"
+UI_PAGE = "index.html"
+SIG_PLACEHOLDER = "__CB_PAGE_SIG__"
+_sigs: dict[str, str | None] = {}
 
 
-def _index_signature() -> str | None:
-    """SHA-256 of the parent document on disk, or None if it cannot be read.
+def _web_path(name: str) -> str:
+    """Kept in this module (not imported from server.WEB_DIR) so the canvas shell has no load-time
+    dependency on the voice server; the directory is the same `command_bridge/web/`."""
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", name)
 
-    Kept in this module (not imported from server.WEB_DIR) so the canvas shell has no load-time
-    dependency on the voice server; the path is the same `command_bridge/web/index.html`."""
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "index.html")
+
+def page_signature(name: str) -> str | None:
+    """A short SHA-256 of one page document on disk, or None if it cannot be read."""
     try:
-        with open(path, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
+        with open(_web_path(name), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:16]
     except OSError:
         return None
 
 
-def _reload_target(prev_sig: str | None, cur_sig: str | None) -> str:
-    """Which document a pushed reload is for: `page` (a full PARENT reload — spec 013 FR5) only when
-    the parent document actually changed since it was last hashed, else `canvas` (the iframe reloads
-    itself, audio untouched — FR1).
+def stamp_page(name: str) -> tuple[str, str | None] | None:
+    """The page's text with its own signature written in where `SIG_PLACEHOLDER` stands, or None if
+    the file cannot be read. Hashing the bytes that are served is what makes the stamp true."""
+    try:
+        with open(_web_path(name), "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    sig = hashlib.sha256(raw).hexdigest()[:16]
+    return raw.decode("utf-8").replace(SIG_PLACEHOLDER, sig), sig
 
-    Biased to `canvas` on any uncertainty — a first-ever hash (`prev` None) or an unreadable file
-    (`cur` None). `page` is the expensive verdict: it drops the audio, so it is returned only on
-    positive evidence that the parent moved, never on a guess."""
-    if prev_sig is None or cur_sig is None:
-        return "canvas"
-    return "page" if cur_sig != prev_sig else "canvas"
+
+def _reload_target(prev: dict[str, str | None], cur: dict[str, str | None]) -> str:
+    """What a pushed reload will do, for the CLI's report: `page` (a full, deferred reload) when the
+    SHELL changed since the last reload, `ui` (the UI frame reloads live) when the UI changed, else
+    `canvas` (only the canvas iframe reloads).
+
+    Biased away from `page` on any uncertainty — a first-ever hash or an unreadable file. `page` is
+    the expensive verdict: it waits for the orb to go off, so it is reported only on evidence."""
+    def moved(name: str) -> bool:
+        a, b = prev.get(name), cur.get(name)
+        return a is not None and b is not None and a != b
+    if moved(SHELL_PAGE):
+        return "page"
+    if moved(UI_PAGE):
+        return "ui"
+    return "canvas"
 
 
 async def handle_events(request: web.Request) -> web.StreamResponse:
@@ -155,6 +183,10 @@ async def handle_inspected(request: web.Request) -> web.Response:
     return await _apply(request, "/inspected")
 
 
+async def handle_rendered(request: web.Request) -> web.Response:
+    return await _apply(request, "/rendered")
+
+
 async def handle_draw(request: web.Request) -> web.Response:
     """`POST /draw` — the human handed over a sketch (spec 015 T3). An INBOUND-from-the-page route,
     sibling of `/placed` and `/inspected` (root-level, not under /canvas/ where the agent's ops live):
@@ -162,6 +194,24 @@ async def handle_draw(request: web.Request) -> web.Response:
     live lane and surfaces the canvas turn. Kept off the agent's `/frame` verb on purpose — see the
     `/draw` comment in canvas.server."""
     return await _apply(request, "/draw")
+
+
+async def handle_canvas_file(request: web.Request) -> web.StreamResponse:
+    """`GET /canvas/file/<lane>/<name>` — an IMAGE frame's pixels (spec 022). The frame carries this
+    URL instead of the bytes, so a png an agent drops into its lane folder renders without being
+    inlined anywhere. Only a plain file name directly inside a lane folder, and only an image type:
+    no separators, no traversal, and never the frame sources or the index."""
+    from . import folder as fs
+    lane, name = request.match_info["lane"], request.match_info["name"]
+    ext = os.path.splitext(name)[1].lower()
+    if (not canvas._store.enabled or "/" in name or "\\" in name or ".." in name
+            or fs.ignored(name) or ext not in fs.IMAGE_TYPES):
+        return web.json_response({"error": "not found"}, status=404)
+    path = canvas._store.lane_dir(lane) / name
+    if not path.is_file():
+        return web.json_response({"error": "not found"}, status=404)
+    return web.FileResponse(path, headers={"Content-Type": fs.IMAGE_TYPES[ext],
+                                           "Cache-Control": "no-store"})
 
 
 async def handle_canvas_page(request: web.Request) -> web.Response:
@@ -190,17 +240,48 @@ async def handle_canvas_status(request: web.Request) -> web.Response:
     """The canvas half of `command-bridge status` (spec 005 FR4): which lane is live and the frames
     present per lane. A GET — the draw ops are POSTs under /canvas/<op> — so it never mutates.
     Optional ?lane= scopes the frame list to one lane."""
+    from .folder import wall_of_text
+
     which = request.query.get("lane") or ""
+
+    def advice(f: dict) -> dict:
+        # spec 022: with no `set` to return them, the draw-time feedback rides on each frame here —
+        # its file, a render failure the page reported, and the wall-of-text advisory.
+        out: dict = {}
+        if f.get("file"):
+            out["file"] = f["file"]
+        if f.get("render_error"):
+            out["render_error"] = f["render_error"]
+        nudge = wall_of_text(str(f.get("content") or ""), str(f.get("kind") or ""))
+        if nudge:
+            out["wall_of_text"] = nudge
+        return out
+
     with canvas._lock:
         live = canvas._live
         clients = len(canvas._subscribers)
         lanes = {
-            lane: [{"id": f.get("id"), "kind": f.get("kind"), "title": f.get("title", "")}
+            lane: [{"id": f.get("id"), "kind": f.get("kind"), "title": f.get("title", ""),
+                    **advice(f),
+                    # spec 019 FR2: each frame carries its legibility — the page-measured effective
+                    # min font, the contain-fit scale, and `readable` against READABLE_PX. Null when
+                    # no page is connected (nothing to measure), the same contract as the viewport.
+                    **canvas.frame_legibility(
+                        (canvas._geometry.get(lane) or {}).get(f.get("id")) if clients else None)}
                    for f in frames.values()]
             for lane, frames in canvas._lanes.items()
             if not which or lane == which
         }
-    return web.json_response({"live_lane": live, "clients": clients, "lanes": lanes})
+        # The viewport of the lane being reported (the one in question, else the live one), with its
+        # DERIVED aspect ratio (spec 018 FR3) so `command-bridge status` — which folds this in under
+        # `canvas` — carries the canvas shape an agent authors toward. Null when no page is connected
+        # (there is no viewport, and a stale one is a lie), exactly as the standalone `_status` does.
+        vp = canvas.viewport_with_aspect(canvas._viewport.get(which or live)) if clients else None
+    # spec 022: where each lane's frames live — the folder an agent writes a file into to draw.
+    folder = canvas.lane_folder(which or live)
+    return web.json_response({"live_lane": live, "clients": clients, "lanes": lanes,
+                              "viewport": vp, "folder": folder,
+                              "canvas_dir": str(canvas._store.root) if canvas._store.enabled else None})
 
 
 def init_canvas(session: str = "dev", fresh: bool = False, follow: bool = True) -> int:
@@ -208,22 +289,13 @@ def init_canvas(session: str = "dev", fresh: bool = False, follow: bool = True) 
     persisted canvas, start the debounced writer, and start the voice-lane follower. Returns the
     number of frames restored. Call once, on serve — not at app creation (it starts threads)."""
     from .follow import Follower
-    from .store import Store
 
     # spec 015 AC4: the canvas surfaces a human draw as a turn in THIS session's log — the same one
     # the voice server appends to and `command-bridge watch` reads — so the two share one turn stream.
     canvas._session = session
-    canvas._store = Store()
-    restored = 0
-    if not fresh:
-        lanes, geo, live = canvas._store.load()
-        with canvas._lock:
-            canvas._lanes.update(lanes)
-            canvas._geometry.update(geo)
-            if live:
-                canvas._live = live
-        restored = sum(len(f) for f in lanes.values())
-    canvas._store.start(canvas._canvas_snapshot)
+    # spec 022: the canvas is the lane folders under sessions/<session>.canvas/, and a watcher turns
+    # every file an agent writes there into a frame. The old single JSON is migrated once, here.
+    restored = canvas.start_folder(session, fresh=fresh)
 
     # Soft: with no voice tunnel this finds nothing, says so in status, and never mentions it again.
     canvas._follower = Follower(session=session, enabled=follow)
@@ -239,17 +311,19 @@ async def handle_reload(request: web.Request) -> web.Response:
     `stop`+`serve` — which drops the audio, the lanes and every other agent. Instead: re-import the
     page module IN PLACE, re-bind the running server's view of it, then fan a `reload` event.
 
-    spec 013 — WHICH document reloads. The parent document (`web/index.html`) holds the AudioContext
-    and the voice socket; the canvas is an `<iframe>` inside it. So a `reload` carries a `target`:
-    `canvas` (the default) tells the iframe to reload ITSELF while the parent — and the audio — is
-    never touched; `page` tells the parent to do the full, defer-while-live reload it always did.
-    The target is `page` only when `index.html` itself changed (FR5); a page.py edit is `canvas`, so
-    iterating on the canvas costs nothing audible. The voice WebSocket, the lanes and the turn log
-    are never touched. Content/state updates already stream live over `/events`; this is only for
-    changes to a page's own code. Unauthenticated like the page it reloads."""
+    spec 013 + 023 — WHICH document reloads. The audio shell (`web/shell.html`) holds the
+    AudioContext, the microphone and the voice socket; the UI frame (`web/index.html`) sits inside it
+    and the canvas iframe inside that. The event always carries `shell_sig` and `ui_sig`, the
+    signatures now on disk: the canvas iframe reloads itself on every event (spec 013), the shell
+    reloads the UI frame when the UI's stamp differs — immediately, even while live — and does its
+    own full reload, deferred until the orb is off, only when the shell's stamp differs. `target` is
+    the server's report of which of those the edit needed (`canvas` | `ui` | `page`). The voice
+    WebSocket, the lanes and the turn log are never touched. Content/state updates already stream
+    live over `/events`; this is only for changes to a page's own code. Unauthenticated like the
+    page it reloads."""
     import importlib
     from . import page as _page
-    global _index_sig
+    global _sigs
     try:
         importlib.reload(_page)
     except Exception as exc:                       # noqa: BLE001 — a broken edit must not kill the server
@@ -258,10 +332,10 @@ async def handle_reload(request: web.Request) -> web.Response:
              "detail": str(exc)[:300]}, status=500)
     canvas.PAGE_VERSION = _page.PAGE_VERSION        # re-bind the names server.py imported at startup
     canvas.render = _page.render
-    cur_sig = _index_signature()
-    target = _reload_target(_index_sig, cur_sig)
-    _index_sig = cur_sig
-    n = canvas.publish("reload", {"target": target})
+    cur = {SHELL_PAGE: page_signature(SHELL_PAGE), UI_PAGE: page_signature(UI_PAGE)}
+    target = _reload_target(_sigs, cur)
+    _sigs = cur
+    n = canvas.publish("reload", {"target": target, "shell_sig": cur[SHELL_PAGE], "ui_sig": cur[UI_PAGE]})
     return web.json_response({"reloaded": n, "version": _page.PAGE_VERSION, "target": target,
                               "full_reload": target == "page"})
 
@@ -270,15 +344,21 @@ def setup(app: web.Application) -> None:
     """Register the canvas routes on command-bridge's aiohttp app. Additive only — the voice routes
     are untouched. The page's own URLs (/events, /switch, /placed, /inspected) live at the root; the
     CLI ops live under /canvas/ so /cue does not collide with the voice cue."""
-    global _index_sig
-    _index_sig = _index_signature()  # spec 013: baseline the parent doc so the first reload can spot an index.html change
+    global _sigs
+    # Baseline both pages so the first reload can report which one moved (spec 023).
+    _sigs = {SHELL_PAGE: page_signature(SHELL_PAGE), UI_PAGE: page_signature(UI_PAGE)}
     app.router.add_get("/events", handle_events)
     app.router.add_get("/canvas", handle_canvas_page)
     app.router.add_get("/settle", handle_settle)  # shot's load-event hold — see handle_settle
     app.router.add_get("/canvas/status", handle_canvas_status)
+    app.router.add_get("/canvas/file/{lane}/{name}", handle_canvas_file)  # spec 022: image frames
     app.router.add_post("/canvas/{op}", handle_canvas_op)
     app.router.add_post("/switch", handle_switch)
     app.router.add_post("/placed", handle_placed)
     app.router.add_post("/inspected", handle_inspected)
+    # The page's mermaid render-outcome report (JJ, 2026-09-24). It was only ever mounted on the
+    # standalone canvas server, so on this one every report 404'd and `render_error` never reached
+    # `status` — found 2026-09-25 in the page console while verifying spec 022.
+    app.router.add_post("/rendered", handle_rendered)
     app.router.add_post("/draw", handle_draw)  # spec 015: the page's `send` posts the sketch here
     app.router.add_post("/reload", handle_reload)

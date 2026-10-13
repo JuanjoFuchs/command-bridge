@@ -274,7 +274,8 @@ def test_the_two_exception_payloads_also_carry_their_command(monkeypatch):
         session=SESSION, since=CURSOR, timeout=0.0, force=False, all_turns=False))
 
     assert busy["reason"] == "watch_open"
-    assert f"`command-bridge watch --since {CURSOR} --force`" in busy["next"]
+    # `--force` retired 2026-10-01: the laneless refusal now just says to leave the running wait be.
+    assert "running wait has it" in busy["next"]
     assert "next_repeated" not in busy
 
     monkeypatch.setattr(cli, "WATCH_SPEECH_MAX_S", 0.0)

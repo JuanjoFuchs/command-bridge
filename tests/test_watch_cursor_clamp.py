@@ -448,7 +448,7 @@ def test_a_watch_ahead_of_the_server_still_delivers_the_unread_turn(live):
     assert out["since_requested"] == ahead and out["resumed_from"] == first["id"]
 
 
-def test_the_observed_loop_ends_in_a_say_that_succeeds(live):
+def test_the_observed_loop_ends_in_a_say_that_succeeds(live, monkeypatch):
     """**AC9 — THE LOOP ITSELF.** Refuse, `watch` at the agent's OWN cursor, `say`.
 
     Every assertion in AC8 is about one call. This one is about the property the spec actually
@@ -456,7 +456,19 @@ def test_the_observed_loop_ends_in_a_say_that_succeeds(live):
     the state and walk out of it using the commands an agent would actually run: not the remedy
     string copied verbatim, but the cursor the agent is holding, which is the thing that used to
     loop forever.
+
+    Since spec 029 FR9 a refusal carrying every unread turn marks them read and the retry simply
+    speaks; the watch-then-say loop below is still the path when the refusal cannot (a truncated
+    list), so it is exercised in that regime.
     """
+    real = server._unread_turns
+
+    def incomplete(state, lane=None):
+        out = real(state, lane)
+        out["complete"] = False
+        return out
+
+    monkeypatch.setattr(server, "_unread_turns", incomplete)
     read = spoke(SESSION, "earlier, and read")
     live.state.consumed_cursor = read["id"]
     missed = spoke(SESSION, "hang on, one more thing")

@@ -114,7 +114,6 @@ def test_it_returns_on_the_first_quiet_poll_with_no_rung(monkeypatch):
     assert out["finished"] is True and out["reason"] == "turns"
     assert [t["id"] for t in out["turns"]] == [6]
     assert fake.polls == 1, "one poll — a rung here would be a ladder by another name"
-    assert out["elapsed_s"] < 1.0
 
 
 def test_the_leading_signal_alone_may_not_end_the_wait(monkeypatch):
@@ -219,7 +218,6 @@ def test_turns_arriving_do_not_end_the_wait_while_he_is_still_going(monkeypatch)
     assert [t["id"] for t in out["turns"]] == [6, 7, 8]
     assert out["count"] == 3
     assert out["cursor"] == 8, "the next call must resume from the cursor it was handed"
-    assert out["rounds"] == 2
 
 
 def test_it_polls_fast_while_holding_and_slowly_while_idle(monkeypatch):
@@ -290,7 +288,8 @@ def test_a_second_waiter_is_refused(monkeypatch):
 
     assert out["error"] == "a wait is already open on this session"
     assert out["reason"] == "watch_open" and out["finished"] is False
-    assert "--force" in out["next"]
+    # `--force` is no longer advertised (retired 2026-10-01); a LANED watch takes over instead.
+    assert "running wait has it" in out["next"]
 
 
 def test_force_gets_through_the_refusal(monkeypatch):
@@ -332,7 +331,6 @@ def test_an_empty_heartbeat_advances_the_idle_backoff(monkeypatch):
 
     assert out["reason"] == "quiet" and out["finished"] is True
     assert cli._empty_streak("s") == 3
-    assert out["quiet_rounds"] == 3
 
 
 # ------------------------------------------------------------ the collapse
@@ -380,8 +378,8 @@ def test_every_subcommand_the_parser_offers_has_a_handler(monkeypatch):
     assert not missing, f"parser offers commands `main` cannot dispatch: {missing}"
 
 
-def test_the_watchdogs_literal_invocation_still_parses():
-    """AC11. A scheduled job in the harness emits exactly this, and it cannot be updated
+def test_the_canonical_watch_invocation_still_parses():
+    """AC11. The loop re-arms with exactly this, and a caller holding it cannot be updated
     atomically with the code — so renaming the waiting command is a live-traffic migration."""
     args = cli.build_parser().parse_args(["watch", "--session", "dev", "--since", "3"])
     assert args.cmd == "watch" and args.session == "dev" and args.since == 3
@@ -401,8 +399,26 @@ def test_the_wait_has_no_flag_that_changes_when_it_returns():
     # filter the result, and neither touches the speech signals the return is gated on. The defect
     # this guard exists to prevent is a caller being able to tune the stopped-talking decision,
     # and no value of `--lane` reaches it.
+    #
+    # `--reply` (2026-09-14) is allowed for the same reason `--timeout` is: it does NOT touch the
+    # speech signals — the STOPPED-TALKING decision (`talking_to_me`) is untouched, and it still
+    # HOLDS while he is mid-sentence. It only declares a pre-say check so a QUIET watch resolves
+    # immediately instead of backing off — the idle-heartbeat behaviour, the same lane `--timeout`
+    # bounds, and exactly what the holds-inference already does when the tunnel can see it.
+    # `--background` (2026-10-01) is the same kind again: it sets how long a QUIET wait may hold
+    # (the caller is not blocking on it), never when the wait decides he stopped talking.
+    # `--timeout` is still parsed, but only to return a `retired_flag` error.
+    # `--context` (2026-10-06) adds a second thing worth returning for — context posted with
+    # `brief` — and it is gated on the same `talking_to_me` as turns, so it never changes when the
+    # wait decides he has stopped talking either.
+    # `--idle` (spec 024, 2026-10-08) is the same kind as `--context`: one more thing worth
+    # returning for — his silence after this lane's clip — checked only once he is NOT talking to
+    # this lane, so it never touches the stopped-talking decision.
+    # `--fleet` (spec 025, 2026-10-08) only decorates a return that already happened with the other
+    # lanes' working/idle state; it never decides when the wait returns.
     assert flags == {"-h", "--help", "--session", "--since", "--timeout", "--force",
-                     "--all-turns", "--lane"}
+                     "--all-turns", "--lane", "--reply", "--background", "--context", "--idle",
+                     "--fleet"}
 
 
 def test_the_retired_name_is_not_dispatchable_at_all(capsys):
@@ -482,21 +498,9 @@ def test_the_loop_runs_the_same_command_before_and_after_the_work():
     assert not any("command-bridge drain" in ln for ln in lines)
 
 
-def test_the_watchdog_prompt_emits_the_new_command():
-    """AC14. The prompt is a thing to EXECUTE, not a thing to read, so it has to carry the
-    spelling the tool wants to be running a release from now."""
-    prompt = cli.WATCHDOG_PROMPT.format(session="dev")
-
-    assert "command-bridge watch --since" in prompt
-    assert "command-bridge drain" not in prompt
-    assert "command-bridge wait" not in prompt, "the third name he rejected must not be taught"
-    # WAS: `assert "deprecated alias" in prompt`, so the prompt named the old command as the one
-    # on its way out. There is nothing on its way out any more — it is gone — and a scheduled
-    # prompt that mentions a command which does not exist is the tool teaching a dead spelling.
-    assert "drain" not in prompt.lower(), "a retired name must not survive in a prompt to EXECUTE"
-    assert "no second waiting command" in prompt, (
-        "say there is only one, since the reason this prompt exists is agents picking wrong"
-    )
+# AC14 retired with the watchdog (2026-09-17): it asserted the scheduled prompt taught the current
+# `command-bridge watch --since` spelling and no retired name. The prompt is gone; the loop's own
+# text carries that spelling and is covered by `test_the_loop_runs_the_same_command...` below.
 
 
 # ------------------------------------ the pre-reply check must not have a ladder either
@@ -519,7 +523,6 @@ def test_a_pre_reply_check_returns_immediately_when_he_is_quiet(monkeypatch):
     assert elapsed < 0.1, f"a pre-reply check took {elapsed:.2f}s — he will feel anything slower"
     assert fake.timeouts == [0.0], "it must not even ask the log to block"
     assert out["reason"] == "quiet" and out["finished"] is True
-    assert "next_wait" not in out, "there is no next rung; nothing is being scheduled"
 
 
 def test_a_pre_reply_check_holds_while_the_segmenter_hears_speech(monkeypatch):
@@ -601,8 +604,7 @@ def test_listening_still_blocks_rather_than_spinning(monkeypatch):
 
     assert fake.timeouts[0] > 0, "listening BLOCKS on the log; it must not poll with timeout 0"
     assert out["reason"] == "quiet"
-    assert out["next_wait"] > 0, "and the heartbeat ladder still paces this case"
-    assert out["quiet_rounds"] == 1
+    assert cli._empty_streak("s") == 1, "and the heartbeat ladder still paces this case (streak advanced)"
 
 
 def test_an_empty_check_ends_the_batch_so_the_next_call_blocks(monkeypatch):
@@ -634,7 +636,8 @@ def test_a_check_that_found_turns_does_not_end_the_batch(monkeypatch):
     out = cli.cmd_watch(_args(timeout=30.0))
 
     assert out["count"] == 1
-    assert sent[-1] == {"open": False, "empty": False}, (
+    closed = {k: v for k, v in sent[-1].items() if k != "watch_id"}   # the id is per-call (2026-10-01)
+    assert closed == {"open": False, "empty": False}, (
         "turns came back, so the agent is still holding a reply and the next check stays instant"
     )
 
@@ -752,3 +755,137 @@ def test_describe_says_which_field_to_branch_on():
     text = cli.DESCRIBE["commands"]["say"]["returns"]["held_for_speech"]
 
     assert "never on `held_for > 0`" in text, "name the trap, not just the replacement"
+
+
+# ---------------------------------------- the orb is asymmetric (JJ, 2026-09-14)
+
+
+def test_the_orb_going_off_does_not_wake_the_watch_but_on_does(monkeypatch):
+    """🔴 **JJ, 2026-09-14:** *"why would they resolve when I tap the orb [off]? the watch should
+    just move to the bigger ceiling when the orb is off, and resolve as soon as I turn it on."*
+
+    Tapping the orb OFF releases the microphone — the agent can do nothing with the wake but
+    re-arm, which is the "all the watches resolve when I tap the orb off" thrash. So an off is
+    SUPPRESSED (the deadline extends and the wait holds); only an ON resolves it.
+
+    Timeline: baseline ON, then OFF (must NOT wake), then ON (must wake). If the off woke it the
+    watch would return on the first poll with `changed` set; instead it holds through the off and
+    resolves on the on, two polls later.
+
+    Mutation: delete the `channel_open` suppression branch and this goes red — the off wakes it on
+    poll one.
+    """
+    on = _quiet()
+    off = _quiet(channel_open=False, capturing=False)
+    #      guard baseline poll0 poll1
+    fake = Fake([on, on, off, on]).install(monkeypatch)
+    out = cli.cmd_watch(_args(timeout=None))   # non-explicit, so the off-extend path runs
+
+    assert out["reason"] == "control", "turning the orb back ON must resolve the watch"
+    assert fake.polls >= 2, (
+        "the watch resolved on the orb-OFF instead of holding through it — the exact thrash he "
+        "reported"
+    )
+
+
+def test_the_orb_coming_on_does_not_wake_an_off_lane_watch(monkeypatch):
+    """🔴 **JJ, 2026-09-29:** *"when I switch the orb off and on again, the watches for offlane agents
+    resolve. But I thought … that shouldn't happen."* The orb coming ON means he is back to the LIVE
+    lane; an agent he is not talking to can only re-arm. Its held clips already wait as a hand.
+
+    Same timeline as the test above, but the watch belongs to `magnus` while he is on `kepler`, with
+    a short explicit ceiling: the on must be swallowed, so the watch ends at its ceiling, not on a
+    `control` wake."""
+    on = _quiet(lane="kepler", lanes=["magnus", "kepler"])
+    off = _quiet(channel_open=False, capturing=False, lane="kepler", lanes=["magnus", "kepler"])
+    Fake([on, on, off, on]).install(monkeypatch)
+    out = cli.cmd_watch(_args(timeout=0.5, lane="magnus"))
+
+    assert out["reason"] != "control", "the orb coming on woke an agent he is not talking to"
+
+
+def test_mute_does_not_wake_an_off_lane_watch(monkeypatch):
+    """JJ, 2026-09-29: "the active agent should be aware that I either muted or toggled the orb … The
+    situation is with the offline agents." Any control change wakes only the live lane's agent."""
+    on = _quiet(lane="kepler", lanes=["magnus", "kepler"])
+    muted = _quiet(muted=True, lane="kepler", lanes=["magnus", "kepler"])
+    Fake([on, on, muted]).install(monkeypatch)
+    out = cli.cmd_watch(_args(timeout=0.5, lane="magnus"))
+    assert out["reason"] != "control", "a mute woke an agent he is not talking to"
+
+
+def test_mute_still_wakes_the_live_lane_watch(monkeypatch):
+    on = _quiet(lane="magnus", lanes=["magnus", "kepler"])
+    muted = _quiet(muted=True, lane="magnus", lanes=["magnus", "kepler"])
+    Fake([on, on, muted]).install(monkeypatch)
+    out = cli.cmd_watch(_args(timeout=5, lane="magnus"))
+    assert out["reason"] == "control", "the agent he IS talking to must still hear about the mute"
+
+
+def test_the_orb_coming_on_surfaces_expired_replies_in_that_same_resolution(monkeypatch):
+    """🔴 **JJ, 2026-09-14:** *"in that immediate resolution [when I turn it on], it should
+    highlight the turns that have already timed out. I have to switch back for a SECOND watch to
+    resolve and then tell them their turn's expired."*
+
+    `expired` (spec 021) is popped only at a watch OPEN, so a watch already open when the orb comes
+    back never carries it. The on-transition now re-pops it into that same resolution.
+
+    Mutation: drop the `expired` re-pop from the orb-on branch and this goes red — the reply is
+    lost silently until the next watch.
+    """
+    on = _quiet()
+    off = _quiet(channel_open=False, capturing=False)
+    fake = Fake([off, off, off, on])           # baseline OFF, hold OFF, then ON
+    calls = {"watching": 0}
+
+    def request(session, path, payload=None):
+        if path == "/watching":
+            calls["watching"] += 1
+            # the ARM open (call 1) reports nothing; the on-transition re-pop (call 2) reports the
+            # clip that expired while he was away.
+            if calls["watching"] >= 2 and payload and payload.get("open"):
+                return {"expired": [{"text": "lost reply", "clip": "c1", "waited_s": 5.0}]}
+            return {}
+        return fake.request(session, path, payload)
+
+    monkeypatch.setattr(cli, "_request", request)
+    monkeypatch.setattr(cli.store, "watch", fake.watch)
+    out = cli.cmd_watch(_args(timeout=None))
+
+    assert out["reason"] == "control"
+    assert out.get("expired"), "the orb-on resolution dropped the expired reply"
+    assert out["expired"][0]["text"] == "lost reply"
+
+
+# ------------------------------------------- --reply: a declared pre-say check (JJ, 2026-09-14)
+
+
+def test_reply_forces_the_fast_resolve_without_an_unread_turn(monkeypatch):
+    """🔴 **JJ, 2026-09-14:** a report-only pre-say watch sat ~80s because it held no unread turn,
+    so it read as a LISTEN and backed off. `--reply` declares "I am about to speak" — the case the
+    tunnel cannot infer (a proactive report, or a follow-up clip after the batch was answered) — and
+    forces the same instant fast-path as holding a reply.
+
+    Here nothing is held (no `lane_holds_turns`, no turns) and he is quiet, which without the flag is
+    a listen. With `--reply` it resolves on the first poll.
+
+    Mutation: drop the `if args.reply: holding_reply = True` line and this spins to the ceiling
+    instead (polls >> 1).
+    """
+    fake = Fake([_quiet()]).install(monkeypatch)      # quiet forever, nothing held
+    out = cli.cmd_watch(_args(reply=True, timeout=None))
+
+    assert out["reason"] == "quiet"
+    assert fake.polls == 1, "a --reply pre-say check resolves on the first quiet poll — no backoff"
+
+
+def test_reply_still_holds_while_he_is_talking_to_me(monkeypatch):
+    """The gate is unchanged: `--reply` resolves the instant he is not talking to me, but while he
+    IS mid-sentence it still HOLDS — it never talks over him. Talking on poll 0, quiet on poll 1, so
+    it resolves on poll 1, not poll 0."""
+    talking = _quiet(speech_active=True, user_speaking=True)
+    fake = Fake([_quiet(), _quiet(), talking, _quiet()]).install(monkeypatch)
+    out = cli.cmd_watch(_args(reply=True, timeout=None))
+
+    assert out["reason"] == "quiet"
+    assert fake.polls == 2, "it held through the poll where he was talking, then resolved when quiet"

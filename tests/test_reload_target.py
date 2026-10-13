@@ -1,67 +1,85 @@
-"""A pushed `reload` reloads the right document — and never drops the audio to reload the canvas.
+"""A pushed `reload` reloads the right document — and never drops the audio to reload the UI.
 
-spec 013. The parent page (`web/index.html`) holds the AudioContext and the voice socket; the canvas
-is an iframe inside it. So a canvas (`page.py`) edit must reload ONLY the iframe, and a full parent
-reload — the one that blips the audio — must fire only when `index.html` itself actually changed.
+spec 013 + 023. The audio shell (`web/shell.html`) holds the AudioContext, the microphone and the
+voice socket; the UI frame (`web/index.html`) sits inside it and the canvas iframe inside that. So a
+UI edit reloads ONLY the UI frame, live; a canvas (`page.py`) edit reloads only the canvas; and the
+one reload that drops the audio — the shell's own — fires only when `shell.html` itself changed,
+and waits for the orb to be off.
 
-The load-bearing rule is the BIAS: `page` (full reload, audio drops) is returned only on positive
-evidence the parent moved. Any uncertainty — a first-ever hash, an unreadable file — resolves to
-`canvas`, because guessing `page` cuts JJ off mid-sentence for nothing.
+Each page is SERVED stamped with its own signature and the `reload` event carries the signatures on
+disk, so the open page decides. The server's `target` is only what the CLI reports, and its bias
+holds: `page` is returned only on positive evidence the shell moved.
 """
 import os
 
 from command_bridge.canvas import aio
 from command_bridge.canvas import page as page_mod
 
+SHELL, UI = aio.SHELL_PAGE, aio.UI_PAGE
 
-def _index_html() -> str:
-    path = os.path.join(os.path.dirname(os.path.dirname(aio.__file__)), "web", "index.html")
+
+def _web(name: str) -> str:
+    path = os.path.join(os.path.dirname(os.path.dirname(aio.__file__)), "web", name)
     with open(path, encoding="utf-8") as f:
         return f.read()
 
 
-# --- the pure decision -------------------------------------------------------
+# --- what the CLI is told the reload did -------------------------------------
 
-def test_parent_change_is_a_full_reload():
-    """Different signatures => index.html moved => the parent must full-reload (FR5)."""
-    assert aio._reload_target("aaa", "bbb") == "page"
-
-
-def test_canvas_only_change_reloads_the_iframe():
-    """Same signature => only page.py changed => the iframe reloads itself, audio untouched (FR1)."""
-    assert aio._reload_target("aaa", "aaa") == "canvas"
+def test_a_shell_change_is_a_full_reload():
+    """The shell moved => the one reload that drops the audio, deferred while live (FR6)."""
+    assert aio._reload_target({SHELL: "a", UI: "u"}, {SHELL: "b", UI: "u"}) == "page"
 
 
-def test_first_ever_reload_never_drops_the_audio():
-    """No baseline yet (prev None) is NOT evidence the parent changed. Bias to canvas."""
-    assert aio._reload_target(None, "bbb") == "canvas"
+def test_a_ui_change_reloads_only_the_ui_frame():
+    """The UI moved and the shell did not => the UI frame reloads live, audio untouched (FR5)."""
+    assert aio._reload_target({SHELL: "a", UI: "u"}, {SHELL: "a", UI: "v"}) == "ui"
 
 
-def test_an_unreadable_parent_never_drops_the_audio():
-    """cur None (index.html could not be read) is uncertainty, not a parent change. Bias to canvas."""
-    assert aio._reload_target("aaa", None) == "canvas"
-    assert aio._reload_target(None, None) == "canvas"
+def test_neither_page_changed_is_a_canvas_reload():
+    """Only page.py changed => the canvas iframe reloads itself (spec 013 FR1)."""
+    assert aio._reload_target({SHELL: "a", UI: "u"}, {SHELL: "a", UI: "u"}) == "canvas"
 
 
-def test_index_signature_reads_the_real_parent_document():
-    """The baseline is a real hash of the shipped index.html, so a later edit is detectable."""
-    sig = aio._index_signature()
-    assert isinstance(sig, str) and len(sig) == 64  # sha256 hex
+def test_uncertainty_never_reports_a_full_reload():
+    """No baseline, or an unreadable file, is NOT evidence the shell changed."""
+    assert aio._reload_target({}, {SHELL: "b", UI: "v"}) == "canvas"
+    assert aio._reload_target({SHELL: "a", UI: "u"}, {SHELL: None, UI: "u"}) == "canvas"
 
 
-# --- the client honours the target (wiring guards) ---------------------------
+def test_the_signatures_read_the_real_page_documents():
+    for name in (SHELL, UI):
+        sig = aio.page_signature(name)
+        assert isinstance(sig, str) and len(sig) == 16
 
-def test_the_canvas_iframe_reloads_itself_on_a_canvas_target():
-    """page.py must carry a `reload` listener that reloads the iframe on a `canvas` target — this is
-    what makes a page.py edit audio-safe. Removing it silently reverts to the parent-reload bug."""
+
+def test_a_served_page_is_stamped_with_its_own_signature():
+    """The stamp is what lets an open page tell, after a restart, whether ITS file changed."""
+    for name in (SHELL, UI):
+        text, sig = aio.stamp_page(name)
+        assert aio.SIG_PLACEHOLDER not in text
+        assert f'"{sig}"' in text
+        assert sig == aio.page_signature(name)
+
+
+# --- the client honours it (wiring guards) -----------------------------------
+
+def test_the_canvas_iframe_reloads_itself_unless_the_ui_is_reloading_around_it():
+    """page.py reloads its own iframe on a reload; a `ui` target is skipped because the UI frame that
+    holds the canvas is recreating it anyway."""
     assert 'addEventListener("reload"' in page_mod.PAGE
-    assert 'target === "canvas"' in page_mod.PAGE
+    assert 'target !== "ui"' in page_mod.PAGE
 
 
-def test_the_parent_reloads_only_on_a_page_target():
-    """index.html must GATE its full reload on a `page` target. Without the gate, a canvas reload
-    full-reloads the parent and drops the audio — the exact regression spec 013 closes."""
-    html = _index_html()
-    assert 'target !== "page"' in html
-    # And the full reload is still there for a genuine parent change (FR5).
-    assert "location.reload()" in html
+def test_the_ui_frame_reloads_on_its_own_signature_and_is_never_deferred():
+    html = _web(UI)
+    assert html.count(aio.SIG_PLACEHOLDER) == 1
+    assert "d.ui_sig === UI_SIG" in html
+    assert "liveNow" not in html, "the UI frame holds no audio, so it must not wait for the orb"
+
+
+def test_the_shell_reloads_only_for_its_own_change_and_waits_for_the_orb():
+    html = _web(SHELL)
+    assert html.count(aio.SIG_PLACEHOLDER) == 1
+    assert "d.shell_sig === SHELL_SIG" in html
+    assert "reloadPending = true" in html and "liveNow()" in html

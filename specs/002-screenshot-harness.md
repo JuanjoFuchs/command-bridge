@@ -39,7 +39,7 @@ From `distill/tunnel-vision.md`, grounded in the code:
   device).
 - Its default capture is **900×560** (the code, not the 1600×1000 its own contract claims — a bug to
   not inherit), and it has an undocumented `--look` flag.
-- The agent-facing rule it serves is Tunnel Vision Guide rule 8: *screenshot the page before
+- The agent-facing rule it serves is the canvas operating guide rule 8: *screenshot the page before
   claiming it works.* Command Bridge inherits that effort gate.
 
 🎯 **The gap to close is "fully".** A 900×560 shot crops the meeting layout (orb row + full-bleed
@@ -137,6 +137,6 @@ drive layout state.)
 ## References
 
 - `distill/tunnel-vision.md` — the `shot` donor and the 900×560 / `--lane` notes.
-- The Tunnel Vision Guide, rule 8 ("screenshot the page before claiming it works") — the
+- the canvas operating guide, rule 8 ("screenshot the page before claiming it works") — the
   effort gate this makes executable in Command Bridge. (A design note, not a repo file; named here for
   provenance, not as a path to open.)

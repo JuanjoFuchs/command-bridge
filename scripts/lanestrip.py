@@ -505,8 +505,15 @@ with sync_playwright() as pw:
         # 🎯 **A golden over a pure model cannot see a missing view.** This asserts the rendered
         # element, which is the half that was actually absent.
         note("014: the busy timer, per lane, in the DOM rather than in the model")
-        deliver(page, {"type": "lane", "lanes": ["claude", "codex"], "lane": "claude",
-                       "waiting": {}})
+        # ⚠ THE LIVE LANE MUST BE WATCHING, or the 018 derivation reads it as "thinking" (a lane not
+        # in a watch is heads-down, whatever it last reported) and clocks it — which is CORRECT
+        # behaviour, but it means the live lane is not the "idle, no counter" reference this case
+        # needs. `watching_lanes: ['claude']` makes the live lane "listening" (in a watch AND live),
+        # which is genuinely not busy, so codex (thinking, off-lane) is the only lane that clocks.
+        # ⚠ Delivered as a `ready` frame, not a `lane` one: only `ready` and `agent_state` carry
+        # `watching_lanes` into the page (the `lane` handler ignores it).
+        deliver(page, {"type": "ready", "lanes": ["claude", "codex"], "lane": "claude",
+                       "watching_lanes": ["claude"], "lane_states": {}, "waiting": {}})
         deliver(page, {"type": "agent_state", "lane": "codex", "state": "thinking",
                        "live": False})
         # 2.5s, not 1.4s: the clock is stamped at the state change and the tick fires on the
@@ -529,15 +536,21 @@ with sync_playwright() as pw:
               "and an idle lane shows none — the number belongs to the work, not to the orb",
               f"{timer['idle']!r}")
 
+        # ⚠ "STOPS WORKING" MEANS OBSERVED PARKED, NOT JUST A REPORTED "idle". Under 018 a lane that
+        # reports idle but is NOT in a watch is still shown as "thinking" (we cannot see idle from out
+        # here), so it would keep clocking. Putting codex in a watch (and not live) makes it read
+        # "idle" — parked, waiting for him — which is the non-busy state whose clock clears.
         deliver(page, {"type": "agent_state", "lane": "codex", "state": "idle",
-                       "live": False})
+                       "live": False, "watching_lanes": ["claude", "codex"]})
         page.wait_for_timeout(200)
         cleared = page.evaluate("""() => {
           const t = document.querySelector('#orbs .laneorb[data-lane="codex"] .lanetimer');
           if (!t) return true;
-          // Empty AND collapsed: text alone would leave a grid row and its gap, which is what
-          // pushed the status word off the middle of the disc.
-          return !t.textContent.trim() && t.getBoundingClientRect().height === 0;
+          // Empty text is the whole signal now. ⚠ It is NOT collapsed to zero height: JJ asked to
+          // RESERVE the timer's line (2026-09-02, "reserve that space so the UI does not shift every
+          // time") so a lane going busy↔idle does not push the orb up and down, so `.lanetimer`
+          // carries a `min-height` and stays in the DOM whether or not it holds a number.
+          return !t.textContent.trim();
         }""")
         check(cleared, "and it clears the moment that lane stops working")
 

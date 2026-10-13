@@ -193,26 +193,7 @@ def test_the_timing_log_can_tell_two_agents_apart(state, tmp_path):
     )
 
 
-# ------------------------------------------------------------------ AC-2: the watchdog's step 0
-
-def test_the_watchdog_asks_whether_THIS_lane_is_watching():
-    """AC-2 — FR2. The purest instance of the whole pattern: `watching_lanes` was published by spec
-    012 and the watchdog that reads it was never told. Its first step branched on `watch_open`,
-    which is true while ANY lane watches — so a lane whose watch had died was never re-armed while
-    somebody else was listening, and his turns piled up on it unread.
-
-    ⚠ Asserted on `describe`, because that prompt is the text he actually schedules. A fix that
-    leaves it saying `watch_open` ships the bug to every agent that follows it.
-    """
-    prompt = cli.WATCHDOG_PROMPT
-
-    assert "watching_lanes" in prompt, (
-        "the scheduled prompt still branches on the session-wide flag"
-    )
-    assert "YOUR LANE IS NOT IN IT" in prompt, (
-        "and it must say explicitly that a non-empty list belonging to OTHER lanes is not a reason "
-        "to stay silent — that is the exact reading that left a lane deaf"
-    )
-    assert "watch_open" in prompt, (
-        "the fallback for a server that predates the per-lane list must survive"
-    )
+# AC-2 retired with the watchdog (2026-09-17): it asserted the scheduled prompt's step 0 branched
+# on `watching_lanes` (per-lane) rather than `watch_open` (session-wide). The prompt is gone. The
+# per-lane `watching_lanes` field it read is still published and is covered by AC-1/AC-3/AC-4 above,
+# which assert the field itself rather than a prompt's reading of it.

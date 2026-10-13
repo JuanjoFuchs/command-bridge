@@ -45,7 +45,7 @@ SCRIPT = [
      "addressed": True, "lane": "codex"},
     {"type": "audio_header", "id": "c2", "text": "Running them now.", "lane": "codex",
      "sample_rate": 24000, "bytes": 0},
-    {"type": "turn", "id": 3, "text": "Hey Atlas, what do you make of the freedom strategy?",
+    {"type": "turn", "id": 3, "text": "Hey Atlas, what do you make of the release plan?",
      "addressed": True, "lane": "atlas"},
     {"type": "turn", "id": 4, "text": "Hey everyone, stand down for a minute.",
      "addressed": True, "lane": "everyone"},

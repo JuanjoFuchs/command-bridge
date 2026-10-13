@@ -6,8 +6,6 @@ which is the only failure mode left once the thing works.
 """
 import os
 
-import pytest
-
 from tests.test_cli_surface import run
 from command_bridge import cli
 
@@ -48,21 +46,6 @@ def test_the_asr_remedy_does_not_tell_you_to_pin_what_auto_selects(capsys, tmp_s
         assert "config set COMMAND_BRIDGE_ASR parakeet" not in remedy, (
             "installing the runtime is enough; pinning contradicts the tool's own warning"
         )
-
-
-def test_watch_hands_over_a_watchdog_prompt_that_exists(capsys, tmp_sessions, monkeypatch):
-    """It attached the static section, whose `prompt` key is null, next to a line saying "use the
-    ready-made text in `prompt` below rather than paraphrasing it"."""
-    monkeypatch.setattr(cli, "_request",
-                        lambda s, path, body=None: {"running": False, "error": "no server"})
-    _, payload, _ = run(["watch", "--session", "live", "--since", "-1", "--timeout", "0.1"],
-                        capsys)
-    wd = payload.get("watchdog")
-    if wd is None:
-        pytest.skip("no watchdog block on this path")
-    assert wd.get("prompt"), "the field the sibling line points at must not be null"
-    assert "live" in wd["prompt"], "and the session must already be substituted in"
-    assert "{session}" not in wd["prompt"], "no unfilled placeholder may escape"
 
 
 def test_a_global_flag_works_after_the_subcommand(capsys, tmp_sessions):

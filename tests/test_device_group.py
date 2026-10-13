@@ -135,13 +135,15 @@ def test_the_combined_handler_moves_the_sink_before_it_restarts_capture():
     body = listener_body("$dev")
 
     sink = body.index("applySink")
-    assert re.search(r"\bstop\(\)", body), "the combined picker no longer restarts capture at all"
-    restart = body.index("stop()")
+    # Spec 023: the restart is the shell's (`restartCapture` = stop() then start(), where the
+    # microphone lives); the UI frame asks for it.
+    assert re.search(r"\brestartCapture\(\)", body), "the combined picker no longer restarts capture at all"
+    restart = body.index("restartCapture()")
     assert sink < restart, (
         "the capture restart now runs before the output route is applied, so changing device tears "
         "the session down before his ears are fixed — the exact cost the asymmetry avoided"
     )
-    assert "start()" in body[restart:], "capture is stopped and never started again"
+    # (That the restart starts capture again is pinned on the shell side, in test_mic_release.)
 
 
 def test_the_combined_handler_writes_the_same_preferences_the_single_pickers_do():

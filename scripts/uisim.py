@@ -38,6 +38,8 @@ import subprocess
 import sys
 import threading
 
+from pagesplit import SplitPages, ui_frame
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = ROOT / "command_bridge" / "web"
 TUNNEL_PORT = 8765
@@ -296,7 +298,7 @@ SCENARIOS = {
         [ready(lanes=("claude", "codex", "atlas"), live="claude",
                watching=["claude"], consumed={"claude": 4, "codex": 4}),
          turn(1, "Hey Codex, run the tests.", lane="codex"),
-         turn(2, "Hey Atlas, what about the freedom strategy?", lane="atlas"),
+         turn(2, "Hey Atlas, what about the release plan?", lane="atlas"),
          turn(3, "Hey everyone, stand down.", lane="everyone"),
          turn(4, "Hey Claude, one more thing.", lane="claude"),
          agent_state("codex", "thinking", watching=["claude"],
@@ -350,13 +352,10 @@ window.fetch = function (u, o) {
 """
 
 
-class Quiet(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
-
-
 def serve():
-    httpd = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(WEB)))
+    # Spec 023: `/` is the audio shell and `/ui` the page he sees, as on the real server. The clip
+    # scenarios need the shell — the queue a header's bytes land in lives there.
+    httpd = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(SplitPages, directory=str(WEB)))
     port = httpd.server_address[1]
     assert port != TUNNEL_PORT, "the OS handed out the tunnel's port; refusing to bind it"
     SERVED.append(port)
@@ -372,22 +371,25 @@ def run_scenario(browser, port, name, messages, assertions, out, shoot):
         page = ctx.new_page()
         page.add_init_script(STUB)
         page.goto(f"http://127.0.0.1:{port}/?token=sim", wait_until="load")
-        page.wait_for_function("() => window.__voiceTunnel && window.__voiceTunnel.deliver",
-                               timeout=15000)
+        # Everything below asks the UI frame (spec 023); `__voiceTunnel` there is the shell's own,
+        # so a delivered frame still takes the whole path — the audio half, then the paint.
+        ui = ui_frame(page)
+        ui.wait_for_function("() => window.__voiceTunnel && window.__voiceTunnel.deliver",
+                             timeout=15000)
         for m in messages:
             if isinstance(m, dict) and "__observe__" in m:
-                page.evaluate(OBSERVE_JS)
+                ui.evaluate(OBSERVE_JS)
             elif isinstance(m, dict) and "__bytes__" in m:
-                page.evaluate("(n) => window.__voiceTunnel.deliverBytes(n)", m["__bytes__"])
+                ui.evaluate("(n) => window.__voiceTunnel.deliverBytes(n)", m["__bytes__"])
             else:
-                page.evaluate("(m) => window.__voiceTunnel.deliver(m)", m)
+                ui.evaluate("(m) => window.__voiceTunnel.deliver(m)", m)
         page.wait_for_timeout(350)
 
         # ASSERT ON THE PHONE PASS ONLY — the claims are about state, not about width, and
         # `layout.py` already owns the viewport sweep. Running them twice would double every
         # failure line for no extra information.
         if label == "phone":
-            for get, want, why in assertions(page):
+            for get, want, why in assertions(ui):
                 got = get()
                 check(got == want, why, "" if got == want else f"got {got!r}, want {want!r}")
 

@@ -34,6 +34,17 @@ def test_a_single_agent_watch_counts_all_speech():
     assert cli._talking_to_me(True, {"lane": "kepler"}, None) is True
 
 
+def test_a_closed_or_disconnected_mic_is_never_talking():
+    """JJ, 2026-09-29: a pre-say `--reply` held 2.5 min right after a page reload. A dropped socket
+    can leave the speech flags set; nobody can be talking into a closed or disconnected mic, so the
+    check must say no and let the pre-say resolve (the clip is held server-side anyway)."""
+    assert cli._talking_to_me(True, {"lane": "magnus", "clients": 0}, "magnus") is False
+    assert cli._talking_to_me(True, {"lane": "magnus", "channel_open": False}, "magnus") is False
+    assert cli._talking_to_me(True, {"lane": "magnus", "capturing": False}, "magnus") is False
+    assert cli._talking_to_me(True, {"lane": "magnus", "clients": 1, "channel_open": True,
+                                     "capturing": True}, "magnus") is True
+
+
 def test_a_server_without_a_lane_field_counts_all_speech():
     """ABSENT IS NOT OFF-LANE. A server predating lanes publishes no `lane`; treat his speech as to
     me, exactly as before — never narrow on missing evidence."""

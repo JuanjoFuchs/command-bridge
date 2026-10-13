@@ -392,6 +392,9 @@ class _ResidentKokoro:
         # be clamped — None when nothing was clamped. Kept so the clamp is a reportable fact
         # rather than a thing that quietly happened; see `synthesize` and `available`.
         self.speed_clamped_from: float | None = None
+        # Spec 039: the factor the last synthesis time-stretched its audio by, or None at a native
+        # speed. Recorded so a fast reply is a reportable fact, like the clamp it replaced.
+        self.stretched_by: float | None = None
         # Whether the loaded export reports per-token durations. Decided at load from the graph's
         # own outputs, never from the filename.
         self._timed = False
@@ -399,6 +402,21 @@ class _ResidentKokoro:
     @property
     def loaded(self) -> bool:
         return self._kokoro is not None
+
+    @property
+    def device(self) -> str:
+        """Where synthesis runs: `gpu` or `cpu`, asked of the live session once loaded.
+
+        onnxruntime drops a CUDA provider that fails on the first run and retries on the CPU
+        without raising, so the configured provider is not evidence. Before load, the configured
+        provider is all there is, and it is labelled as such."""
+        if self._kokoro is None:
+            return f"{config.tts_provider()} (configured)"
+        try:
+            first = self._kokoro.sess.get_providers()[0]
+        except Exception:
+            return "unknown"
+        return "gpu" if first == "CUDAExecutionProvider" else "cpu"
 
     def _load(self):
         if self.unavailable_reason:
@@ -426,7 +444,39 @@ class _ResidentKokoro:
             self.unavailable_reason = f"the kokoro-onnx package is not importable ({exc})"
             return None
         try:
-            self._kokoro = Kokoro(model, voices)
+            threads = config.tts_threads()
+            if config.tts_provider() == "cuda":
+                # GPU synthesis (JJ, 2026-10-06: "let's move the voice to the GPU"). preload_dlls
+                # loads cuDNN/cuBLAS/the CUDA runtime from the nvidia-* pip packages, so no system
+                # CUDA install is needed. CPU stays listed as the fallback, and `self.provider`
+                # records what the session really got, because onnxruntime falls back silently.
+                # The nvidia-* DLL folders FIRST (spec 041): onnxruntime-gpu 1.24, which the ASR's
+                # CUDA build needs, otherwise puts Kokoro on the CPU without a word.
+                config.add_cuda_dll_dirs()
+                import onnxruntime as _ort
+                if hasattr(_ort, "preload_dlls"):
+                    _ort.preload_dlls()
+                so = _ort.SessionOptions()
+                so.log_severity_level = 3
+                sess = _ort.InferenceSession(
+                    model, sess_options=so,
+                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+                self._kokoro = Kokoro.from_session(sess, voices)
+            elif threads > 0:
+                # CAP THE TTS SYNTHESIS THREADS (JJ, 2026-09-22, dev.jsonl turns 6310-6312: CPU caps
+                # "only for ... TTS"). kokoro's onnxruntime session otherwise grabs every core, so a
+                # long clip spikes the CPU even though the TTS queue already runs one synth at a time.
+                # Build a thread-capped CPU session and hand it to `from_session`, so ONLY TTS is
+                # bounded — ASR and the turn model keep their own thread budgets. 0 = leave the default.
+                import onnxruntime as _ort
+                so = _ort.SessionOptions()
+                so.intra_op_num_threads = threads
+                so.inter_op_num_threads = 1
+                sess = _ort.InferenceSession(
+                    model, sess_options=so, providers=["CPUExecutionProvider"])
+                self._kokoro = Kokoro.from_session(sess, voices)
+            else:
+                self._kokoro = Kokoro(model, voices)
         except Exception as exc:
             self.unavailable_reason = f"the kokoro model would not load ({exc})"
             self._kokoro = None
@@ -531,8 +581,11 @@ class _ResidentKokoro:
             k = self._load()
             if k is None:
                 raise TTSError(f"the kokoro backend cannot start: {self.unavailable_reason}")
-            asked, speed = speed, config.kokoro_speed(speed)
-            self.speed_clamped_from = asked if speed != asked else None
+            # SPEC 039: the model never runs above KOKORO_NATIVE_SPEED_MAX; the rest of the speed is a
+            # pitch-preserving stretch of its audio. At his 1.2 `stretch` is 1.0 and nothing changes.
+            speed, stretch = config.kokoro_speed_plan(speed)
+            self.stretched_by = stretch if stretch != 1.0 else None
+            self.speed_clamped_from = None
             lang = config.kokoro_lang_for(voice)
             # Split on sentence enders AND clause breaks, keeping the punctuation on the piece
             # before the gap — Kokoro's prosody depends on it, and a fragment stripped of its
@@ -567,13 +620,20 @@ class _ResidentKokoro:
                         samples, rate = k.create(piece, voice=voice, speed=speed, lang=lang)
                 except Exception as exc:
                     raise TTSError(f"kokoro failed on {piece[:40]!r}: {exc}") from exc
+                if stretch != 1.0:
+                    # Mid-path, so `_articulate` and the gaps below see the final timeline. The
+                    # pauses between pieces are NOT stretched: they are his `--pause` setting.
+                    samples = time_stretch(samples, stretch, rate)
                 if timings and dur is not None and ids is not None:
                     space_id = k.tokenizer.vocab.get(" ")
                     labels, ok = label_groups(piece, phonemes.split())
                     aligned = aligned and ok
                     for (a, _b), label in zip(word_offsets(ids, dur, space_id), labels):
+                        # A stretched piece is `stretch` times shorter, every word with it: the
+                        # offset into the model's audio divides by the same factor (spec 039).
+                        at = (a - int(lead)) / stretch
                         schedule.append({"w": label,
-                                         "t": round(max(0, cursor + a - int(lead)) / rate, 3)})
+                                         "t": round(max(0.0, cursor + at) / rate, 3)})
                 elif timings:
                     aligned = False
                 pcm = _float32_to_pcm16(_articulate(samples, rate))
@@ -660,6 +720,60 @@ def _articulate(samples, rate: int):
 
     new_peak = float(np.max(np.abs(y))) or 1.0
     return (y * (peak / new_peak)).astype(np.float32)
+
+
+STRETCH_FRAME_S = 0.030
+"""WSOLA analysis frame (spec 039): 30 ms holds two or three pitch periods of a male voice, which is
+what lets the overlap find a matching waveform; much shorter and it cannot, much longer and fast
+consonants smear across frames."""
+
+
+def time_stretch(samples, factor: float, rate: int):
+    """Make speech `factor` times FASTER without changing its pitch — WSOLA, in numpy (spec 039).
+
+    Waveform-Similarity Overlap-Add: windowed frames are taken from the input `factor` times further
+    apart than they are laid down in the output, and each frame's start is nudged (within half a hop)
+    to the position whose waveform best continues the previous frame, so the overlaps add in phase
+    and nothing clicks or warbles. Resampling would also shorten the audio, but raise the pitch by
+    the same factor — a chipmunk, not a fast talker.
+
+    Pure numpy, no new dependency: neither Rubber Band nor audiotsm is installed here, and this is
+    sixty lines. Returns the input object itself when there is nothing to do (factor ~1 or a clip
+    shorter than a few frames), so the speed he uses today costs nothing."""
+    import numpy as np
+
+    x = np.asarray(samples, dtype=np.float32)
+    n = max(64, int(rate * STRETCH_FRAME_S))
+    if factor <= 1.0001 or x.size < 4 * n:
+        return samples
+    hs = n // 2                        # synthesis hop: frames overlap by half in the output
+    ha = hs * float(factor)            # analysis hop: and are taken this far apart in the input
+    tol = hs // 2                      # how far a frame may slide to find the matching waveform
+    win = np.hanning(n).astype(np.float32)
+    # Room on both sides so the first frame can slide left and the last one is never cut short.
+    xp = np.concatenate([np.zeros(tol, np.float32), x, np.zeros(n + hs + 2 * tol, np.float32)])
+    out_len = int(x.size / factor)
+    frames = int(np.ceil(out_len / hs)) + 1
+    y = np.zeros(frames * hs + n, np.float32)
+    wsum = np.zeros_like(y)
+    prev = None
+    for k in range(frames):
+        centre = tol + int(round(k * ha))
+        if centre + n + tol > xp.size:
+            break
+        if prev is None:
+            pos = centre
+        else:
+            natural = xp[prev + hs: prev + hs + n]          # how the last frame would have continued
+            region = xp[centre - tol: centre + tol + n]
+            corr = np.correlate(region, natural, mode="valid")
+            pos = centre - tol + int(np.argmax(corr))
+        y[k * hs: k * hs + n] += xp[pos: pos + n] * win
+        wsum[k * hs: k * hs + n] += win
+        prev = pos
+    covered = wsum > 1e-3
+    y[covered] /= wsum[covered]
+    return y[:out_len]
 
 
 def _deess(pcm: bytes, rate: int) -> bytes:
@@ -943,6 +1057,11 @@ def synthesize_timed(
     # After the emptiness check, so "nothing to speak" still describes the caller's own input.
     text = speech.normalize_for_speech(text)
     backend = (backend or config.tts_backend()).lower()
+    # THE GAP SHRINKS WITH THE SPEED (spec 039 follow-up): `pause` is the gap at native pace, and
+    # this is the one place it becomes the gap at THIS speed, so every backend and the word
+    # schedule's cursor count the same silence.
+    speed = config.speech_speed() if speed is None else speed
+    pause = config.effective_pause(config.sentence_pause() if pause is None else pause, speed)
     # `sr`, not `rate`: the returned SAMPLE rate would shadow a speech-rate name — a trap that
     # would silently ignore the caller's speed the moment anyone reordered these lines.
     schedule = None
@@ -958,8 +1077,8 @@ def synthesize_timed(
             # caller's value unchanged. No length_scale inversion exists on this path, and none
             # should be added — that inversion is the bug config.length_scale_for was written to
             # contain, and it belongs to piper alone.
-            speed=config.speech_speed() if speed is None else speed,
-            pause=config.sentence_pause() if pause is None else pause,
+            speed=speed,
+            pause=pause,
             timings=timings,
         )
     elif backend == "none":
@@ -977,6 +1096,50 @@ def synthesize_timed(
         schedule = {**schedule,
                     "words": [{**w, "t": round(w["t"] + lead, 3)} for w in schedule["words"]]}
     return pad(normalize(pcm), sr), sr, schedule
+
+
+def synthesize_stream(
+    text: str, voice: str | None = None,
+    speed: float | None = None, pause: float | None = None,
+):
+    """Yield `(pcm, sample_rate)` one speech piece at a time, so playback can start on the first.
+
+    🎯 **WHY (JJ, 2026-10-07: "better improvements over the whole chain. End to end.").** Kokoro
+    already synthesizes a reply one `speech.segments` piece at a time and joins them, so the whole
+    clip waited on its LAST piece before he heard its first: measured 1.0-1.6 s for a short reply
+    and 4.3-6.4 s for a long one, against ~0.1 s for the first piece alone.
+
+    Concatenated, the yields are the same audio `synthesize` returns, apart from the per-chunk
+    `_deess`/`normalize` (both local: the de-esser is framewise and the normalizer only attenuates
+    a chunk hotter than the ceiling) — lead silence on the first chunk, the inter-piece gap after
+    each piece but the last, trail silence on the last. Every other backend yields its whole clip
+    once, so a caller never has to know which engine it got.
+    """
+    if not text or not text.strip():
+        raise TTSError("nothing to speak")
+    backend = config.tts_backend().lower()
+    if backend != "kokoro":
+        # Through `synthesize` by module lookup and with the server's own keyword call, so a test
+        # that stubs `tts.synthesize` stubs this path too. It normalizes the text itself.
+        pcm, sr = synthesize(text, voice=voice, speed=speed, pause=pause)
+        yield pcm, sr
+        return
+    text = speech.normalize_for_speech(text)
+    voice_name = _resolve_kokoro_voice(voice)
+    speed = config.speech_speed() if speed is None else speed
+    # The same conversion `synthesize_timed` makes: the gap at THIS speed (spec 039 follow-up).
+    pause = config.effective_pause(config.sentence_pause() if pause is None else pause, speed)
+    segs = speech.segments(text) or [(text, 0.0)]
+    for i, (piece, gap) in enumerate(segs):
+        pcm, sr, _ = _KOKORO.synthesize(piece, voice_name, speed=speed, pause=pause)
+        if gap:
+            pcm += quiet(int(sr * pause * gap))
+        pcm = normalize(_deess(pcm, sr))
+        if i == 0:
+            pcm = quiet(int(sr * config.CHIME_LEADING_SILENCE_S)) + pcm
+        if i == len(segs) - 1:
+            pcm += quiet(int(sr * config.CHIME_TRAILING_SILENCE_S))
+        yield pcm, sr
 
 
 def write_wav(path: str, pcm: bytes, sample_rate: int) -> str:
@@ -1030,11 +1193,16 @@ def available() -> str:
             # would report nothing in the one place someone looks before starting a session —
             # and the whole point is to warn that the persisted speed is not the speed that will
             # be used, BEFORE the first reply rather than after it.
+            # Spec 039: nothing is clamped any more. Above the native ceiling the model speaks at it
+            # and the audio is time-stretched the rest of the way, which is said out loud here.
             asked = config.speech_speed()
-            if asked > config.KOKORO_SPEED_MAX:
-                return (f"kokoro (resident, {config.kokoro_voice()}; speed clamped "
-                        f"{asked}→{config.KOKORO_SPEED_MAX} — kokoro's own ceiling, "
-                        f"COMMAND_BRIDGE_SPEECH_SPEED asks for more)")
+            native, stretch = config.kokoro_speed_plan(asked)
+            if stretch != 1.0:
+                return (f"kokoro (resident, {config.kokoro_voice()}; speed {asked} = model at "
+                        f"{native} x time-stretch {stretch:.2f}, pitch kept; "
+                        f"COMMAND_BRIDGE_SPEECH_SPEED)")
+            if config.tts_provider() != "cpu" or _KOKORO.loaded:
+                return f"kokoro (resident, {config.kokoro_voice()}, {_KOKORO.device})"
             return f"kokoro (resident, {config.kokoro_voice()})"
         missing = " and ".join(
             n for n, p in (("kokoro-v1.0.onnx", config.kokoro_model()),

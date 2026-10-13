@@ -176,6 +176,186 @@ def _say_dotted_word(match: re.Match) -> str:
     return match.group(1).replace(".", DOT).replace("_", " ")
 
 
+# ----------------------------------------------- spoken forms (spec 039): what a person would say
+#
+# Measured 2026-10-09 on kokoro/bm_daniel with Parakeet as the judge and the tokenizer's phonemes as
+# the second witness: `AWS` is phonemized as the WORD "awz" (CLI "kly", ASR "asser", CI "sigh"),
+# `$225` was heard as "dollar 225" (and at 2.0x the dollar vanished), `10/24` as "ten slash twenty
+# four", `72°F` as "72 degrees F". The engine's own front end decides these, so the fix is to hand it
+# no symbols at all: the words a person would say. Every rule is narrow and has a counter-case in
+# `tests/test_spoken_forms.py`, because an over-firing rule is silent (spec 008 TC2).
+
+_ORDINAL_WORDS = {
+    1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", 6: "sixth", 7: "seventh",
+    8: "eighth", 9: "ninth", 10: "tenth", 11: "eleventh", 12: "twelfth", 13: "thirteenth",
+    14: "fourteenth", 15: "fifteenth", 16: "sixteenth", 17: "seventeenth", 18: "eighteenth",
+    19: "nineteenth", 20: "twentieth", 30: "thirtieth",
+}
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
+           "October", "November", "December")
+
+
+def _ordinal(n: int) -> str:
+    if n in _ORDINAL_WORDS:
+        return _ORDINAL_WORDS[n]
+    tens, ones = divmod(n, 10)
+    return f"{_TENS[tens]} {_ORDINAL_WORDS[ones]}"
+
+
+def _year(y: int) -> str:
+    """`2026` -> "twenty twenty six", `2005` -> "two thousand five", `26` -> 2026."""
+    if y < 100:
+        y += 2000
+    if 2000 <= y < 2010:
+        return "two thousand" + (f" {_ONES[y - 2000]}" if y > 2000 else "")
+    hi, lo = divmod(y, 100)
+    if lo == 0:
+        return f"{_cardinal(hi)} hundred"
+    if lo < 10:
+        return f"{_cardinal(hi)} oh {_ONES[lo]}"
+    return f"{_cardinal(hi)} {_cardinal(lo)}"
+
+
+def _amount(digits: str) -> str:
+    """A whole number as words, or the digits themselves when it is too long to read safely."""
+    digits = digits.replace(",", "")
+    if len(digits) > _CARDINAL_MAX_DIGITS:
+        return digits
+    return _cardinal(int(digits))
+
+
+def _decimal(whole: str, frac: str | None) -> str:
+    out = _amount(whole)
+    return out + (POINT + _digit_by_digit(frac) if frac else "")
+
+
+_TEMPERATURE = re.compile(r"(?<![\w.])(-|−|minus\s)?(\d+)(?:\.(\d+))?\s?°\s?([CFcf])\b")
+"""`72°F`, `-5°C`, `21.5 °C`. Only with the degree sign AND a scale letter: a bare `72F` is too
+often something else (a hex value, a model name)."""
+
+
+def _say_temperature(m: re.Match) -> str:
+    scale = "Fahrenheit" if m.group(4).lower() == "f" else "Celsius"
+    sign = "minus " if m.group(1) else ""
+    return f"{sign}{_decimal(m.group(2), m.group(3))} degrees {scale}"
+
+
+_TIME = re.compile(
+    r"(?<![\d:.])([01]?\d|2[0-3]):([0-5]\d)(?![\d:])"
+    r"(?:\s?(?:([AaPp])\.[Mm]\.|([AaPp])[Mm]\b))?")
+"""`6:20 PM`, `9:05 am`, `6:00 p.m.`, `18:30`. Minutes are exactly two digits and a third colon
+part is refused, so a timestamp `10:30:15` and a ratio `16:9` are left alone."""
+
+
+def _say_time(m: re.Match) -> str:
+    hour, minute = int(m.group(1)), int(m.group(2))
+    letter = m.group(3) or m.group(4)
+    words = _cardinal(hour)
+    if minute == 0:
+        words += "" if letter else " hundred"
+    elif minute < 10:
+        words += f" oh {_ONES[minute]}"
+    else:
+        words += f" {_cardinal(minute)}"
+    if letter:
+        # Spelled the acronym way, so the letters are said as letters ("pee em").
+        words += f" {letter.upper()}-M" + ("." if m.group(3) else "")
+    return words
+
+
+_HOUR = re.compile(r"(?<![\d:.$])(1[0-2]|0?[1-9])\s?(?:([AaPp])\.[Mm]\.|([AaPp])[Mm]\b)")
+"""`9 AM`, `5pm`: an hour with no minutes. Without this `AM` reaches the acronym rule, which leaves it
+as the word "am" (it is in SAID_AS_WORDS)."""
+
+
+def _say_hour(m: re.Match) -> str:
+    letter = m.group(2) or m.group(3)
+    return f"{_cardinal(int(m.group(1)))} {letter.upper()}-M" + ("." if m.group(2) else "")
+
+
+_DATE = re.compile(r"(?<![\w/.])(1[0-2]|0?[1-9])/(3[01]|[12]\d|0?[1-9])(?:/(\d{4}|\d{2}))?(?![\w/])")
+"""`10/24`, `3/15`, `10/9/2026`. A US month/day, read as a date ONLY when it cannot be a fraction:
+a year is present, or the day is past 12, or the month is 10-12. So `3/4` and `1/2` stay as they
+are (a fraction is the likelier reading, and a wrong date is worse than a slash)."""
+
+
+def _say_date(m: re.Match) -> str:
+    month, day, year = int(m.group(1)), int(m.group(2)), m.group(3)
+    if not (year or day > 12 or month >= 10):
+        return m.group(0)
+    out = f"{_MONTHS[month - 1]} {_ordinal(day)}"
+    return out + (f", {_year(int(year))}" if year else "")
+
+
+_MONEY = re.compile(
+    r"(?<![\w$])\$(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?"
+    r"(?:\s?([kKmMbB])\b|\s(thousand|million|billion)\b)?")
+"""`$225`, `$3.50`, `$1,200`, `$3k`, `$2.5M`, `$4 million`."""
+
+_SCALE = {"k": "thousand", "m": "million", "b": "billion"}
+
+
+def _say_money(m: re.Match) -> str:
+    whole, frac = m.group(1), m.group(2)
+    scale = _SCALE.get((m.group(3) or "").lower()) or m.group(4)
+    if scale:
+        return f"{_decimal(whole, frac)} {scale} dollars"
+    dollars = int(whole.replace(",", ""))
+    cents = int((frac or "0").ljust(2, "0"))
+    parts = []
+    if dollars or not cents:
+        parts.append(f"{_amount(whole)} dollar" + ("" if dollars == 1 else "s"))
+    if cents:
+        parts.append(f"{_cardinal(cents)} cent" + ("" if cents == 1 else "s"))
+    return " and ".join(parts)
+
+
+_ACRONYM = re.compile(r"(?<![\w-])([A-Z]{2,6})(s?)(?![\w-])")
+"""A run of 2-6 capitals standing alone, with an optional plural `s`. The neighbours exclude `_`,
+digits and `-`, so an identifier (`COMMAND_BRIDGE_TTS`), a mixed word (`iOS`) and this rule's own
+output (`A-W-S`) are never re-read."""
+
+SAID_AS_WORDS = frozenset({
+    # Short English words that get written in capitals for emphasis.
+    "OK", "NO", "SO", "DO", "GO", "TO", "UP", "IT", "IS", "IN", "ON", "OR", "AT", "AS", "BE", "BY",
+    "HE", "WE", "ME", "MY", "OF", "IF", "AN", "AM", "THE", "AND", "BUT", "NOT", "YES", "ALL", "ANY",
+    "CAN", "OUT", "NOW", "NEW", "OLD", "GET", "SET", "PUT", "RUN", "ADD", "USE", "WHY", "HOW", "WHO",
+    "YOU", "OUR", "FOR", "ARE", "WAS", "HAS", "HAD", "DID", "TOO", "TWO", "ONE", "TEN", "SIX", "BIG",
+    "BAD", "TOP", "END", "OFF", "GOT", "LET", "MAY", "WAY", "DAY", "SEE", "SAY", "ASK", "TRY", "YET",
+    "FEW", "FAR", "OWN", "ITS", "HIS", "HER", "HIM", "SHE", "LOT", "KEY", "FIX", "LOG", "BUG", "JOB",
+    "BOX", "WIN", "RED", "HEY", "WOW", "YEP",
+    # Acronyms people SAY as words.
+    "LAN", "WAN", "RAM", "GIF", "PIN", "SIM", "APP", "DEV", "OPS",
+})
+"""Capitals read as a word rather than spelled. Anything of four or more letters that contains a
+vowel is also left as a word (DONE, JSON, NASA, YAML), so this list only has to hold the short ones."""
+
+
+def _say_acronym(m: re.Match) -> str:
+    run, plural = m.group(1), m.group(2)
+    if run in SAID_AS_WORDS:
+        return m.group(0)
+    if len(run) > 3 and re.search(r"[AEIOU]", run):
+        return m.group(0)
+    # Hyphen-joined letters, measured as the one form the tokenizer always spells: `A-W-S` ->
+    # eɪ dʌbəljuː ɛs, where `AWS` alone is the word "awz" and `A P I` turns the A into a schwa.
+    # The plural takes an apostrophe: `P-Rs` reads the s as the LETTER "ess"; `P-R's` is "pee arz".
+    return "-".join(run) + ("'s" if plural else "")
+
+
+def spoken_forms(text: str) -> str:
+    """Temperatures, times, dates, money, then acronyms, as the words a person would say.
+
+    Order matters: each rule removes the symbol the next one could misread (`°`, `:`, `/`, `$`),
+    and acronyms go last so the `P-M` and `A-M` this pass writes are already in their final form."""
+    out = _TEMPERATURE.sub(_say_temperature, text)
+    out = _TIME.sub(_say_time, out)
+    out = _HOUR.sub(_say_hour, out)
+    out = _DATE.sub(_say_date, out)
+    out = _MONEY.sub(_say_money, out)
+    return out
+
+
 def normalize_for_speech(text: str) -> str:
     """The string the ENGINE should be handed, given the string the agent WROTE.
 
@@ -191,9 +371,14 @@ def normalize_for_speech(text: str) -> str:
     """
     if not text:
         return text
-    out = _DOTTED_NUMBER.sub(_say_number, text)
+    # Spec 039's spoken forms first: they consume `$3.50` and `21.5°C` before the dotted-number rule
+    # could read the decimal as a version.
+    out = spoken_forms(text)
+    out = _DOTTED_NUMBER.sub(_say_number, out)
     out = _DOTTED_WORD.sub(_say_dotted_word, out)
     out = _LEADING_DOT.sub(lambda m: DOT.lstrip() + m.group(1), out)
+    # Acronyms LAST, over everything above, so no rule here can re-read their hyphens.
+    out = _ACRONYM.sub(_say_acronym, out)
     return out
 
 

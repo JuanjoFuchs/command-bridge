@@ -264,7 +264,7 @@ set.** Prosody is the entire signal the model reads, and synthetic audio has non
   the defaults in TC6
 - [pipecat-ai/smart-turn][st] — the model, its training data and its licence
 - `specs/002-packaging.md` — the extras pattern this follows
-- `Voice Interface to Claude` — the research and what was deliberately not taken
+- the original voice-interface research (not published) — the research and what was deliberately not taken
 
 [hf]: https://github.com/huggingface/speech-to-speech
 [st]: https://github.com/pipecat-ai/smart-turn

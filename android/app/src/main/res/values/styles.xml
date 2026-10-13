@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Spec 033 FR2. DayNight, so the WebView's prefers-color-scheme follows the system's dark or light
+         setting (a WebView reports the APP theme's lightness, not the system's). No action bar: the page
+         has its own title. The platform ships no public DayNight.NoActionBar, hence this style. -->
+    <style name="Bridge" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

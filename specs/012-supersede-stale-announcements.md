@@ -154,4 +154,4 @@ server restart to deploy.**
 
 - Command Bridge — Parked idea #1 (JJ's verbatim + the synthesis this spec implements).
 - The held-clip queue (`lane_held`) and the hand/`waiting` accounting (spec 029 lineage) this builds on.
-- Spec Writing Rules for Agents — the rules this spec follows.
+- the spec-writing rules — the rules this spec follows.

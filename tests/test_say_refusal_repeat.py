@@ -74,6 +74,22 @@ def state(monkeypatch, tmp_path):
     return st
 
 
+@pytest.fixture(autouse=True)
+def _refusals_that_cannot_mark_read(monkeypatch):
+    """SPEC 029 FR9: a refusal carrying EVERY unread turn in full now counts them read, so the
+    agent's retry speaks and there is no second refusal to compress. The repeat memo still governs
+    the refusals that cannot mark read — a list truncated by `UNREAD_ON_SAY_MAX` — so these tests
+    exercise it in that regime by reporting every unread list as incomplete."""
+    real = server._unread_turns
+
+    def incomplete(state, lane=None):
+        out = real(state, lane)
+        out["complete"] = False
+        return out
+
+    monkeypatch.setattr(server, "_unread_turns", incomplete)
+
+
 class _Synth:
     """A stand-in for `tts.synthesize` that RECORDS whether it was called.
 

@@ -192,6 +192,9 @@ def engine_settings() -> dict:
         "voice": voice,
         "speech_speed": config.speech_speed(),
         "sentence_pause": config.sentence_pause(),
+        # The gap actually injected: the stored pause is the gap at native pace and shrinks with the
+        # speed (spec 039 follow-up). Every silence this harness PREDICTS uses this, not the setting.
+        "effective_pause": config.effective_pause(config.sentence_pause(), config.speech_speed()),
         "deess": config.deess(),
         "consonant_boost": config.consonant_boost(),
         "asr_engine": config.asr_engine(),
@@ -464,7 +467,7 @@ def build_clips(env: dict, normalize, use_cache: bool) -> dict:
                 rec["mode"] = f"transform ON (applied by harness; patched: " \
                               f"{', '.join(patched) or 'nothing on path'})"
         rec["id"], rec["source_text"], rec["why"] = cid, text, why
-        rec["pause_ms"] = env["sentence_pause"] * 1000.0
+        rec["pause_ms"] = env["effective_pause"] * 1000.0
         out[cid] = rec
     return out
 
@@ -477,7 +480,7 @@ def print_findings(clips: dict, env: dict) -> None:
     and the difference is not noise — it is a rule the spec had not isolated. Reported, not
     resolved: choosing between the spec's table and this measurement is not a harness's job.
     """
-    pause_ms = env["sentence_pause"] * 1000.0
+    pause_ms = env["effective_pause"] * 1000.0
     rows = []
     for cid, _text, _tr, _why in CLIPS:
         rec = clips[cid]
@@ -530,7 +533,7 @@ def run_checks(clips: dict, normalize, env: dict) -> list:
     # AC8 asks for a silence where there is none today. Before believing a 0 ms reading, the
     # detector has to be shown finding a silence of a KNOWN length: `tts` injects exactly
     # `sentence_pause` seconds of digital zeros between sentences, so Pb carries a ruler.
-    expect_ms = env["sentence_pause"] * 1000.0
+    expect_ms = env["effective_pause"] * 1000.0
     pb = longest_silence_ms(clips["Pb"])
     checks.append(check(
         verdict(pb >= expect_ms * 0.9), "INSTR",

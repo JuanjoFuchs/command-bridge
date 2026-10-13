@@ -1,0 +1,1465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark light" />
+<meta name="theme-color" content="#080b11" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#e7e9e7" media="(prefers-color-scheme: light)" />
+<title>command-bridge</title>
+<link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%2379849b'/%3E%3C/svg%3E" /><!-- repainted by the UI's paintTabIdentity() -->
+<style>
+  /* THE AUDIO SHELL (spec 023). This document holds only what must never reload: the microphone,
+     clip playback and the voice socket. Everything he SEES is the UI frame below (`/ui`, the old
+     one page), which reloads on its own when its code changes — so iterating on the UI no longer
+     waits for the orb to go off, and never touches the audio.
+
+     Why the audio is the OUTER document and not a small frame inside the UI: reloading a page
+     destroys every frame inside it, so whatever has to survive a UI reload cannot live in the UI. */
+  html, body { margin:0; height:100%; overflow:hidden; background:#080b11; }
+  @media (prefers-color-scheme: light) { html, body { background:#e7e9e7; } }
+  #ui { display:block; width:100%; height:100%; border:0; }
+</style>
+</head>
+<body>
+<!-- No `allow=microphone`: the UI frame never opens the mic or the socket itself (FR3). A tap in it
+     still counts as his gesture HERE, because user activation propagates to ancestor frames (TC1). -->
+<iframe id="ui" title="command-bridge"></iframe>
+<script>
+(() => {
+  "use strict";
+  const params = new URLSearchParams(location.search);
+  const token = params.get("token") || "";
+  // SPECTATE (`?spectate=1`): a read-only render of the real bridge — the socket opens so the UI
+  // shows live data, but the microphone is never acquired (start() is hard-blocked below).
+  const SPECTATE = params.has("spectate");
+  // NATIVE (`?native=1`, spec 032): this page runs inside the Android app's WebView, whose foreground
+  // service owns ALL the audio. The socket opens for live data as usual, but the page never acquires
+  // the microphone, never builds an AudioContext, never plays or queues a clip, and never asserts the
+  // session controls on connect — the service does each of those. The orb is forwarded to the app
+  // (`nativeCall("orbTapped")`), and the app paints the orb and the spoken rows through `cbNative`.
+  const NATIVE = params.has("native");
+  // PRIMS (`&prims=1`, spec 044): the app is a dumb wrapper driven by the SERVER's directives. The orb
+  // and the output caret then talk to the server on this page's socket, and the server tells the app
+  // what to hold. Without it (an app before 0.8.0) the page forwards both to the app, as before.
+  const PRIMS = NATIVE && params.has("prims");
+  // MOCK (`?mock=<scenario>`): the UI renders a fixture; the shell opens no socket and no mic.
+  const MOCK = params.get("mock");
+  // The signature of THIS file as served (spec 023). A pushed `reload` names the shell signature
+  // now on disk; only a mismatch means the shell itself changed and needs a full reload.
+  const SHELL_SIG = "__CB_PAGE_SIG__";
+
+  // THE UI'S HOOKS, set by the UI frame each time it loads (`cbShell.attach`). Everything the
+  // audio code used to paint directly goes through `ui()`, so a UI that is mid-reload — or not
+  // loaded at all — costs a missed repaint, never an exception on the audio path. The UI repaints
+  // from `cbShell.state` when it attaches, so nothing missed in between stays missed.
+  let hooks = null;
+  function ui(name, ...args) {
+    const fn = hooks && hooks[name];
+    if (typeof fn !== "function") return undefined;
+    try { return fn(...args); }
+    catch (e) { diag.errors.push("ui." + name + ": " + e.message); return undefined; }
+  }
+  const applyOrb = () => { ui("applyOrb"); applyHeldReload(); };
+  const applyLaneOrbs = () => ui("applyLaneOrbs");
+  const devicesChanged = () => ui("devicesChanged");
+  // The last error, kept so a UI that loads after it was raised still shows it.
+  let lastError = "";
+  function setError(t) {
+    lastError = t || "";
+    if (t) diag.errors.push(t);
+    ui("setError", lastError);
+  }
+  // RE-READ THE DEVICES AND RE-APPLY THE ROUTE. Enumeration and the pickers are the UI's
+  // (`refreshDevices` there), which ends by calling `applySink`; with no UI loaded the route is
+  // still applied, from the preference already held.
+  async function refreshRoute(reason) {
+    if (hooks && typeof hooks.refreshDevices === "function") {
+      try { await hooks.refreshDevices(reason); return; }
+      catch (e) { diag.errors.push("ui.refreshDevices: " + e.message); }
+    }
+    await applySink(reason);
+  }
+
+  // --- the audio state -------------------------------------------------------------------------
+  let ws = null, ctx = null, micStream = null, node = null, source = null;
+  // A tap on the mic graph for the lane WAVEFORM visualizer (spec 016, 2026-09-09) — real frequency
+  // content of his voice, so the live lane's wave reflects the actual sound. Silent (never connected
+  // to the destination); created when capture starts, cleared when it stops.
+  let analyser = null;
+  let wakeLock = null, running = false, pendingClip = null;
+  // Clips wait their turn here. A single `pendingClip` variable was not enough: a cue arriving
+  // between a reply's header and its audio OVERWROTE the reply, so the reply either played
+  // labelled as a cue (no transcript row, no `played` receipt) or was dropped outright — and
+  // when two clips did survive they played SIMULTANEOUSLY, one on top of the other. Live
+  // on the move 2026-07-31: "those two play together, overlapping one on top of the other."
+  const clipQueue = [];
+  let draining = false;
+  // THE REPLY STILL ARRIVING (2026-10-07, streamed speech). A `streamed` header queues a clip at
+  // once, every binary frame until its `audio_end` is one more piece of it, and `playStream` plays
+  // each piece as it lands, so he hears the first phrase while the rest is still synthesizing.
+  let streamingClip = null;
+  // 🔴 WHOSE CLIP IS IN THE AIR, so the raised hand can count down instead of vanishing.
+  //
+  // JJ, 2026-08-25: *"as soon as I switch to that agent, I only get served one turn... I see the
+  // hand disappear, even though I'm only served one turn. And once that one finishes playing, I
+  // get served the next turn and so on. So I was thinking the count should decrease accordingly."*
+  //
+  // The cause is that the queue MOVES on a lane switch. The server flushes every held clip at
+  // once and broadcasts `waiting: 0`, which is true of the SERVER — from that instant the backlog
+  // lives here, in `clipQueue`, and only this page knows how much of it is left. So the count the
+  // hand shows is the server's number plus what is still queued or playing locally.
+  let playingLane = null;
+  let playingClipId = null;   // the id on the speaker, so `clip_played` from another device can stop it
+  // Mute is SESSION state (see setMuted in the UI), restored here too so the capture gate is right
+  // before the UI frame has loaded at all.
+  let muted = sessionStorage.getItem("command-bridge.muted") === "1";
+  // THE ORB MODEL's audio half. The orb is a pure function of these plus the agent's state (see
+  // orbView in the UI); the UI reads them through `cbShell.state` rather than keeping copies.
+  let playing = false;        // a reply is AUDIBLE right now — only the client can know this
+  let phase = "idle";          // page lifecycle: idle | starting | warming | live
+  // The channel starts CLOSED and the first orb tap opens it, so a page left open in a
+  // background tab is never quietly live.
+  let channelOpen = false, speakingSignal = false, speakingSince = 0, speakingRunStart = 0;
+  // HAS THE MICROPHONE EVER BEEN GRANTED ON THIS PAGE? It is what separates a cold page from one
+  // he switched off, now that switching off RELEASES capture and therefore clears `running`.
+  // Without it the orb would drop from "Off" back to "Tap to start" the moment the tracks end,
+  // which reads as the session having died rather than as the switch he just pressed.
+  let everStarted = false;
+  let playingSource = null;
+  // The echo guard's page half (2026-09-30): the server's COMMAND_BRIDGE_ECHO_GUARD, sent on `ready`,
+  // and the moment until which the mic ships silence because a cue is playing (see onChunk).
+  let echoGuard = false;
+  let cueGateUntil = 0;
+  const CUE_GATE_TAIL_MS = 350;
+  const CUE_GATE_ENABLED = false;   // see the CUE GATE in onChunk for why this is off
+  // The default lane, so a reply with no lane is owned by someone (`clipOwner`). Learnt from the
+  // same `ready` / `lane` frames the UI reads.
+  let defaultLane = null;
+  // WHERE REPLIES COME OUT. `sinkWanted` is what he ASKED FOR and is the only half persisted;
+  // what is actually in use is read back off the AudioContext every time it is needed and never
+  // cached, because a cached "in use" is precisely the lie this section exists to stop telling.
+  // `sinkRefused` is sticky: a platform that answered NotSupportedError once will answer it
+  // again, and re-showing the control after every enumeration would resurrect a dead switch.
+  let sinkWanted = localStorage.getItem("command-bridge.sinkId") || "";
+  let sinkSupported = false, sinkRefused = false;
+  // The live level the mic ring and his waveform follow, and the playback tap the agent's waveform
+  // reads. Written here, on the audio path; the UI's paint loops only read them.
+  let levelTarget = 0, playAnalyser = null;
+
+  // ONE diag object for the whole page, owned here so it survives a UI reload; the UI frame fills
+  // in its own fields (the reducers, the pills) every time it attaches, and points its own
+  // `window.__voiceTunnel` at this same object.
+  // Exposed so the e2e harness can assert on real state rather than scraping the DOM.
+  // `peakRms` is not decoration: without it, "the mic is delivering silence" and "the server
+  // dropped my audio" look identical from outside, and that ambiguity costs hours.
+  // `states` and `partials` are recorded, not just rendered, so an automated harness can assert
+  // that the UI actually SHOWED a stage rather than merely that the server sent it.
+  const diag = window.__voiceTunnel = {
+    connected:false, framesSent:0, peakRms:0, liveLevel:0,
+    turns:[], played:[], cues:[], states:[], partials:[], errors:[],
+    // Lets a harness drive the channel, mute and speaking signals WITHOUT a microphone. All
+    // three normally require `running`, which requires a real `getUserMedia` grant that a
+    // headless run cannot produce — so without this the states that matter most are the ones no
+    // automated check can reach. Assigned below to the same `tellServer` the UI itself calls, so
+    // a harness exercises the real path instead of a parallel one that can drift from it.
+    signal: null,
+    // AND THE AUDIO THAT HAS TO ACCOMPANY THAT SIGNAL. Since spec 005 the server publishes
+    // `user_speaking` and `speech_active` as FALSE once no audio frame has arrived for
+    // END_OF_UTTERANCE_MS, because in production "he is speaking" and "frames are arriving" are
+    // the same fact — a page asserting the first while the second has stopped is a page that has
+    // frozen, and under a speaking-gated wait that lie hangs the tunnel.
+    //
+    // So a harness sending only the flag was asserting a state that cannot occur, and its "a
+    // reply is HELD while he is speaking" check had quietly become vacuous: it measured
+    // SPEAK_GRACE_S either way. This pushes real PCM through the real socket, so the harness
+    // reproduces the pairing instead of an idealised half of it — the same lesson as the
+    // air-conditioner bug, where every synthetic test passed because they all fed digital zeros
+    // as "silence".
+    pushAudio: null,
+    // The pure orb reducer. A harness calls this directly to sweep the whole state matrix —
+    // every combination of running/phase/channel/mute/playing/agentState — in milliseconds,
+    // without a microphone and without waiting on real transitions. The transition tests then
+    // only have to prove the model is WIRED correctly, not that the rules are right.
+    orbView: null,
+    orb: null,
+    // The pure LANE reducer, exposed for the same reason `orbView` is: a harness sweeps every
+    // combination of lane count, live lane, waiting depth and per-agent state in milliseconds,
+    // with no microphone, no socket and no server. The DOM checks then only have to prove the
+    // model is wired to the painter, not that the rules are right.
+    lanesView: null,
+    lanes: null,
+    // WHAT A STALLED CLIP SHOULD DO, as a pure function of the context's state and how long it
+    // has been that way. Exposed for the same reason as the reducers above: the guard it drives
+    // runs on a 200 ms interval inside a promise that nothing can await from a test, so the only
+    // way to sweep its rules is to lift them out of the timer. The bug it exists to prevent was
+    // exactly a missing case in that predicate — `suspended` was neither "closed" nor handled —
+    // so the predicate is the thing worth a truth table.
+    clipStallAction: null,
+    // Feeds one server frame into the REAL `onMessage`, so a harness can drive the lane strip
+    // without a socket, a microphone or a running tunnel. Same argument as `signal` above: the
+    // alternative is a harness that pokes the model directly and therefore stops testing the
+    // handler that production actually runs — which is how a page ends up passing its own suite
+    // while the wiring between a message and the paint is broken.
+    deliver: null,
+    // THE PILL MODEL AND ITS PURE REDUCER, the same pairing as `orb`/`orbView` above and for the
+    // same reason. `pills` is what the page decided last — how many DISTINCT devices there are on
+    // each side after Chrome's `default`/`communications` aliases are collapsed, whether the two
+    // halves paired, which pills are on screen, why each hidden one is hidden, and the route text
+    // if it is knowable. `pillsView` is the function that decided it, exposed so a harness can
+    // sweep every enumeration shape in milliseconds without a device, a permission or a phone.
+    //
+    // `show` is what the DOM is painted FROM, not a second description of it — a harness that
+    // finds these two disagreeing has found a defect, which is the whole reason the model is
+    // published rather than inferred by scraping.
+    pills: null,
+    pillsView: null,
+    collapsed: false,
+    // The audio ROUTE, recorded rather than merely acted on — same reason as `peakRms`. When he
+    // says "it came out of the earpiece", the only useful next question is which of three things
+    // was true: the platform never offered a choice (`supported:false`, `why` says which half was
+    // missing), the choice was made and held (`inUse` equals `wanted`), or it was made and lost
+    // (`inUse` differs, `why` names the failure). Without this, all three look identical from the
+    // outside and the debugging is guesswork — which is how one live report turned into a
+    // suspected mechanism that was wrong.
+    sink: { supported:false, wanted:"", inUse:null, shown:null, applied:0, devices:0, why:"" },
+    // WHETHER THE TWO HALVES COULD BE PAIRED AT ALL, recorded for the same reason as `sink`: from
+    // outside, "this platform groups badly", "nothing enumerated" and "the mic and the speaker are
+    // genuinely on different devices" all look like "he still sees two dropdowns". `why` names
+    // which, and `count` says how many physical devices the page believes exist.
+    group: { supported:false, count:0, inUse:null, shown:null, why:"" },
+    micInUse: null, micShown: null,
+    // IS THE MICROPHONE ACTUALLY HELD RIGHT NOW — read off the tracks, not a flag this code sets.
+    // The whole point of the 2026-08-16 change is that "the orb is off" and "the microphone is
+    // released" had drifted apart while every status the page published said they had not, so a
+    // boolean written by the same function that does the releasing would be the same lie one layer
+    // down. `[]` means nothing is held; `["live"]` means it is. Same discipline as `diag.sink`.
+    micState: () => (micStream ? micStream.getAudioTracks().map((t) => t.readyState) : []),
+  };
+
+  function tellServer(type, value) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, value }));
+  }
+  diag.signal = tellServer;
+
+  // Synthetic capture for a headless harness: `ms` of speech-shaped audio down the SAME socket
+  // the microphone uses, so the server's ingest, segmenter and frame-recency guard all see
+  // exactly what they would see from a real page. Speech-SHAPED, not a constant tone: the noise
+  // floor is a rolling percentile, so a steady hiss raises the floor to its own level and is
+  // then correctly classified as background — which is the design that beat a real air
+  // conditioner, and which makes a naive fixture silently test nothing.
+  diag.pushAudio = (ms) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return 0;
+    // Announce the rate these frames are actually at. With no AudioContext the page announced
+    // 48000 on load (`openSocket(ctx ? ctx.sampleRate : 48000)`), so without this the server
+    // would resample synthetic 16 kHz audio as though it were 48 kHz — three times too fast,
+    // and a fixture that is quietly the wrong length. `hello` is idempotent server-side.
+    ws.send(JSON.stringify({ type: "hello", sample_rate: 16000, streams: true }));
+    const n = Math.round((ms || 200) * 16000 / 1000);
+    const f32 = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const env = Math.pow(Math.sin(2 * Math.PI * 4 * i / 16000), 4);   // ~4 syllables/s
+      f32[i] = 0.3 * env * (Math.random() * 2 - 1);
+    }
+    ws.send(floatToPCM16(f32).buffer);
+    diag.framesSent++;
+    return n;
+  };
+
+  // Tell the server he is TALKING, from the microphone level, before any of that audio has
+  // crossed the network. Live, 2026-08-06, immediately after being interrupted: "the client
+  // needs to send a signal back to the server whenever it's detecting me speaking so that you
+  // don't interrupt me... the responses get queued up until I shut up."
+  //
+  // The server already infers this from its own segmenter, and that inference is what allowed the
+  // interruption: it is derived from audio that has already been buffered, sent and segmented, so
+  // it trails the actual sound. This leads it.
+  //
+  // A HANGOVER rather than an instant drop, because speech is full of gaps — the pause between
+  // words is silent, and a signal that tracks the waveform exactly would clear a dozen times per
+  // sentence and invite a reply into each one. It only clears after a stretch of quiet long
+  // enough to be a real ending. Deliberately shorter than END_OF_UTTERANCE_MS: this decides
+  // whether to hold a clip, not whether he has finished a thought.
+  const SPEAKING_RMS = 0.045;        // above the room, below a whisper
+  const SPEAKING_HANGOVER_MS = 700;
+  const SPEAKING_MIN_RUN_MS = 120;
+  // A MINIMUM RUN before the signal asserts, borrowed from huggingface/speech-to-speech, whose
+  // VAD refuses to hold fragments under 100 ms "so sub-threshold bursts cannot sum past
+  // min_speech_ms and fire a false barge-in".
+  //
+  // Without it a cough, a keyboard knock or a door closing crosses the level for a single buffer
+  // and holds the agent's reply for the whole 700 ms hangover. That is the same failure as being
+  // interrupted, inverted: instead of the agent talking over him, the room silences the agent.
+  // 120 ms is shorter than any syllable, so real speech never waits on it.
+  function reportSpeaking(rms) {
+    const now = performance.now();
+    if (rms >= SPEAKING_RMS) {
+      if (!speakingRunStart) speakingRunStart = now;
+      speakingSince = now;
+      if (!speakingSignal && now - speakingRunStart >= SPEAKING_MIN_RUN_MS) {
+        speakingSignal = true;
+        tellServer("speaking", true);
+      }
+      return;
+    }
+    // Below the level: a run that never reached the minimum was noise, so forget it rather
+    // than let the next burst continue it and sum past the threshold.
+    speakingRunStart = 0;
+    if (speakingSignal && now - speakingSince > SPEAKING_HANGOVER_MS) {
+      speakingSignal = false;
+      tellServer("speaking", false);
+    }
+  }
+
+  // WHICH LANE A CLIP BELONGS TO, or null when the answer is nobody (spec 029 FR1/TC1).
+  //
+  // A cue is the one kind of audio outside the lane system, so it has no owner to be waiting for.
+  // Tested by its own `cue` field rather than by the ABSENCE of a lane, because a genuinely
+  // lane-less REPLY should still fall back to the default — that fallback is what spec 013 left
+  // in place for clips that predate lanes, and it is correct for replies and wrong for cues.
+  //
+  // Pure and exposed for the same reason as `waitingCounts`: the caller lives in `drainClips`,
+  // which a headless harness cannot reach without an AudioContext.
+  function clipOwner(header, defaultLane) {
+    if (!header || header.cue) return null;
+    return header.lane || defaultLane;
+  }
+  diag.clipOwner = clipOwner;
+
+  // What to do about a clip whose `onended` has not fired, as a PURE function of the context's
+  // state and how many guard ticks it has been stalled. Kept out of the timer so it can be swept.
+  //
+  //   running/closed -> the source is either advancing or gone; nothing to decide
+  //   suspended      -> the CLOCK is stopped, so the source will never end on its own: wake it,
+  //                     and stop waiting if it will not wake
+  //
+  // 🔴 `suspended` is the case that was missing. It is not `closed` — the context is alive and
+  // accepts `createBufferSource()` and `start()` — so the old predicate saw a healthy context and
+  // waited forever on an event that could not arrive, wedging every clip behind it.
+  function clipStallAction(state, ticks, limit) {
+    if (!state || state === "closed") return "finish";
+    if (state !== "suspended") return "wait";
+    return ticks >= (limit || 15) ? "finish" : "resume";
+  }
+  diag.clipStallAction = clipStallAction;
+  // 🔴 THE CLOCK IS THE FLOOR UNDER `onended`, added 2026-08-31. The "speaking" label — and the
+  // hand chained to it, because the hand counts unheard clips and decrements on the same `played`
+  // receipt — hung ~20 s after a clip had finished. The label clears on that receipt, the receipt
+  // waits on `src.onended`, and `onended` fires late whenever the context suspends around the
+  // clip's end (his laptop, same suspend that stalled Atlas for 43 s on 2026-08-26; NOT a phone).
+  // `AudioContext.currentTime` advances ONLY while the context runs, so once it has passed the
+  // clip's scheduled end the audio has genuinely played through: this cannot fire early during a
+  // real suspend (the clock is frozen then, still short of the end) and it fires at once when a
+  // late `onended` is the only thing still missing — including the exact reported case, a clip that
+  // finished and THEN the context suspended. `onended` stays the fast path; this is the floor under
+  // it. Pure and finite-guarded so `scripts/clipstall.py` sweeps it with no AudioContext, and so a
+  // null clock (`ctx` nulled mid-drain) or an unknown duration defers to the stall guard rather
+  // than finishing a clip early.
+  function clipElapsed(now, end) {
+    return Number.isFinite(now) && Number.isFinite(end) && now >= end;
+  }
+  diag.clipElapsed = clipElapsed;
+
+  // --- Screen Wake Lock -----------------------------------------------------
+  // Replaces installing a Caffeine-type app: the page keeps the screen alive itself.
+  // The lock is auto-released whenever the document goes inactive, so it MUST be
+  // re-acquired on visibilitychange or the screen sleeps on the first glance away.
+  async function acquireWakeLock() {
+    if (!("wakeLock" in navigator)) return;
+    try { wakeLock = await navigator.wakeLock.request("screen"); }
+    catch (e) { diag.errors.push("wakeLock: " + e.message); }
+  }
+  document.addEventListener("visibilitychange", async () => {
+    if (!running || document.visibilityState !== "visible") return;
+    if (wakeLock !== null) await acquireWakeLock();
+    // Coming back to the foreground is the ONE moment a reconnect is certain to be able to
+    // succeed, so retry immediately here rather than waiting out whatever backoff had accrued
+    // while the tab was suspended and every attempt was doomed.
+    if (!ws || ws.readyState !== WebSocket.OPEN) { reconnectDelay = 0; scheduleReconnect(true); }
+  });
+
+  // --- capture --------------------------------------------------------------
+  function floatToPCM16(f32) {
+    const out = new Int16Array(f32.length);
+    for (let i = 0; i < f32.length; i++) {
+      const s = Math.max(-1, Math.min(1, f32[i]));
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return out;
+  }
+
+  // The orb is the ONLY microphone control. First tap grants and starts; every tap after that
+  // mutes or unmutes, and never tears the session down.
+  //
+  // Live, 2026-08-01: "it doesn't make sense that it's a separate button from the middle orb.
+  // Because when I tap the middle orb to start, that's what makes you listen to me. Maybe I can
+  // tap it again to mute and unmute... as soon as the page is loaded, that is connected. What the
+  // orb does is just helps us have this conversation."
+  //
+  // He is right, and the socket now opens on load to match. The ONE thing that cannot follow his
+  // model is the first tap: `getUserMedia` requires a user gesture on mobile, so a page cannot
+  // hold a microphone it was never handed. That tap is a browser rule, not a design choice.
+  // THE ORB IS THE CHANNEL, not the microphone. Tapping it opens or closes the conversation in
+  // BOTH directions: closed means nothing is heard and nothing plays, and replies queue on the
+  // server until it reopens. Live, 2026-08-06: "the orb should control whether or not this
+  // interaction is live... if I turn off the orb, that means that you cannot talk to me either.
+  // And your responses get queued up server side until I turn the orb back on."
+  //
+  // It used to double as the mute, which conflated two different intentions — "stop hearing me"
+  // and "stop talking to me" — and left no way to express only one of them. Mute is now its own
+  // switch beside verbose.
+  //
+  // The first tap still has to start capture, because `getUserMedia` requires a user gesture on
+  // mobile: a page cannot hold a microphone it was never handed. After that the stream stays and
+  // the orb is purely the channel.
+  async function orbTapped() {
+    if (SPECTATE) return;   // read-only render: never open the mic
+    // In the app the native service is the microphone: hand the tap to it (spec 032 FR2).
+    if (NATIVE) {
+      // Spec 044: with the service up, the tap is the CHANNEL, and the server decides what the app
+      // holds for it (the mic and the call let go when it closes). Only starting the service stays
+      // the app's, because Android lets only a visible app start a microphone service. A socket that
+      // is down falls back to the app, which sends the same `channel` on its own socket.
+      if (PRIMS && running && ws && ws.readyState === WebSocket.OPEN) {
+        tellServer("channel", !channelOpen);
+        return;
+      }
+      nativeCall("orbTapped");
+      return;
+    }
+    if (running) { await closeChannel(); return; }
+    // A retry clears the previous refusal, so a second tap after granting permission in the
+    // browser's own UI actually starts rather than sitting on the stale failure.
+    if (phase === "denied") { phase = "idle"; setError(""); applyOrb(); }
+    await start();
+  }
+
+  // OFF NOW MEANS THE MICROPHONE IS ACTUALLY RELEASED.
+  //
+  // Reported live 2026-08-16: "whenever I tap the orb and I turn it off, I would like you to stop
+  // recording on the microphone, because that does not allow me to watch other media on the phone,
+  // or use the Bluetooth or whatever, right — because you're hugging the microphone but the orb is
+  // off, so there's no point in that."
+  //
+  // The orb used to stop LISTENING without stopping CAPTURING, which are different states and only
+  // one of them was visible to him. The `MediaStream` stayed open, so the OS microphone indicator
+  // stayed lit and the phone stayed in capture — confirmed on the server the same day, which
+  // reported `channel_open: false, muted: true, capturing: true` after he switched it off.
+  //
+  // WHAT MAKES THIS DIFFERENT FROM WHAT HE ALREADY HAD: closing the tab releases the microphone
+  // too, and he found that himself and rejected it. "What I did is I closed the tab, but I would
+  // like to keep the tab open so that I can just come back and hit the orb again without having to
+  // reopen the link, scroll up and go find the link." The tunnel is fronted by a URL that changes
+  // on every restart, so reopening costs him a scroll through chat history for a link that may no
+  // longer be valid. Hence `keepSocket`: the tracks end, the socket, the page and the transcript
+  // all stay. Anything the agent says while he is off still arrives — the server queues it against
+  // the closed channel and releases it when he taps back on.
+  //
+  // The permission grant belongs to the ORIGIN, not to the stream, so re-acquiring should not
+  // re-prompt. That is the one claim here that no harness in this repo can settle: Chrome's
+  // fake-media flag auto-grants silently, so a green re-acquire proves the path works and proves
+  // nothing about whether a prompt would have appeared. It wants one tap on a real phone.
+  async function closeChannel() {
+    // Off has to mean off NOW, not after this sentence. Reported 2026-08-07: "I hit the orb to turn
+    // off because I was not hearing you... However, you spoke anyway." `stop()` deliberately KEEPS
+    // the clip queue, because its other caller is a device change where those replies are still
+    // wanted; this caller is the opposite intention, so the queue is dropped here first.
+    levelTarget = 0;
+    silencePlayback();
+    await stop({ keepSocket: true });
+  }
+
+  // Closing the channel stops the agent MID-SENTENCE, and drops whatever else was queued.
+  //
+  // The server already refuses to send new replies while the channel is shut, which looked like
+  // enough and was not: a clip already delivered kept playing to the end and the local queue
+  // kept its backlog. Reported 2026-08-07: "I hit the orb to turn off because I was not hearing you.
+  // I was talking to somebody else and I didn't want you to speak. However, you spoke anyway."
+  //
+  // A switch whose effect waits for the current sentence to finish is not an off switch. He
+  // reaches for it precisely when the next few seconds of speech are the problem — so the
+  // unplayed audio is discarded rather than re-queued, because he shut the channel to not hear
+  // it, and handing it back on reconnect would only replay the thing he interrupted.
+  function silencePlayback() {
+    if (playingSource) playingSource.__cut = "channel_off";
+    try { if (playingSource) playingSource.stop(); } catch {}
+    playingSource = null;
+    clipQueue.length = 0;
+    cutStream("channel_off");
+  }
+
+  // A cut reply's later pieces are still in flight from the server; they must be dropped, not
+  // played as a fresh clip, so the stream is marked and stays the target of its bytes until its end.
+  function cutStream(why) {
+    if (streamingClip) { streamingClip.cut = why; wakeStream(streamingClip); }
+  }
+  function wakeStream(s) { const w = s.wake; s.wake = null; if (w) w(); }
+
+  async function start() {
+    if (SPECTATE || NATIVE) return;   // never acquire the microphone: read-only, or the app owns it
+    if (running) return;
+    phase = "starting";
+    applyOrb();
+    try {
+      // Chrome's WebRTC audio processing is tuned for TELEPHONY — making speech intelligible
+      // to a human ear over a bad line — not for a speech recognizer. Noise suppression gates
+      // and spectrally subtracts, and AGC ramps its gain over the first second or two, which
+      // is very likely why the FIRST utterance of a session transcribes worst and later ones
+      // are fine. Dictation tools that outperform us here (Handy) read the raw device.
+      //
+      // So: NS and AGC off by default. Echo cancellation stays ON — the reply plays out of
+      // the speakers into this same microphone, and without EC the agent transcribes itself.
+      // Override per-session with ?ns=1&agc=1&ec=0 to A/B it.
+      const q = new URLSearchParams(location.search);
+      const flag = (name, dflt) => q.has(name) ? q.get(name) === "1" : dflt;
+      const constraints = {
+        channelCount: 1,
+        echoCancellation: flag("ec", true),
+        noiseSuppression: flag("ns", false),
+        autoGainControl:  flag("agc", false),
+      };
+      // ?ec=system ASKS FOR THE OS ECHO CANCELLER instead of Chrome's software one (JJ, 2026-09-30:
+      // on a desk mic + loud speaker, agents' own sentences were transcribed as his turns — the
+      // browser canceller loses to the speaker at high volume; "should we try first the Windows echo
+      // cancellation?"). `echoCancellationType` is Chrome's constraint for it; a browser that does not
+      // know it ignores it, so it is an A/B switch, not a requirement. Which one Chrome actually used
+      // is read back from the track's settings and published on diag, never assumed.
+      if (q.get("ec") === "system") {
+        constraints.echoCancellation = true;
+        constraints.echoCancellationType = "system";
+      }
+      // ?device=<substring> picks a specific microphone by label instead of the system default.
+      // Needed so an automated harness can point the page at a virtual audio cable without
+      // changing the machine's default recording device, and useful on its own when the
+      // default is the wrong mic. Labels are only populated once permission is granted, so
+      // this takes two getUserMedia calls on the first run.
+      const remembered = localStorage.getItem("command-bridge.micId");
+      if (remembered && !q.get("device")) {
+        constraints.deviceId = { exact: remembered };
+      }
+      const want = q.get("device");
+      if (want) {
+        try {
+          const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+          probe.getTracks().forEach((t) => t.stop());
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const match = devices.find(
+            (d) => d.kind === "audioinput" &&
+                   d.label.toLowerCase().includes(want.toLowerCase())
+          );
+          if (match) constraints.deviceId = { exact: match.deviceId };
+          else diag.errors.push("no audio input matching " + want);
+        } catch (e) {
+          diag.errors.push("device select: " + e.message);
+        }
+      }
+
+      diag.constraints = constraints;
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+      } catch (err) {
+        // A remembered microphone can be unplugged between sessions. Falling back to the
+        // default beats refusing to start and looking broken.
+        if (constraints.deviceId) {
+          diag.errors.push("preferred mic unavailable, using default");
+          delete constraints.deviceId;
+          localStorage.removeItem("command-bridge.micId");
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        } else { throw err; }
+      }
+      diag.settings = micStream.getAudioTracks()[0].getSettings();
+      diag.deviceLabel = micStream.getAudioTracks()[0].label;
+      // The microphone has been granted at least once on this page. Never cleared — it is what
+      // lets the orb say "Off" rather than "Tap to start" after `closeChannel` ends the tracks.
+      everStarted = true;
+      // Permission has landed, so device labels are populated for the first time. There is no
+      // AudioContext yet, so this builds the lists and nothing more; the route is applied by the
+      // second call below, once there is something to route.
+      await refreshRoute("permission");
+    } catch (e) {
+      // On a LAN IP navigator.mediaDevices is undefined and this is a TypeError. That is not
+      // a bug to fix here — it is the secure-context rule. See ai-docs/reference/browser.md.
+      const msg = (navigator.mediaDevices ? e.message : "insecure origin — needs HTTPS or localhost");
+      diag.errors.push("getUserMedia: " + msg);
+      phase = "denied";
+      applyOrb();
+      setError("microphone unavailable: " + msg);
+      return;
+    }
+
+    // Created inside the click handler so the autoplay policy unlocks playback too.
+    ctx = new AC();
+    if (ctx.state === "suspended") await ctx.resume();
+    // A NEW CONTEXT OPENS ON THE BROWSER'S DEFAULT OUTPUT, whatever he chose last time. Put it
+    // back before anything can play through it — a reply that arrives during setup would
+    // otherwise come out of the wrong speaker and be gone before the route caught up.
+    await refreshRoute("start");
+
+    // The page already connected on load, so re-announce the REAL sample rate rather than
+    // opening a second socket. `hello` is idempotent server-side — it just updates the rate the
+    // resampler uses — and a stale 48000 here would silently resample every frame wrongly.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // The mic's ACTUAL processing rides along (2026-09-30), so an agent can read which echo
+      // canceller Chrome really used (`status.client_mic`) instead of asking him to check.
+      const s = diag.settings || {};
+      ws.send(JSON.stringify({ type: "hello", sample_rate: ctx.sampleRate, streams: true,
+        mic: { device: diag.deviceLabel || null, echoCancellation: s.echoCancellation ?? null,
+               echoCancellationType: s.echoCancellationType ?? null,
+               noiseSuppression: s.noiseSuppression ?? null, autoGainControl: s.autoGainControl ?? null } }));
+    } else {
+      await openSocket(ctx.sampleRate);
+    }
+
+    source = ctx.createMediaStreamSource(micStream);
+    // The waveform tap (spec 016). A small FFT is plenty for a 100px card; the smoothing keeps the
+    // bars from strobing. Not connected onward, so it adds no sound. Wrapped so an AnalyserNode
+    // failure can never take down capture — the wave just falls back to its synthesized/flat form.
+    try {
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;                 // 256-sample time-domain buffer → detailed bars
+      analyser.smoothingTimeConstant = 0.85;  // calm the analyser; the per-bar easing does the rest
+      source.connect(analyser);
+    } catch (e) { analyser = null; }
+    // ScriptProcessorNode is deprecated but universally present, including headless Chrome.
+    // For one local user at 4096 frames the main-thread cost is irrelevant, and it removes a
+    // whole class of AudioWorklet module-loading failure from the critical path.
+    // AudioWorklet, NOT ScriptProcessorNode.
+    //
+    // ScriptProcessorNode runs its callback on the MAIN THREAD, and Chrome throttles main-thread
+    // timers in a backgrounded tab. Measured 2026-07-29: switching to another window produced
+    // 14 seconds of EXACT digital zero in the server's capture — not a quiet room, no audio at
+    // all — and every word spoken in that window was lost. Since the whole point is to talk
+    // while doing something else, that is fatal.
+    //
+    // AudioWorklet runs on the audio rendering thread and keeps delivering while the tab is
+    // backgrounded. ScriptProcessor remains as a fallback for browsers without it.
+    // The worklet is handed a 128-sample block per render quantum — ~375 per second at 48 kHz.
+    // Posting each one individually would mean 375 WebSocket messages a second, nearly all
+    // header overhead. Batch into ~40 ms chunks first: same audio, ~15 messages/sec.
+    const batchSize = Math.round(ctx.sampleRate * 0.04);
+    const workletSrc = `
+      class Cap extends AudioWorkletProcessor {
+        constructor(o) {
+          super();
+          this.size = (o.processorOptions && o.processorOptions.batchSize) || 1920;
+          this.buf = new Float32Array(this.size);
+          this.n = 0;
+        }
+        process(inputs) {
+          const ch = inputs[0] && inputs[0][0];
+          if (ch && ch.length) {
+            for (let i = 0; i < ch.length; i++) {
+              this.buf[this.n++] = ch[i];
+              if (this.n === this.size) {
+                this.port.postMessage(this.buf.slice(0));
+                this.n = 0;
+              }
+            }
+          }
+          return true;   // keep running even when the input is momentarily silent
+        }
+      }
+      registerProcessor('cap', Cap);
+    `;
+    const onChunk = (ch) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // Mute is enforced HERE, by not sending. Not on the server, and not by stopping the audio
+      // graph: a mute that still ships audio to something promising to ignore it is not a mute
+      // anyone should have to trust, and tearing down the graph would cost a re-permission
+      // prompt to come back. The level ring goes still too, which is the visible proof.
+      if (muted) { levelTarget = 0; return; }
+      // A closed channel sends nothing. The graph keeps running so reopening costs no permission
+      // prompt, but no audio leaves the page.
+      if (!channelOpen) { levelTarget = 0; return; }
+      // CUE GATE (JJ, 2026-09-30, echo guard on): the page's own cue sounds were transcribed as
+      // "cool", "good", "sure" — and each blip triggered the next cue, *"a vicious circle."* While a
+      // cue is playing (plus a short tail) the chunk goes out as SILENCE: zeros, not a gap, so the
+      // server's stream timing and endpointing are unchanged and the cue simply never reaches ASR.
+      // ⚠ DISABLED the same afternoon (JJ, 2026-09-30: *"[the] thing when the cues play, it's biting
+      // us"*): a transcribing cue fires at every pause in his speech, so the gate zeroed him MID-thought
+      // and split one sentence into fragments ("A t" · "Thing when the cues play…"). Kept behind
+      // CUE_GATE_ENABLED rather than deleted, until a gate that yields to his voice is designed.
+      if (CUE_GATE_ENABLED && echoGuard && performance.now() < cueGateUntil) ch = new Float32Array(ch.length);
+      let sum = 0;
+      for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+      const r = Math.sqrt(sum / ch.length);
+      if (r > diag.peakRms) diag.peakRms = r;
+      // Normalise against a typical speaking level (~0.15 RMS) so the ring uses its full
+      // range on ordinary speech instead of only reacting to shouting.
+      levelTarget = Math.min(1, r / 0.15);
+      reportSpeaking(r);
+      ws.send(floatToPCM16(ch).buffer);
+      diag.framesSent++;
+    };
+
+    let usedWorklet = false;
+    if (ctx.audioWorklet) {
+      try {
+        const url = URL.createObjectURL(new Blob([workletSrc], { type: "text/javascript" }));
+        await ctx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+        node = new AudioWorkletNode(ctx, "cap", {
+          numberOfOutputs: 0,
+          processorOptions: { batchSize },
+        });
+        node.port.onmessage = (e) => onChunk(e.data);
+        source.connect(node);
+        usedWorklet = true;
+      } catch (e) {
+        diag.errors.push("audioWorklet: " + e.message);
+      }
+    }
+    if (!usedWorklet) {
+      node = ctx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = (ev) => onChunk(ev.inputBuffer.getChannelData(0));
+      source.connect(node);
+      const sink = ctx.createGain(); sink.gain.value = 0;  // pull the graph, stay silent
+      node.connect(sink); sink.connect(ctx.destination);
+    }
+    diag.capture = usedWorklet ? "audioworklet" : "scriptprocessor";
+
+    running = true;
+    // Tell the server the microphone is actually live. A connected socket is not a listening
+    // one, and the agent cannot tell those apart without being told.
+    tellServer("capturing", true);
+    // The first tap is BOTH "grant the microphone" and "go live" — one gesture, because that is
+    // what a tap means to him. Every tap after this one is only the channel.
+    channelOpen = true;
+    tellServer("channel", true);
+    // Anything said while the page sat un-tapped has been waiting for an AudioContext. It exists
+    // now, so let it out.
+    drainClips();
+    await acquireWakeLock();
+
+    // Do NOT claim to be listening until audio is actually arriving. Between tapping and the
+    // first frames there is socket setup plus the mic's own warm-up, and a page that says
+    // "Listening" during that window invites you to start talking into a gap — which is very
+    // likely why the owner's first utterance after a reload came back garbled.
+    phase = "warming";
+    applyOrb();
+    const framesAtStart = diag.framesSent;
+    await new Promise((res) => {
+      const t0 = Date.now();
+      (function check() {
+        if (diag.framesSent > framesAtStart + 2 || Date.now() - t0 > 4000) return res();
+        setTimeout(check, 60);
+      })();
+    });
+
+    phase = "live";
+    // Through the one painter rather than hard-coding "Listening": a mute persisted from the
+    // last session is restored before `running` is true, so the visual it wanted was skipped,
+    // and the orb would read "Listening" over a muted microphone.
+    applyOrb();
+  }
+
+  // `keepSocket` is what turns this from "end the session" into "release the microphone". A device
+  // change wants the whole thing rebuilt; the orb switching off wants the tab, the socket, the
+  // transcript and the URL left exactly where they are — see `closeChannel`.
+  //
+  // `rebuild` is a device change that starts again at once, so it tells the server NOTHING about
+  // the channel: the "off" would go out on the old socket and the "on" on the new one, and the
+  // server applies a close only after flushing ASR — so the close could land LAST and leave the
+  // conversation switched off on every page (found 2026-10-05). Nothing he chose has changed.
+  async function stop({ keepSocket = false, rebuild = false } = {}) {
+    running = false;
+    channelOpen = false;
+    if (!rebuild) {
+      tellServer("capturing", false);
+      tellServer("channel", false);
+    }
+    try { if (node) node.disconnect(); } catch {}
+    try { if (analyser) analyser.disconnect(); } catch {}
+    analyser = null;
+    try { if (source) source.disconnect(); } catch {}
+    try { if (micStream) micStream.getTracks().forEach(t => t.stop()); } catch {}
+    // NULLED, not merely stopped. An ended track still answers `getSettings()` with the device it
+    // used to be on, and `refreshDevices` paints the input picker from exactly that call — so a
+    // released microphone would keep naming a device it is no longer holding, which is the "shows
+    // what was requested" failure this file spent 2026-08-15 removing. It matters more now that
+    // the released state is somewhere he SITS rather than a moment between two starts.
+    node = null; source = null; micStream = null;
+    if (!keepSocket) { try { if (ws) ws.close(); } catch {} }
+    try { if (wakeLock) { await wakeLock.release(); wakeLock = null; } } catch {}
+    // CLOSE THE CONTEXT, and null it so nothing reaches a closed one. `start()` builds a fresh
+    // AudioContext every time and this used to abandon the old one still holding its output
+    // stream open — so every microphone change leaked a context, and a leaked context holds a
+    // route. Two contexts pointing at two different sinks is a fight the picker cannot describe,
+    // let alone win. Browsers also cap how many a page may have, so the leak ends in a `start()`
+    // that throws outside the handler that reports microphone failures: the orb sticks on
+    // "Starting" and says nothing.
+    //
+    // Stop the live source FIRST. `src.stop()` fires `onended`, which is what unwinds `drainClips`
+    // cleanly; `ctx.close()` alone is not required to fire it (see the guard in playClip). The
+    // QUEUE is deliberately left alone — this is a device change, not "stop talking to me", so
+    // those replies are still wanted and `start()` drains them into the new context.
+    if (playingSource && !playingSource.__cut) playingSource.__cut = "stopped";
+    try { if (playingSource) playingSource.stop(); } catch {}
+    playingSource = null;
+    try { if (ctx) await ctx.close(); } catch {}
+    ctx = null;
+    // 🔴 THE TTS-WAVEFORM ANALYSER BELONGS TO THE CONTEXT WE JUST CLOSED (JJ, 2026-09-24: no sound
+    // after an orb toggle until a full refresh). `playAnalyser` is a module var built lazily in
+    // playClip; if we leave it set, start()'s NEW context reuses this node from the CLOSED one, and
+    // `src.connect(playAnalyser)` across contexts THROWS — silently killing EVERY clip (replies AND
+    // cues) until a reload resets it. Null it so the next context rebuilds its own.
+    playAnalyser = null;
+    phase = "idle";
+    // THE AGENT'S STATE IS THE SERVER'S FACT, so forget it only when we stop listening to the
+    // server. With `keepSocket` the socket is still open and the agent is still working — it keeps
+    // pushing `agent_state` — so clearing it here would tell him, the moment he taps back on, that
+    // the work he switched away from had finished. It had not; we had merely stopped watching.
+    if (!keepSocket) ui("forgetAgentState");
+    playing = false;
+    applyOrb();
+    // THE ROUTE READOUT HAS TO GO WITH THE CONTEXT. It names where audio is going, and the context
+    // it was read from has just been closed — so leaving it on screen would be the same stale label
+    // this section exists to remove, in the one state he now SITS in rather than passes through.
+    // `liveSink()` answers null with no context, so this is the model correcting itself.
+    devicesChanged();
+  }
+
+  function openSocket(sampleRate) {
+    return new Promise((resolve) => {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`);
+      readySeen = false;                         // this socket's ready is still to come
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => {
+        diag.connected = true;
+        // `streams`: this page plays a streamed reply (`playStream`), so the server may send one.
+        ws.send(JSON.stringify({ type:"hello", sample_rate: sampleRate, streams: true }));
+        // Re-assert both toggles on every connect. The server holds them in memory, so a
+        // restart or a dropped socket would otherwise leave the page showing "Verbose" while
+        // the agent reads false — a disagreement neither side can see.
+        // Mute is a fact about THIS device's microphone, so the client still asserts it.
+        // Verbose is NOT pushed — the server owns it and sends it on the ready frame, because a
+        // preference about the agent must not be reverted by whichever page connected last.
+        // In the app (NATIVE) the page asserts NOTHING on connect: the service owns capture, the
+        // channel and the speaking signal, and mute is the session's, changed only by his tap.
+        if (!NATIVE) tellServer("muted", muted);
+        // 🔴 ONLY A PAGE THAT HAS ACTUALLY STARTED re-asserts the mic and the channel. A fresh page —
+        // a `shot`'s headless browser, or a tab just opened — has `running`/`channelOpen` false by
+        // default, and asserting those on connect CLOBBERS the live session: reported 2026-09-02, a
+        // shot turned his channel off "as if someone clicked the power button". An unstarted page has
+        // nothing to re-assert; it adopts what the server sends on the `ready` frame. A page that IS
+        // running still re-asserts on every reconnect — that is what releases anything queued while
+        // the socket was down, so the server does not sit on a drained-looking channel.
+        // A spectate page is never "running" for real — the UI only paints it on — so it asserts
+        // nothing either.
+        if (running && !SPECTATE && !NATIVE) {
+          tellServer("capturing", running);
+          tellServer("channel", channelOpen);
+        }
+        // Never resume a stale "he is talking". A socket that dropped mid-sentence would
+        // otherwise leave the server holding every reply until the 15 s bound expired.
+        speakingSignal = false;
+        if (!NATIVE) tellServer("speaking", false);
+        resolve();
+      };
+      ws.onclose = () => {
+        diag.connected = false;
+        applyOrb();
+        if (running) scheduleReconnect();
+      };
+      ws.onerror = () => { diag.errors.push("websocket error"); resolve(); };
+      ws.onmessage = onServerMessage;
+    });
+  }
+
+  // --- staying connected ----------------------------------------------------
+  // Android suspends a backgrounded tab, so the socket dies whenever the phone locks or the owner
+  // switches apps. The MICROPHONE genuinely cannot record in the background — that is a platform
+  // rule, not something to work around — but needing a manual page refresh to get the session
+  // back is entirely self-inflicted. Live, 2026-08-01: "whenever I switch screens or lock my
+  // phone for just up to a minute, it disconnects and I have to refresh."
+  let reconnectTimer = null, reconnectDelay = 0, reconnecting = false;
+  const RECONNECT_MIN = 500, RECONNECT_MAX = 8000;
+
+  function scheduleReconnect(immediate) {
+    if (reconnecting) return;
+    // Deliberately NOT gated on `running`. The page connects on load now, so the socket can drop
+    // before the first tap — and when this was gated, that drop produced silence: no reconnect
+    // attempt and no message. Live, 2026-08-01: "the server or the UI did not show me when it
+    // was disconnected. And I tried speaking and the transcription didn't work."
+    //
+    // A retry loop that hides the disconnection is worse than no retry loop, because at least a
+    // visible "disconnected" tells you to reload.
+    clearTimeout(reconnectTimer);
+    // Backoff, so a server that is genuinely down is not hammered — but a hidden tab waits for
+    // the return to foreground instead of burning retries it cannot succeed at anyway.
+    const delay = immediate ? 0 : (reconnectDelay = Math.min(
+      RECONNECT_MAX, reconnectDelay ? reconnectDelay * 2 : RECONNECT_MIN
+    ));
+    // Say it plainly, and keep saying it. Every failed attempt repaints this, so the page can
+    // never sit looking connected while it is not.
+    setError(reconnectDelay >= RECONNECT_MAX
+      ? "disconnected — still retrying"
+      : "disconnected — reconnecting…");
+    applyOrb();
+    reconnectTimer = setTimeout(reconnect, delay);
+  }
+
+  async function reconnect() {
+    if (reconnecting) return;
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    reconnecting = true;
+    try {
+      // The AudioContext is suspended along with the tab; without resuming it the socket comes
+      // back and no audio ever flows, which looks exactly like a broken microphone — and is
+      // precisely the "I tried speaking and the transcription didn't work" symptom.
+      if (ctx && ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
+      await openSocket(ctx ? ctx.sampleRate : 48000);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        reconnectDelay = 0;
+        diag.reconnects = (diag.reconnects || 0) + 1;
+        setError("");
+        applyOrb();
+        // RE-READ THE DEVICES AND RE-APPLY THE ROUTE. A socket that dropped means the server
+        // restarted or the tab was suspended, and in both cases time passed with this page not
+        // looking: earbuds can have disconnected and come back, and the audio stack can have
+        // re-resolved the output underneath us. Everything else on this path is re-asserted
+        // already — mute, capturing, channel, speaking — because the same reasoning applies to
+        // each of them. The route was the one fact left assuming it had survived.
+        await refreshRoute("reconnect");
+      } else {
+        scheduleReconnect();
+      }
+    } catch (e) {
+      diag.errors.push("reconnect: " + e.message);
+      scheduleReconnect();
+    } finally {
+      reconnecting = false;
+    }
+  }
+
+  // --- playback ----------------------------------------------------------------------------------
+  async function drainClips() {
+    // No AudioContext yet means the page has loaded but nobody has tapped the orb — and since
+    // the socket now connects on load, a reply can genuinely arrive first. Leave the clips
+    // QUEUED rather than throwing on ctx.createBuffer: they play the moment he taps start, so
+    // "I answered while you weren't ready" costs a delay instead of the answer.
+    // (The autoplay policy means we could not play them now even if we built a context here.)
+    if (!ctx) return;
+    // One drainer at a time. The guard is what serializes playback; without it every arriving
+    // clip would start its own drain loop and we would be back to overlapping audio.
+    if (draining) return;
+    // WAKE THE CLOCK BEFORE PLAYING INTO IT. A suspended context accepts a buffer source and
+    // never advances it, so this is the cheap half of the fix in `playClip`'s stall guard: this
+    // line stops the common case from ever reaching it. The browser suspends a context when the
+    // tab is backgrounded or the screen sleeps, which is precisely when a reply arrives unheard.
+    if (ctx.state === "suspended") { try { await ctx.resume(); } catch (e) {} }
+    if (!ctx) return;   // `stop()` can null it while the resume above was awaited
+    draining = true;
+    try {
+      // `ctx` in the condition, not just at the top: `stop()` closes and nulls it mid-drain when
+      // he changes microphone, and every remaining clip would then be shifted off the queue only
+      // to throw on `createBuffer`. Leaving them queued costs a pause; consuming them costs the
+      // reply. `start()` drains again as soon as the new context exists.
+      while (clipQueue.length && ctx) {
+        const { header, buf, stream } = clipQueue.shift();
+        // The hand counts what is LEFT, so it has to be repainted as each clip leaves the queue
+        // and again when the last one stops — not once when the queue arrives.
+        //
+        // 🔴 A CUE HAS NO OWNER, SO IT MUST NOT CLAIM ONE (spec 029 FR1). Cue headers carry no
+        // `lane` — they are the one kind of audio that predates and sits outside lanes — and this
+        // fallback therefore attributed every acknowledgement sound to the DEFAULT lane, raising a
+        // hand there for exactly as long as the cue played. JJ, 2026-08-27, while talking to
+        // kepler: *"I saw a hand quickly appear and disappear on the Magnus lane. I would assume
+        // because the Magnus lane is the default one."* He was right.
+        //
+        // ⚠ The decision lives in `clipOwner` so it can be tested without an AudioContext.
+        playingLane = clipOwner(header, defaultLane);
+        playingClipId = header.id;
+        applyLaneOrbs();
+        if (stream) await playStream(header, stream);
+        else await playClip(header, buf);
+        playingClipId = null;
+        playingLane = null;
+        applyLaneOrbs();
+      }
+    } finally {
+      draining = false;
+      playingLane = null;
+      applyLaneOrbs();
+    }
+  }
+
+  // A streamed reply: each piece is played through `playClip` as one PART of the same clip, so the
+  // orb, the transcript row and the receipt happen once for the reply — started by its first piece,
+  // ended and receipted by its last (or by the piece he cut off). A piece that has not arrived yet
+  // is awaited; a clip already cut drops whatever is still arriving.
+  async function playStream(header, s) {
+    const acc = { heard: 0, dur: 0 };
+    let i = 0, first = true;
+    for (;;) {
+      while (i >= s.parts.length && !s.done && !s.cut) await new Promise((r) => { s.wake = r; });
+      if (s.cut || !ctx) break;
+      if (i >= s.parts.length) break;                 // done and fully played
+      const buf = s.parts[i++];
+      const last = s.done && i >= s.parts.length;
+      const r = await playClip(header, buf, { first, last, acc });
+      first = false;
+      if (r && r.cut === "error") {           // playback threw: close what started, once
+        s.cut = "error";
+        if (playing) finishClip(header, "error", acc.heard, acc.dur);
+        return;
+      }
+      if (!r || r.cut) { s.cut = s.cut || (r && r.cut) || "error"; return; }
+      if (last) return;
+    }
+    // Ended without a piece flagged `last` (the end marker arrived after the final piece had
+    // started, or the stream was cut between pieces): close the clip out here, exactly once.
+    if (!first) finishClip(header, s.cut || null, acc.heard, acc.dur);
+  }
+
+  // The once-per-clip close: orb, transcript, diag and the `played` receipt.
+  function finishClip(header, cut, heard, duration) {
+    playing = false;
+    applyOrb();
+    ui("clipEnded", header);
+    diag.played.push(header.id);
+    if (cut) diag.cutClips = (diag.cutClips || []).concat([{ id: header.id, cut, heard_s: heard }]);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type:"played", id: header.id,
+        ...(cut ? { cut, heard_s: Math.round(heard * 10) / 10,
+                    duration_s: Math.round(duration * 10) / 10 } : {}) }));
+    }
+  }
+
+  async function playClip(header, buf, part) {
+    try {
+      // The last moment the page can still put the sound in the right place. Costs a string
+      // compare when the route is already correct, which is every clip but the first after a
+      // drift — and a drift that happens without a reconnect or a `devicechange` has no other
+      // hook to catch it.
+      await applySink("clip");
+      const pcm = new Int16Array(buf);
+      const f32 = new Float32Array(pcm.length);
+      for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+      const audio = ctx.createBuffer(1, f32.length, header.sample_rate);
+      audio.getChannelData(0).set(f32);
+      const src = ctx.createBufferSource();
+      src.buffer = audio;
+      // Tap the TTS output through an analyser so the attention strip can plot the agent's REAL
+      // waveform (JJ, 2026-09-22), not an on/off block. Lazily made; it fans on to the destination,
+      // so audio is unchanged. A failure to build it just falls back to the direct route.
+      if (!playAnalyser) { try { playAnalyser = ctx.createAnalyser(); playAnalyser.fftSize = 256; playAnalyser.connect(ctx.destination); } catch (_) { playAnalyser = null; } }
+      if (playAnalyser) src.connect(playAnalyser); else src.connect(ctx.destination);
+      // Held so the receipt can say how much of it he heard: `stop()` nulls `ctx`, and a closed
+      // context's clock stays where it stopped.
+      const clipCtx = ctx;
+      let startedAt = 0;
+      // Held at module scope so a barge-in can stop it. A BufferSource is fire-and-forget once
+      // started, so without a handle there is no way to interrupt a reply that is already playing.
+      playingSource = src;
+      // A cue is punctuation, not an utterance: no transcript row, no "Speaking" state, and
+      // tracked separately so it never masquerades as a spoken reply.
+      const isCue = Boolean(header.cue);
+      // Silence the outgoing mic for this cue's length plus a tail (see the CUE GATE in onChunk).
+      if (isCue) cueGateUntil = Math.max(cueGateUntil, performance.now() + audio.duration * 1000 + CUE_GATE_TAIL_MS);
+      if (!isCue && (!part || part.first)) {
+        playing = true;       // the client owns this: it knows when audio actually starts
+        applyOrb();
+        ui("clipStarted", header);   // the transcript row and the said bubble are the UI's
+      }
+      await new Promise((res) => {
+        let guard = 0, asleep = 0;
+        const finish = () => { if (guard) clearInterval(guard); guard = 0; res(); };
+        src.onended = finish;
+        // A context CLOSED underneath a playing source is not guaranteed to fire `onended`, and
+        // this promise is the one `drainClips` holds its serializing flag on — so an unfired event
+        // wedges playback permanently instead of costing one clip. The context's own state is the
+        // floor under the event. It only runs while a clip is genuinely in flight.
+        //
+        // 🔴 **`suspended` wedges it exactly like `closed` did, and this guard used to miss it.**
+        // A suspended context is non-null and still accepts `createBufferSource` and `start()` —
+        // its CLOCK is what stops, so the source never advances, `onended` never fires, and
+        // `draining` stays true forever with every later clip queued behind it. Reported live
+        // 2026-08-26: an Atlas clip went synthesizing → speaking and stayed silent for 43 s until
+        // JJ switched lanes and back, which resumed the context and released the whole queue at
+        // once. *"its turn never spoke… I had to switch back to your lane and then back to the
+        // Atlas lane for it to start speaking."*
+        // ⚠ The same state was already known ONE FUNCTION AWAY — `reconnect()` resumes a
+        // suspended context and says why — and was never handled on the playback path.
+        // The clip's end IN THE CONTEXT'S OWN CLOCK — the value `clipElapsed` compares against.
+        // `src.start()` below begins at this same `currentTime`; a suspend only freezes the clock,
+        // it never moves the end, so this stays valid across any number of suspend/resume cycles.
+        const scheduledEnd = (ctx ? ctx.currentTime : 0) + audio.duration;
+        startedAt = clipCtx ? clipCtx.currentTime : 0;
+        guard = setInterval(() => {
+          // THE CLOCK FLOOR, checked before the stall predicate: the audio actually reached its end
+          // (currentTime cannot pass the end unless the context ran there), so finish even if
+          // `onended` has not fired and even if the context suspended the instant after it did.
+          if (clipElapsed(ctx && ctx.currentTime, scheduledEnd)) return finish();
+          const act = clipStallAction(ctx && ctx.state, asleep);
+          if (act === "wait") { asleep = 0; return; }
+          if (act === "finish") return finish();
+          // "resume" — try to wake it. The orb has already been tapped by the time a clip can
+          // arrive, so the context is unlocked and a programmatic resume is allowed. Giving up
+          // after ~3 s costs ONE clip, which the comment above already chose over wedging the
+          // session; a context that will not wake will not play the ones behind it either.
+          asleep += 1;
+          ctx.resume().catch(() => {});
+        }, 200);
+        src.start();
+      });
+      if (playingSource === src) playingSource = null;
+      if (part) {
+        // ONE PIECE OF A STREAMED REPLY: accumulate, and close the clip only on its last piece or
+        // the piece he cut — `finishClip` is the same close as below, applied once per reply.
+        const pcut = src.__cut || null;
+        const pheard = clipCtx ? Math.max(0, Math.min(audio.duration, clipCtx.currentTime - startedAt)) : 0;
+        part.acc.heard += pcut ? pheard : audio.duration;
+        part.acc.dur += audio.duration;
+        if (pcut || part.last) finishClip(header, pcut, part.acc.heard, part.acc.dur);
+        return { cut: pcut };
+      }
+      if (!isCue) {
+        // Clearing the flag returns the orb to whatever the model actually says — muted, closed,
+        // still thinking. Hard-coding "Listening" here is what used to un-label the mute after
+        // every reply. Live, 2026-08-03: "whenever I mute, it says muted. But if you speak
+        // after that, it goes back to listening."
+        playing = false;
+        applyOrb();
+        ui("clipEnded", header);   // the agent bubble fades once the clip has actually finished (2026-09-29)
+      }
+      (isCue ? diag.cues : diag.played).push(header.id);
+      // THE RECEIPT SAYS HOW IT ENDED (JJ, 2026-10-05: *"an agent should be aware of whether or not
+      // their turn played or not or was interrupted by me speaking"*). Stopping a source fires the
+      // same `onended` as finishing it, so a clip he talked over used to be reported as played and
+      // its agent believed he had heard it. `cut` names what stopped it — his barge-in, the orb going
+      // off, capture being rebuilt — and `heard_s` how far into it he got.
+      const cut = src.__cut || null;
+      const heard = clipCtx ? Math.max(0, Math.min(audio.duration, clipCtx.currentTime - startedAt)) : 0;
+      if (cut) diag.cutClips = (diag.cutClips || []).concat([{ id: header.id, cut, heard_s: heard }]);
+      // The shutdown notice is a cue but DOES get a receipt: the server waits for it before going
+      // down, so he always hears the whole "restarting the server" (2026-09-30).
+      if ((!isCue || header.cue === "shutdown") && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type:"played", id: header.id,
+          ...(cut ? { cut, heard_s: Math.round(heard * 10) / 10,
+                      duration_s: Math.round(audio.duration * 10) / 10 } : {}) }));
+      }
+    } catch (e) {
+      diag.errors.push("playback: " + e.message);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type:"client_error", message:"playback: " + e.message }));
+      }
+      if (part) return { cut: "error" };
+    }
+  }
+
+  // --- the output route (the pickers that choose it are the UI's) ------------------------------
+  const AC = window.AudioContext || window.webkitAudioContext;
+  // "" and "default" are one device said two ways: `setSinkId("")` selects the browser default and
+  // `AudioContext.sinkId` reports it back as "", while `enumerateDevices` lists that same device
+  // with the id "default". Compared raw, every check disagrees with itself and the route is
+  // re-applied on every clip forever.
+  const normSink = (v) => (!v || v === "default" ? "" : v);
+  const currentSink = () => (ctx && typeof ctx.sinkId === "string" ? ctx.sinkId : "");
+  // THE SAME READING, BUT ABLE TO SAY "I DON'T KNOW" — which `currentSink` deliberately cannot.
+  // It answers "" both for "the browser's own default" and for "there is no context to ask", and
+  // collapsing those is right for `applySink`, which only needs to know whether a call is
+  // necessary. FR3 turns on exactly that distinction: the first is knowledge and the second is a
+  // guess, and this page has already shipped the bug where a guess was rendered as a fact.
+  // `null` means unknowable, and unknowable renders nothing at all.
+  const liveSink = () => (ctx && ctx.state !== "closed" && typeof ctx.sinkId === "string")
+    ? normSink(ctx.sinkId) : null;
+
+  // THE ONE DOOR to the output route. Everything that could move audio calls this and nothing
+  // calls `ctx.setSinkId` directly, because the failure being fixed is a route that changed
+  // without the UI hearing about it — and a second call site is a second way for that to happen.
+  // Free to call on any path: it compares two strings and returns when they already agree.
+  async function applySink(reason) {
+    if (!ctx || !sinkSupported) return;
+    if (normSink(currentSink()) === normSink(sinkWanted)) return;
+    try {
+      await ctx.setSinkId(sinkWanted);        // "" means the browser's own default
+      diag.sink.applied++;
+      diag.sink.why = reason;
+    } catch (e) {
+      // TWO VERY DIFFERENT FAILURES WEAR THE SAME SHAPE HERE, and treating them alike is how a
+      // dead control survives on screen. NotSupportedError means this PLATFORM cannot route audio
+      // per page — Android owns routing, which is the whole story above — so the honest response
+      // is to stop offering the choice. Anything else means THIS DEVICE went away: unpaired
+      // earbuds, an unplugged dock, a sink that existed when the page loaded and does not now.
+      if (e && e.name === "NotSupportedError") {
+        sinkRefused = true;
+        sinkSupported = false;
+        diag.sink.why = "unsupported: " + e.message;
+      } else {
+        diag.errors.push("setSinkId: " + e.message);
+        diag.sink.why = "unavailable: " + e.message;
+        sinkWanted = "";
+        localStorage.removeItem("command-bridge.sinkId");
+        // SAY IT OUT LOUD. He chose a speaker and is not getting it; reverting to the default in
+        // silence is the exact move that let the interface and the audio disagree in the first
+        // place. This clears itself on the next successful reconnect, like every other error here.
+        setError("speaker unavailable — playing through the system default");
+        try { await ctx.setSinkId(""); } catch {}
+      }
+    }
+    // The pills repaint from what the context now reports — visibility first, then the output and
+    // grouped pickers (the UI's `devicesChanged` keeps that order and says why).
+    devicesChanged();
+  }
+
+  // --- the server's messages: the audio half here, everything else relayed to the UI ----------
+  // The partial still being spoken, kept so a UI that reloads mid-sentence shows it again.
+  let lastPartial = null;
+  // Whether THIS socket has delivered its `ready` yet. A UI that attaches before it has will get it
+  // relayed; only one that attaches after needs to ask for it again (`resync`) — asking in both
+  // cases put a second, late `ready` over whatever the UI had painted in between.
+  let readySeen = false;
+  function onServerMessage(ev) {
+    // In the app the native service plays every clip; this page neither queues nor plays audio.
+    if (NATIVE && typeof ev.data !== "string") return;
+    if (typeof ev.data === "string") {
+      let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+      if (NATIVE && (msg.type === "audio_header" || msg.type === "audio_end")) return;
+      if (msg.type === "clip_played") {
+        // HEARD ON ANOTHER DEVICE (spec 032): drop this page's queued copy, and stop it if it is the
+        // one on the speaker, so a tab that was backgrounded does not replay what he already heard.
+        // JJ, 2026-10-09: "the two turns from you played back in the browser again".
+        for (let i = clipQueue.length - 1; i >= 0; i--) {
+          if (clipQueue[i].header && clipQueue[i].header.id === msg.id) {
+            if (clipQueue[i].stream) clipQueue[i].stream.cut = "played_elsewhere";
+            clipQueue.splice(i, 1);
+          }
+        }
+        if (playingSource && playingClipId === msg.id) {
+          playingSource.__cut = "played_elsewhere";
+          try { playingSource.stop(); } catch {}
+        }
+        return;
+      }
+      if (msg.type === "audio_header") {
+        if (msg.streamed) {
+          // Queued NOW, before any audio: its pieces follow as binary frames, then `audio_end`.
+          const s = { parts: [], done: false, cut: null, wake: null };
+          streamingClip = s;
+          clipQueue.push({ header: msg, stream: s });
+          ui("clipQueued", msg);
+          drainClips();
+          return;
+        }
+        pendingClip = msg;                       // the bytes follow in the next frame
+        return;
+      }
+      if (msg.type === "audio_end") {
+        if (streamingClip) { streamingClip.done = true; wakeStream(streamingClip); }
+        streamingClip = null;
+        return;
+      }
+      if (PRIMS && (msg.type === "native_routes" || (msg.type === "ready" && msg.native_routes))) {
+        // Spec 044: the caret's outputs come from the server, which has the app's report.
+        nativeRoutes = msg.type === "ready" ? msg.native_routes : msg;
+        ui("nativeRoutes", nativeRoutes);
+        if (msg.type === "native_routes") return;
+      }
+      if (msg.type === "ready") {
+        readySeen = true;
+        if (msg.echo_guard !== undefined) echoGuard = !!msg.echo_guard;
+        if (msg.default_lane) defaultLane = msg.default_lane;
+      } else if (msg.type === "lane") {
+        if (msg.default_lane) defaultLane = msg.default_lane;
+      } else if (msg.type === "stop_playback") {
+        // He started talking over the reply and the voiceprint confirmed it was him. Stop now.
+        // `src.stop()` fires onended, so the queue drains and the orb returns to its real state
+        // through the existing path rather than needing its own unwind. Marked first, so its
+        // receipt says it was CUT rather than heard (see playClip).
+        if (playingSource) playingSource.__cut = "barge_in";
+        try { if (playingSource) playingSource.stop(); } catch {}
+        playingSource = null;
+        clipQueue.length = 0;          // anything still waiting was part of the same interruption
+        cutStream("barge_in");         // and so is the rest of a reply still streaming in
+        diag.barges = (diag.barges || 0) + 1;
+      } else if (msg.type === "channel") {
+        // Another device (or a reconnect echo) changed it. Adopt without echoing back: a client
+        // that replies to a broadcast makes a loop. A close silences what is already playing here,
+        // or "off" means "off after this sentence" — but it does NOT release the microphone:
+        // that answers HIS tap on THIS device, never a message from somewhere else.
+        channelOpen = Boolean(msg.value);
+        if (!channelOpen) silencePlayback();
+      } else if (msg.type === "partial") {
+        lastPartial = ev.data;
+      } else if (msg.type === "turn") {
+        lastPartial = null;
+      }
+      ui("message", ev.data);
+      return;
+    }
+    // Pair the bytes with the header that announced them and QUEUE it — never play inline.
+    // Awaiting playback here blocked this handler for the length of the clip while the browser
+    // happily dispatched the next message into a second concurrent invocation, which is how two
+    // replies ended up audible at the same time.
+    if (streamingClip) {
+      // One more piece of the reply already queued (dropped if he cut it off; still consumed, so
+      // these bytes can never be mistaken for the next clip's).
+      if (!streamingClip.cut) { streamingClip.parts.push(ev.data); wakeStream(streamingClip); }
+      return;
+    }
+    if (pendingClip) {
+      const header = pendingClip;
+      clipQueue.push({ header, buf: ev.data }); pendingClip = null;
+      ui("clipQueued", header);
+      drainClips();
+    }
+  }
+  // A harness drives the REAL handler, through the shell, so the audio half is exercised too
+  // (spec 029: a header without its bytes asserts a state that cannot occur).
+  diag.deliver = (msg) => onServerMessage({ data: JSON.stringify(msg) });
+  diag.deliverBytes = (n) => onServerMessage({ data: new ArrayBuffer(Number(n) || 2) });
+
+  // --- what the UI frame can read and do (spec 023's shell ↔ UI contract) ----------------------
+  // `state` is LIVE: same origin, so the UI reads the shell's own variables through these accessors
+  // instead of keeping copies that could drift. The UI writes only what it legitimately owns —
+  // mute, the sink preference it enumerates, and the painted-on look of mock and spectate.
+  const state = {
+    get running() { return running; }, set running(v) { running = Boolean(v); },
+    get channelOpen() { return channelOpen; }, set channelOpen(v) { channelOpen = Boolean(v); },
+    get muted() { return muted; }, set muted(v) { muted = Boolean(v); },
+    get levelTarget() { return levelTarget; }, set levelTarget(v) { levelTarget = v; },
+    get sinkWanted() { return sinkWanted; }, set sinkWanted(v) { sinkWanted = v || ""; },
+    get sinkSupported() { return sinkSupported; }, set sinkSupported(v) { sinkSupported = Boolean(v); },
+    get sinkRefused() { return sinkRefused; }, set sinkRefused(v) { sinkRefused = Boolean(v); },
+    get phase() { return phase; },
+    get playing() { return playing; },
+    get everStarted() { return everStarted; },
+    get playingLane() { return playingLane; },
+    get playingSource() { return playingSource; },
+    get speakingSignal() { return speakingSignal; },
+    get analyser() { return analyser; },
+    get playAnalyser() { return playAnalyser; },
+    get clipQueue() { return clipQueue; },
+    get ctx() { return ctx; },
+    get micStream() { return micStream; },
+    get connected() { return Boolean(ws && ws.readyState === WebSocket.OPEN); },
+  };
+  // THE APP'S HALF OF THE CONTRACT (spec 032 FR2). In NATIVE mode the service plays the clips and owns
+  // the session, so it tells the page what is true and the page paints it through its own painters —
+  // the orb, the lane that is speaking, the transcript's spoken rows — exactly as if it were playing.
+  let nativeRoutes = null;
+  // TO THE APP (spec 032/033). A web message, not a JavaScript interface: the app answers only messages
+  // posted from THIS top frame, so the canvas frames (agent-authored HTML, same origin) cannot drive
+  // the orb or move his audio (spec 033 review). Hoisted, so orbTapped above can call it.
+  function nativeCall(op, extra) {
+    try { window.CBNative && window.CBNative.postMessage(JSON.stringify(Object.assign({ op }, extra || {}))); }
+    catch (e) {}
+  }
+  if (NATIVE) {
+    window.cbNative = {
+      state(s) {
+        running = Boolean(s && s.running);
+        channelOpen = Boolean(s && s.channelOpen);
+        if (running) everStarted = true;
+        phase = (s && s.phase) || (running ? "live" : "idle");
+        if (!running || !channelOpen) { levelTarget = 0; speakingSignal = false; }
+        applyOrb();
+      },
+      // HIS LEVEL (spec 033 FR1): the service captures, so it hands the page each frame's level on the
+      // page's own scale and its speech detector's state. These are the two facts the meter and his
+      // lane's wave already follow (the level-driven bars: there is no analyser in the app).
+      level(l, speaking) {
+        levelTarget = Math.max(0, Math.min(1, Number(l) || 0));
+        speakingSignal = Boolean(speaking);
+      },
+      // THE OUTPUTS the phone has and the one in use (spec 033 FR3), for the caret on the mic. Kept so a
+      // UI frame that reloads repaints the caret on attach.
+      routes(r) {
+        if (PRIMS) return;   // spec 044: the server's `native_routes` is the source
+        nativeRoutes = r || null;
+        ui("nativeRoutes", nativeRoutes);
+      },
+      clip(kind, header) {
+        if (!header) return;
+        if (kind === "start") {
+          playing = true;
+          playingLane = clipOwner(header, defaultLane);
+          applyLaneOrbs();
+          applyOrb();
+          if (!header.cue) ui("clipStarted", header);
+        } else {
+          playing = false;
+          playingLane = null;
+          applyLaneOrbs();
+          applyOrb();
+          if (!header.cue) ui("clipEnded", header);
+        }
+      },
+    };
+  }
+  window.cbShell = {
+    state, diag,
+    // Called by the UI frame on every load. The UI repaints from `state`; the server is asked for
+    // the ready frame again so the lanes come from the server rather than from a replay (FR4).
+    attach(h) {
+      hooks = h;
+      if (lastError) ui("setError", lastError);
+      if (reloadPending) ui("updateWaiting", true);
+      if (readySeen && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resync" }));
+      if (lastPartial) ui("message", lastPartial);
+      if (nativeRoutes) ui("nativeRoutes", nativeRoutes);
+    },
+    // The mic caret's choice in the app (spec 033 FR3): the app owns the route, so the pick goes to it.
+    setNativeRoute(type) {
+      if (!NATIVE) return;
+      // Spec 044: the server keeps his pick and routes the app; an older app keeps it itself.
+      if (PRIMS) { tellServer("route_pick", Number(type)); return; }
+      nativeCall("setRoute", { type: Number(type) });
+    },
+    detach(h) { if (hooks === h) hooks = null; },
+    orbTapped,                                   // call it INSIDE the click handler: TC1
+    tellServer,
+    // A different microphone is a full rebuild of capture (see the picker in the UI for why).
+    async restartCapture() { await stop({ rebuild: true }); await start(); },
+    applySink, normSink, currentSink, liveSink,
+  };
+
+  // --- reloading: the UI reloads itself; the shell only for its OWN change (FR5, FR6) ----------
+  // ⚠ NEVER reload the shell out from under a LIVE channel. A full reload destroys the AudioContext
+  // and the microphone, and a browser will not restart either without a fresh tap — so a shell
+  // change is HELD while running && channelOpen and applied the instant he next goes off. Only a
+  // change to this file can need that now; a UI change reloads the UI frame live.
+  let reloadPending = false;
+  const liveNow = () => running && channelOpen;
+  function hardReload() {
+    // A new ?_v= is a cache miss, so a pushed reload always lands the new bytes. The token and every
+    // other param are kept; replace() keeps the churn out of back-history.
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set("_v", Date.now().toString(36));
+      location.replace(u.href);
+    } catch (_) { location.reload(); }
+  }
+  function applyHeldReload() { if (reloadPending && !liveNow()) hardReload(); }
+  if (!MOCK) {
+    try {
+      const es = new EventSource("/events");
+      let reloadT;
+      es.addEventListener("reload", (e) => {
+        let d = {}; try { d = JSON.parse(e.data || "{}"); } catch (_) {}
+        if (!d.shell_sig || d.shell_sig === SHELL_SIG) return;   // the shell did not change
+        clearTimeout(reloadT);
+        reloadT = setTimeout(() => {
+          if (!liveNow()) { hardReload(); return; }
+          reloadPending = true;
+          ui("updateWaiting", true);
+        }, 250);
+      });
+    } catch (_) {}
+  }
+
+  // --- boot: the UI frame, and the socket on load (before any tap) -----------------------------
+  // The socket needs no permission and no gesture — only the microphone does — so the page arrives
+  // already connected, and the first tap has one job instead of three.
+  const frame = document.getElementById("ui");
+  frame.addEventListener("load", () => { try { frame.contentWindow.focus(); } catch (_) {} });
+  frame.src = "/ui" + location.search;
+  if (!MOCK) {
+    openSocket(48000).catch((e) => diag.errors.push("initial connect: " + e.message));
+  }
+})();
+</script>
+</body>
+</html>

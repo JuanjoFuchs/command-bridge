@@ -23,16 +23,25 @@ from __future__ import annotations
 
 import json
 import queue
+import subprocess
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from ..config import CANVAS_READABLE_PX
 from .cue import schedule as cue_schedule
+from . import folder as canvas_folder
 from .follow import Follower
 from .page import PAGE_VERSION, render
-from .store import Store
+
+# The readable floor for a focused frame's smallest text (spec 019). `readable = min_font_px >=
+# READABLE_PX`, where `min_font_px` is the EFFECTIVE min font the PAGE measured — the frame's
+# smallest text times spec 018's contain-fit scale, i.e. the px that text renders at when `look`
+# frames this frame on his screen. Lives in `config.py` as data (convention 5); re-exported here
+# because this module derives `readable` against it and `cli.describe` publishes it.
+READABLE_PX = CANVAS_READABLE_PX
 
 DEFAULT_PORT = 8770
 STATE_FILE = Path.home() / ".command-bridge.json"
@@ -68,6 +77,18 @@ _armed: dict[str, dict] = {}
 # moment his attention returns is worse than no reference at all.
 _point: dict[str, dict] = {}
 
+# lane -> the ONE camera move (`look <id>` / `look --all`) an off-lane agent asked for and could
+# not run, because a background lane may not move the camera (see `_camera`). Held here instead of
+# refused (spec 017), and drained by `set_live` the instant that lane goes live — BEFORE the lane's
+# held voice clips play — so JJ lands already looking at the frame the clip is about, the camera
+# half of the held-clip mechanism spec 013 gave voice. At most ONE per lane (KD1/KD2): a later
+# `look` with nothing spoken between overwrites the earlier one, because the camera has a single
+# position, not a timeline. Only the INTENT is held (the frame id / `--all`), never frozen pixel
+# coordinates — the actual camera is recomputed in the page from its current viewport on replay
+# (KD3), so a window resized between the hold and the switch still frames correctly. In-memory like
+# `_armed` and `_hands`: it survives until the switch, not across a restart.
+_look_held: dict[str, dict] = {}
+
 # In-flight `inspect` questions: id -> [Event, answer]. The page is the only
 # thing that knows what a selector resolves to, so the answer has to come back
 # FROM it — one request out on the stream, one POST back.
@@ -81,9 +102,83 @@ _ask_n = 0
 # inert import (tests, `describe`) never guesses a real session.
 _session = "dev"
 
-# The canvas on disk. Replaced by `serve`; the default is inert so importing the
-# module (tests, `describe`) never touches a real file.
-_store = Store(enabled=False)
+# The canvas on disk: a folder of native files per lane (spec 022). Replaced by `serve` /
+# `init_canvas`; the default is inert so importing the module (tests, `describe`) never touches a
+# real folder.
+_store = canvas_folder.FolderStore(Path("."), enabled=False)
+
+# The file watcher that turns an agent's edits into frame ops (spec 022 FR3). None until serve.
+_watcher = None
+
+
+def canvas_root(session: str) -> Path:
+    """`sessions/<session>.canvas/` (spec 022 KD9): beside the turn log and timing log it belongs
+    with, per-session prefixed, and inside the already-gitignored `sessions/` runtime-state dir."""
+    from ..config import session_dir
+    return Path(session_dir()) / ("%s.canvas" % session)
+
+
+def lane_folder(lane: str) -> str | None:
+    """Where an agent writes a frame for `lane` — the path `status` and `describe` hand out."""
+    if not _store.enabled:
+        return None
+    return str(_store.lane_dir(lane))
+
+
+_liaisons: frozenset[str] = frozenset()
+"""Specs 037/038: the liaison lanes. While any is set, edits never move the camera and only a
+liaison's explicit camera moves do. Set by the voice server (`set_liaisons`), which owns the mode."""
+
+
+def set_liaisons(liaisons) -> None:
+    global _liaisons
+    _liaisons = frozenset(liaisons or ())
+
+
+def _on_file_upsert(lane: str, frame: dict) -> None:
+    """The watcher saw a frame file created or changed: render it, and focus it (spec 022 FR3/FR7).
+
+    Focus rides ON the frame event (`focus: True`) for the live lane, so the page moves the camera
+    only once the card has rendered and been laid out — a separate `look` would race the paint and
+    frame an empty card. Off the live lane the look is HELD (spec 017) and a later edit overwrites it,
+    which is the coalesce-to-latest JJ asked for. A `_`-prefixed file never takes focus.
+
+    In LIAISON MODE (spec 037) no edit takes focus, on any lane: JJ, "I want you to focus on a frame
+    while you speak to me about that frame" — an agent's save must not pull the camera off it."""
+    quiet = canvas_folder.background(frame.get("file") or "") or bool(_liaisons)
+    apply("/frame", {**frame, "lane": lane, "focus": not quiet})
+    if not quiet and lane != _live:
+        _ops._hold_look({"id": frame["id"]}, lane)
+
+
+def _on_file_delete(lane: str, fid: str, name: str) -> None:
+    """The watcher saw a frame file deleted: remove the frame. Removing IS deleting the file (FR8)."""
+    apply("/remove", {"id": fid, "lane": lane, "file_gone": True})
+
+
+def start_folder(session: str, fresh: bool = False) -> int:
+    """Point the canvas at `sessions/<session>.canvas/`, migrate the old single-file store once,
+    load every lane folder, and start the index writer and the watcher. Returns frames restored."""
+    global _store, _watcher
+    root = canvas_root(session)
+    migrated = canvas_folder.migrate(canvas_folder.LEGACY_FILE, root)
+    if migrated:
+        print(json.dumps({"canvas_migrated": migrated}), file=sys.stderr, flush=True)
+    _store = canvas_folder.FolderStore(root)
+    restored = 0
+    if not fresh:
+        lanes, geo, _ = _store.load()
+        with _lock:
+            _lanes.update(lanes)
+            _geometry.update(geo)
+        restored = sum(len(f) for f in lanes.values())
+    _store.start(_canvas_snapshot)
+    if _watcher is not None:
+        _watcher.stop()
+    from .watcher import Watcher
+    _watcher = Watcher(_store, _on_file_upsert, _on_file_delete)
+    _watcher.start()
+    return restored
 
 # Mirrors the voice tunnel's live lane, when there is one. Replaced by `serve`;
 # the default is inert so importing the module never reaches for another tool.
@@ -109,8 +204,19 @@ def set_live(lane: str) -> int:
         # already run.
         _armed.pop(lane, None)
         pt = _point.get(lane)
+        # A camera move held while this lane was in the background (spec 017). Popped here, published
+        # below, and gone — it fires exactly once, on the switch it was waiting for.
+        look = _look_held.pop(lane, None)
     _store.touch()
     n = publish("switch", {"lane": lane})
+    # REPLAY A HELD `look` BEFORE THE HELD CLIPS (spec 017 FR2/FR3). The voice server flushes this
+    # lane's held voice clips immediately AFTER this returns (`_set_lane` → `set_live` → then
+    # `_flush_lane_held`), so publishing the camera move here — synchronously, before the flush —
+    # is what lands JJ on the frame FIRST, then starts the clip that talks about it. Published after
+    # the `switch` event so the page has already made this lane's canvas current, and before the
+    # point restore so the deliberate pre-position wins the camera and the highlight lands on top.
+    if look:
+        publish("look", look)
     # RESTORE THE LANE'S POINT (2026-09-07). The page renders the newly-live lane fresh, so a
     # highlight set on it earlier is gone until re-sent. Without this, pointing at a box, switching
     # away to another agent, and switching back left the box unmarked — the referent vanished the
@@ -148,6 +254,40 @@ def _surface_canvas_turn(lane: str, text: str) -> dict | None:
         return None
 
 
+DRAW_SHOTS_DIR = Path.home() / ".command-bridge-draws"
+"""Where an auto-shot of a human draw lands. Home-based so it is always writable, and the EXACT path
+rides in the canvas turn's text — the agent reads the file the turn names, it never guesses the dir."""
+
+
+def _draw_shot_path(lane: str, fid: str) -> Path:
+    """A collision-free PNG path for this draw. The millisecond stamp keeps a re-drawn `ink-0` from
+    overwriting a previous shot before the agent has read it, and the sanitise keeps a lane or frame
+    id from escaping the directory."""
+    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in "%s-%s" % (lane, fid))
+    return DRAW_SHOTS_DIR / ("%s-%d.png" % (safe, int(time.time() * 1000)))
+
+
+def _spawn_draw_shot(lane: str, out: Path) -> None:
+    """Shoot `lane`'s canvas in a private browser, in the BACKGROUND, so a human draw reaches the
+    agent WITH its picture rather than a pointer to go run `shot` (JJ 2026-09-09: "wouldn't it be
+    better that whatever you receive is the screenshot").
+
+    A subprocess, on purpose and twice over: the shot drives sync Playwright, which cannot run inside
+    this server's event loop; and a separate process means a missing browser degrades to 'the file
+    never appears', never a wedged draw. Fire-and-forget — the frame and the turn are already
+    delivered, so the picture simply arrives a few seconds behind, at the path the turn already named.
+    `python -m command_bridge` rather than the console script, so it runs whether or not `bin/` is on
+    the server's PATH (the same reason __main__.py exists)."""
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(
+            [sys.executable, "-m", "command_bridge", "shot",
+             "--session", _session, "--lane", lane, "--out", str(out)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+    except Exception:  # noqa: BLE001 — a shot that cannot even start must not fail the draw
+        pass
+
+
 def _canvas_snapshot() -> dict:
     """What the writer thread persists. Called off the request path."""
     with _lock:
@@ -174,10 +314,17 @@ def _frames_of(lane: str) -> dict[str, dict]:
     return _lanes.setdefault(lane, {})
 
 
-def _frame_view(lane: str, fid: str) -> dict:
-    """A frame as `status` reports it: what it is, plus where it landed."""
+def _frame_view(lane: str, fid: str, measured: bool = True) -> dict:
+    """A frame as `status` reports it: what it is, plus where it landed.
+
+    `measured` says whether a page is connected (its geometry can be trusted): with none, the spec-019
+    legibility is nulled the same way the viewport is, since a stale reading is a lie (FR2)."""
     f = _lanes[lane][fid]
     out = {"id": fid, "kind": f["kind"], "title": f["title"]}
+    # A render failure the page reported (JJ, 2026-09-24) — carried on the frame, not the geometry, so
+    # it survives with no live page and reaches an agent that drew off the lane JJ is watching.
+    if f.get("render_error"):
+        out["render_error"] = f["render_error"]
     if f.get("scale"):
         out["scale"] = f["scale"]
     if f.get("at"):
@@ -192,6 +339,10 @@ def _frame_view(lane: str, fid: str) -> dict:
     geo = (_geometry.get(lane) or {}).get(fid)
     if geo:
         out.update(geo)
+    # spec 019: the effective min font, fit scale and `readable` verdict — nulled when no page is
+    # connected (see `measured`). frame_legibility re-states min_font_px / fit_scale from the geometry
+    # merged above and adds `readable`, so a stale geo value cannot leak in as a live reading.
+    out.update(frame_legibility(geo if measured else None))
     return out
 
 
@@ -208,6 +359,40 @@ def _lane_summary() -> list[dict]:
         for name, frames in sorted(_lanes.items())
         if frames or name == _live or name in _hands
     ]
+
+
+def viewport_with_aspect(vp: dict | None) -> dict | None:
+    """The reported viewport with its DERIVED aspect ratio folded in (spec 018 FR3/KD2).
+
+    `aspect = width / height` (2 dp) — a value an agent reads to author a diagram toward the canvas
+    shape (a wide canvas gets a wide diagram) instead of guessing and drawing a tall frame that never
+    fits. Derived here, from the single measured `width`/`height` the page pushes to `/placed`, so it
+    is never a second inferable number that can disagree with the ratio the fit uses (NFR1). Returns
+    None unchanged when there is no viewport (no page connected — a stale ratio is a lie), and leaves
+    a viewport that carries no width/height untouched rather than inventing an aspect."""
+    if not vp:
+        return None
+    out = dict(vp)
+    w, h = out.get("width"), out.get("height")
+    if w and h:
+        out["aspect"] = round(w / h, 2)
+    return out
+
+
+def frame_legibility(geo: dict | None) -> dict:
+    """Per-frame legibility for `status` (spec 019 FR2) — the same page-measures / server-relays path
+    as the viewport (KD1).
+
+    Reads the EFFECTIVE min font + contain-fit scale the page pushed to `/placed` (`min_font_px`,
+    `fit_scale`) out of the frame's geometry, and derives `readable = min_font_px >= READABLE_PX`. The
+    server RELAYS; it never computes a font size (TC1). Pass `geo=None` when no page is connected — the
+    values come back null, exactly as the viewport is null with no page, because a stale legibility is
+    a lie an agent would author against."""
+    g = geo or {}
+    mf = g.get("min_font_px")
+    fs = g.get("fit_scale")
+    readable = (mf >= READABLE_PX) if isinstance(mf, (int, float)) else None
+    return {"min_font_px": mf, "readable": readable, "fit_scale": fs}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -272,17 +457,21 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             clients = len(_subscribers)
             lane = want or _live
-            frames = [_frame_view(lane, fid) for fid in _lanes.get(lane, {})]
+            frames = [_frame_view(lane, fid, measured=bool(clients))
+                      for fid in _lanes.get(lane, {})]
             # With nobody connected there IS no viewport. Say so rather than
             # reporting a stale one: an agent told "nothing is visible" behaves
-            # correctly, an agent told a lie does not.
-            viewport = _viewport.get(lane) if clients else None
+            # correctly, an agent told a lie does not. When there IS one, its
+            # aspect ratio rides along so an agent can author to the canvas shape
+            # (spec 018 FR3).
+            viewport = viewport_with_aspect(_viewport.get(lane)) if clients else None
             body = {"clients": clients, "lane": lane, "live_lane": _live,
                     "lanes": _lane_summary(), "frames": frames,
                     "viewport": viewport, "page_version": PAGE_VERSION,
                     # Named so a human can find, inspect or delete the record
                     # without being told where it lives.
-                    "canvas_file": str(_store.path) if _store.enabled else None,
+                    "canvas_dir": str(_store.root) if _store.enabled else None,
+                    "folder": lane_folder(lane),
                     # Says out loud whether the canvas is following the voice
                     # tunnel. A soft dependency that fails silently must still
                     # be visible when someone asks.
@@ -361,9 +550,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # Verb -> route, so a batch element can name the verb an agent already knows
     # rather than a URL it should never have had to learn.
-    OPS = {"set": "/frame", "remove": "/remove", "clear": "/clear",
-           "point": "/point", "look": "/look", "zoom": "/zoom",
-           "cue": "/cue", "raise": "/raise", "switch": "/switch"}
+    # spec 022: no draw/remove/clear/look/zoom op — a frame is a file in the lane folder, and focus
+    # follows the latest edit. What an agent still CALLS is pointing and switching.
+    OPS = {"point": "/point", "cue": "/cue", "switch": "/switch", "relayout": "/relayout"}
 
     def _batch(self, payload: dict) -> list[dict]:
         """Apply many operations in order, and never abort on one failure.
@@ -410,7 +599,31 @@ class Handler(BaseHTTPRequestHandler):
                 frame["scale"] = payload["scale"]
             if payload.get("at"):
                 frame["at"] = payload["at"]
+            # EVERY FRAME IS A FILE (spec 022 FR9). The watcher arrives here with the file it read
+            # (`file`); anything else — a generator (`chart`, the human's ink), an internal script —
+            # is written into the lane folder FIRST, atomically, with its hash recorded so the
+            # watcher recognises it as already on screen (TC3). One ingestion path, one home for
+            # content: the file.
+            if payload.get("file"):
+                frame["file"] = str(payload["file"])
+            elif _store.enabled:
+                try:
+                    frame["file"] = _store.write_frame(lane, fid, str(frame["kind"]),
+                                                       str(frame["content"]))
+                except OSError as exc:
+                    return 500, {"error": "could not write the frame file: %s" % exc,
+                                 "folder": lane_folder(lane)}
+            # The full path rides on the frame so the page's "copy path" button can hand it to him
+            # (JJ, 2026-10-01: "another one to copy a path to the file the frame is rendering").
+            folder = lane_folder(lane)
+            if frame.get("file") and folder:
+                frame["path"] = str(Path(folder) / str(frame["file"]))
             with _lock:
+                # STICKY (spec 022 FR6): a re-render keeps the position the frame already has, so
+                # editing a file never makes it jump.
+                old = _lanes.get(lane, {}).get(fid)
+                if old and old.get("at") and not frame.get("at"):
+                    frame["at"] = old["at"]
                 # Age is stamped HERE, not by the caller: an agent that could
                 # set its own timestamps could make a stale frame look fresh,
                 # and the whole point of showing age is that it is not a claim.
@@ -426,8 +639,14 @@ class Handler(BaseHTTPRequestHandler):
                 _frames_of(lane)[fid] = frame
                 count = len(_lanes[lane])
             _store.touch()
-            return 200, {"ok": True, "delivered_to": publish("frame", {**frame, "lane": lane}),
-                         "id": fid, "lane": lane, "kind": frame["kind"], "frames": count}
+            # `focus` rides on the EVENT, never the stored frame, so a reconnect's replay of the
+            # backlog does not fly the camera around (spec 022 FR7).
+            event = {**frame, "lane": lane}
+            if payload.get("focus"):
+                event["focus"] = True
+            return 200, {"ok": True, "delivered_to": publish("frame", event),
+                         "id": fid, "lane": lane, "kind": frame["kind"], "frames": count,
+                         **({"file": frame["file"]} if frame.get("file") else {})}
 
         if path == "/draw":
             # THE HUMAN DREW (spec 015 T3, KD5). Draw-then-submit: the page hands the accumulated
@@ -460,18 +679,31 @@ class Handler(BaseHTTPRequestHandler):
                 **({"at": payload["at"]} if payload.get("at") else {})})
             if code != 200:
                 return code, body
-            # SURFACE IT (AC4). Best-effort — the frame is already stored and delivered to the page.
-            turn = _surface_canvas_turn(target, "drew on lane %s, frame %s" % (target, fid))
-            return 200, {**body, "kind": "ink", "source": "canvas",
+            # SURFACE IT (AC4), and PUSH THE PICTURE, not a pointer (JJ 2026-09-09). The shot path is
+            # computed FIRST so it rides in the very turn the draw surfaces; the shot itself runs in a
+            # background process and lands at that path a few seconds later. Best-effort — the frame is
+            # already stored and delivered to the page, so neither the turn nor the shot can fail it.
+            shot_out = _draw_shot_path(target, fid)
+            turn = _surface_canvas_turn(
+                target, "drew on lane %s, frame %s · shot: %s" % (target, fid, shot_out))
+            _spawn_draw_shot(target, shot_out)
+            return 200, {**body, "kind": "ink", "source": "canvas", "shot": str(shot_out),
                          "turn": (turn.get("id") if turn else None)}
 
         if path == "/remove":
             fid = str(payload.get("id") or "")
             with _lock:
                 known = fid in _lanes.get(lane, {})
-                _lanes.get(lane, {}).pop(fid, None)
+                gone = _lanes.get(lane, {}).pop(fid, None)
                 (_geometry.get(lane) or {}).pop(fid, None)
+                # A held focus on a frame that no longer exists would replay a look at nothing.
+                if (_look_held.get(lane) or {}).get("id") == fid:
+                    _look_held.pop(lane, None)
                 count = len(_lanes.get(lane, {}))
+            # Removing a frame IS deleting its file (spec 022 FR8) — otherwise it would come back
+            # on the next restart. Skipped when the watcher is reporting the file already gone.
+            if gone and gone.get("file") and not payload.get("file_gone") and _store.enabled:
+                _store.delete_frame(lane, gone["file"])
             if not known:
                 return 404, {"error": "no frame %r in lane %r" % (fid, lane),
                              "frames": list(_lanes.get(lane, {}))}
@@ -483,10 +715,18 @@ class Handler(BaseHTTPRequestHandler):
             # Scoped to the caller's lane on purpose: a lane must not be able
             # to delete another lane's work.
             with _lock:
-                _lanes.pop(lane, None)
+                dropped = _lanes.pop(lane, None) or {}
                 _geometry.pop(lane, None)
                 _viewport.pop(lane, None)
+                # A camera move held for a lane whose frames are being thrown away has nothing left
+                # to focus (spec 017) — drop it so a later switch does not replay a look at nothing.
+                _look_held.pop(lane, None)
                 empty = not any(_lanes.values())
+            # The files ARE the frames (spec 022): clearing a lane deletes its frame files.
+            if _store.enabled:
+                for f in dropped.values():
+                    if f.get("file"):
+                        _store.delete_frame(lane, f["file"])
             # `clear` is the explicit throw-this-away verb, so it must not leave
             # a copy that reappears on the next restart. Clearing the LAST lane
             # removes the file outright rather than writing an empty one.
@@ -530,20 +770,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in ("/point", "/look", "/zoom", "/cue"):
             return self._camera(path, payload, lane)
-
-        if path == "/raise":
-            with _lock:
-                if lane == _live:
-                    return 200, {"ok": True, "lane": lane, "live": True,
-                                 "note": "you already have the floor — just say it"}
-                hand = _hands.setdefault(lane, {"count": 0, "why": ""})
-                hand["count"] += 1
-                if payload.get("why"):
-                    hand["why"] = str(payload["why"])
-                snapshot = dict(hand)
-            return 200, {"ok": True, "lane": lane, "raised": snapshot,
-                         "live_lane": _live,
-                         "delivered_to": publish("raise", {"lane": lane, **snapshot})}
 
         if path == "/switch":
             target = str(payload.get("to") or lane)
@@ -591,10 +817,50 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 _geometry[lane] = payload.get("frames") or {}
                 _viewport[lane] = payload.get("viewport") or {}
+                # PIN each frame where the page laid it (spec 022 FR6): from then on it is an `at`,
+                # replayed to every page and written into the lane's index.json, so neither a
+                # reconnect nor a restart re-packs the board. The page is the only placer (it alone
+                # knows sizes), so its report is the truth — including the one case it moves a
+                # pinned frame, an overlap with an older one that grew. Only a frame it actually
+                # measured (non-zero size): a still-rendering card has not found its real spot yet.
+                for fid, g in _geometry[lane].items():
+                    f = _lanes.get(lane, {}).get(fid)
+                    if (f is not None and isinstance(g, dict)
+                            and (g.get("w") or 0) > 0 and (g.get("h") or 0) > 0):
+                        f["at"] = [g.get("x", 0), g.get("y", 0)]
             # Geometry is persisted so a restored canvas keeps its layout rather
             # than re-packing into a different one. This fires often; the
             # debounce is what makes that free.
             _store.touch()
+            return 200, {"ok": True}
+
+        if path == "/relayout":
+            # THE ON-DEMAND RE-PACK (spec 022 FR6). The board is sticky — a new frame never moves
+            # the others — so when JJ WANTS it tidied, this forgets every pinned position on the lane
+            # and has the page pack it once more from scratch; the new positions are then pinned again.
+            with _lock:
+                for f in _lanes.get(lane, {}).values():
+                    f.pop("at", None)
+                _geometry.pop(lane, None)
+            _store.touch()
+            return 200, {"ok": True, "lane": lane,
+                         "delivered_to": publish("relayout", {"lane": lane})}
+
+        if path == "/rendered":
+            # A diagram frame's RENDER OUTCOME (JJ, 2026-09-24): the page reports whether a mermaid
+            # frame drew or threw. Merged onto the FRAME — not into `_geometry`, which /placed replaces
+            # wholesale — and fired regardless of the live lane, so `status` (and `set` through
+            # `_await_legibility`) can tell the DRAWING agent its diagram failed even when JJ is on
+            # another lane. Without this the agent saw a silent "ok" on a blank frame and gave up.
+            fid = str(payload.get("id") or "")
+            err = payload.get("error")
+            with _lock:
+                frame = _lanes.get(lane, {}).get(fid)
+                if frame is not None:
+                    if err:
+                        frame["render_error"] = str(err)
+                    else:
+                        frame.pop("render_error", None)
             return 200, {"ok": True}
 
         return 404, {"error": "not found"}
@@ -604,18 +870,35 @@ class Handler(BaseHTTPRequestHandler):
 
         This is the rule the whole lanes design exists for: an agent cannot
         take the camera from the agent that has it. The refusal names the live
-        lane so the caller knows to `raise` instead of retrying.
+        lane so the caller knows to just SAY what it has instead of retrying —
+        an off-lane `say` is held for that lane and raises a hand with a count,
+        which is the signal that brings him back (there is no `raise` command).
         """
+        # LIAISON MODE (spec 037): the camera is the liaison's alone. Any other lane's camera move is
+        # refused, live or not, held or not.
+        if _liaisons and lane not in _liaisons:
+            return 409, {"error": "liaison mode: only a liaison moves the camera (%s)" % ", ".join(sorted(_liaisons)),
+                         "code": "liaison_mode", "liaisons": sorted(_liaisons), "lane": lane,
+                         "remedy": "write your frame and brief your liaison; the liaison points at it"}
         # 🔴 ARMING is the one camera-adjacent thing a BACKGROUND lane may do,
         # and refusing it defeats the whole feature: an armed cue exists
         # precisely because the lane is not live yet. Nothing moves now — the
         # schedule is stored and only runs if and when he switches here, which
         # is still his decision. Everything else stays refused.
         if lane != _live and not (path == "/cue" and payload.get("arm")):
+            # 🔴 A `look` from a background lane is HELD, not refused (spec 017). It is the one camera
+            # move that is meaningful WITHOUT a clip — pre-positioning — and the verb JJ hit. `point`
+            # and `cue` are speech-synced and ride their clip's schedule, so they replay when that
+            # held clip replays and need no separate hold; `zoom` is a live-only attention nudge.
+            # Everything but `look` therefore stays refused off-lane (TC1/KD2).
+            if path == "/look":
+                return self._hold_look(payload, lane)
             return 409, {"error": "lane %r is not live — %r has the floor" % (lane, _live),
                          "live_lane": _live, "lane": lane,
-                         "remedy": "command-bridge raise --lane %s --why '<what you want to show>'"
-                                   % lane}
+                         "remedy": "you can't take the camera from the live lane — just say what "
+                                   "you have with `command-bridge say`; an off-lane say is held "
+                                   "for your lane and raises a hand with a count, which is what "
+                                   "brings him back"}
 
         if path == "/look":
             msg = {"id": payload.get("id") or "", "all": bool(payload.get("all")),
@@ -642,8 +925,9 @@ class Handler(BaseHTTPRequestHandler):
             vp = _viewport.get(lane) or {}
             if target and target in (vp.get("offscreen") or []) \
                     and not (msg["zoom"] or msg["look"]):
-                out["warning"] = ("frame %r is off screen — run `look %s` (or pass --look) "
-                                  "or he will not see it" % (target, target))
+                # spec 022 retired `look`; `point --look` is the camera move an agent still has.
+                out["warning"] = ("frame %r is off screen — re-run `point %s --look` to bring "
+                                  "the camera there, or he will not see it" % (target, target))
             return 200, out
 
         if path == "/cue":
@@ -652,6 +936,29 @@ class Handler(BaseHTTPRequestHandler):
         msg = {"selector": payload.get("selector", ""), "scale": payload.get("scale"),
                "lane": lane}
         return 200, {"ok": True, "delivered_to": publish("zoom", msg), **msg}
+
+    def _hold_look(self, payload: dict, lane: str) -> tuple[int, dict]:
+        """Hold an off-lane `look` (spec 017 FR1) instead of refusing it, and record the target so
+        `set_live` can replay it the moment this lane goes live — before the lane's held clips.
+
+        Validated exactly as the live `/look` is: an `id` naming a frame that is not on THIS lane
+        (the caller's own canvas) is a typo worth catching, so it 404s rather than holding a camera
+        move at nothing. An empty `id` (and no `--all`) is the deliberate 'frame the whole canvas'
+        look, held as-is. Storing overwrites any earlier held `look` on this lane, which IS the
+        collapse rule (FR4): the camera has one position, so two consecutive holds with nothing
+        spoken between them keep only the last."""
+        fid = str(payload.get("id") or "")
+        if fid and fid not in _lanes.get(lane, {}):
+            return 404, {"error": "no frame %r in lane %r" % (fid, lane),
+                         "frames": list(_lanes.get(lane, {}))}
+        msg = {"id": fid, "all": bool(payload.get("all")), "lane": lane}
+        with _lock:
+            _look_held[lane] = msg
+            live = _live
+        return 200, {"held": True, "id": fid or None, "all": msg["all"], "lane": lane,
+                     "live_lane": live, "reason": "off_lane",
+                     "next": "HELD — it focuses your frame when he switches to your lane, "
+                             "before your held clip."}
 
     def _cue(self, payload: dict, lane: str) -> tuple[int, dict]:
         """One clip's worth of highlights, sent as ONE event.
@@ -743,25 +1050,11 @@ def serve(port: int = DEFAULT_PORT, verbose: bool = False,
           fresh: bool = False, follow: bool = True,
           session: str = "dev") -> None:
     """Run until interrupted. Binds loopback only — nothing else can reach it."""
-    global _live, _store, _follower, _session
+    global _follower, _session
     _session = session  # spec 015: the log a human draw surfaces its canvas turn into (AC4)
-    _store = Store()
-    restored = 0
-    if fresh:
-        # Start empty WITHOUT destroying what is on disk: `--fresh` is "not
-        # today's canvas", not "throw the canvas away". The saved one comes
-        # back on the next normal start, and the first change here overwrites
-        # it — which is the same bargain any editor makes.
-        print(json.dumps({"fresh": True, "canvas_file": str(_store.path)}), flush=True)
-    else:
-        lanes, geo, live = _store.load()
-        with _lock:
-            _lanes.update(lanes)
-            _geometry.update(geo)
-            if live:
-                _live = live
-        restored = sum(len(f) for f in lanes.values())
-    _store.start(_canvas_snapshot)
+    # spec 022: the lane folders under sessions/<session>.canvas/, watched. `--fresh` starts empty
+    # WITHOUT destroying what is on disk — "not today's canvas", not "throw the canvas away".
+    restored = start_folder(session, fresh=fresh)
 
     # Soft: if there is no voice tunnel, this finds nothing, says so in
     # `status`, and never mentions it again.
@@ -776,7 +1069,7 @@ def serve(port: int = DEFAULT_PORT, verbose: bool = False,
     # so the agent never has to remember which one it started.
     STATE_FILE.write_text(json.dumps({"port": port, "url": url, "started": time.time()}))
     print(json.dumps({"serving": url, "port": port, "page_version": PAGE_VERSION,
-                      "canvas_file": str(_store.path),
+                      "canvas_dir": str(_store.root),
                       "restored_frames": restored,
                       "restored_lanes": sorted(_lanes)}), flush=True)
     try:

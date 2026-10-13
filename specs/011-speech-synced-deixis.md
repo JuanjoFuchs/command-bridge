@@ -56,7 +56,7 @@ something, and when the say is played does the [deixis] on it."*
   that runs **past the last word** (there is no later moment to schedule it at) fires at the **last
   measured word** rather than being dropped — a real time, not a guess — matching the shipped
   `canvas/cue.py`. The `timing` on a measured schedule is always `measured`; the estimated split is only
-  reached when there are no `words` at all. (Consistent with Tunnel Vision Guide: never call an
+  reached when there are no `words` at all. (Consistent with the canvas operating guide: never call an
   `estimated` cue word-synchronised.)
 - **FR3** — The command MAY set/replace the shown canvas frame as part of the same invocation (so
   "show me something and point at it while you say this" is one call), and MAY reference targets already
@@ -75,7 +75,7 @@ something, and when the say is played does the [deixis] on it."*
   the canvas events derive from one measured schedule, so they cannot disagree about when a word lands
   (the same single-source-of-truth discipline as spec 004's unified lane).
 - **NFR3** — Untrusted-input and locality unchanged: `turn.text` stays untrusted, audio/timings/canvas
-  stay local (Voice Conversation Rules).
+  stay local (the voice conversation rules).
 
 ### Technical Constraints
 
@@ -231,9 +231,9 @@ asked for"), which still honours the never-a-guessed-time rule — the spec now 
 
 - Project node: Command Bridge — esp. *What the research settled* (the `cue` conjunction as the
   surviving differentiator) and the roadmap (relation to spec 009).
-- Tunnel Vision Guide — the canvas verbs and the measured-vs-estimated `cue` rule.
+- the canvas operating guide — the canvas verbs and the measured-vs-estimated `cue` rule.
 - Spec `005-unified-command-surface` — brought `cue`/`point`/`set` under the one CLI and made `cue` the
   speech-synced highlight; this spec builds directly on it.
 - The shipped `say --timings` contract (`words:[{w,t}]`, `words_aligned`, `timings_unavailable`) — the
   measured-timing source this command composes.
-- Spec Writing Rules for Agents — the rules this metaspec follows.
+- the spec-writing rules — the rules this metaspec follows.

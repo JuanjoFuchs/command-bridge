@@ -335,3 +335,46 @@ def test_the_receipt_after_a_barge_still_names_its_own_lane(state, sock, his_voi
         "atlas is mid-thought and had nothing to do with that clip — a receipt must never release "
         "whichever lane happens to be live"
     )
+
+
+# ---------------------------------------------- an --intent ack does not end the batch (2026-09-11)
+
+
+def say_http_intent(state, lane, text, intent):
+    """The real `say` endpoint, carrying the spec-012 `intent` flag."""
+    return asyncio.run(server.handle_say(_Req(state, {"text": text, "lane": lane, "intent": intent})))
+
+
+def test_an_intent_announcement_leaves_the_batch_open(state, sock):
+    """🔴 **ROOT CAUSE, live 2026-09-11.** An `--intent` "on it" ack cleared `lane_holds_turns`, so
+    the agent's NEXT pre-reply `watch` — run while he was on another lane — saw the flag down, was
+    misread as a plain listen, and blocked off-lane until he came back to resolve it. An
+    announcement is a supersedable promise, not the answer (spec 012): it must leave the batch OPEN
+    so the pre-say fast path still fires.
+
+    Mutation: drop the `if not intent` guard in `handle_say` and this goes red.
+    """
+    state.lanes.switch("magnus")
+    state.lane_holds_turns["magnus"] = True      # magnus consumed turns it has NOT answered
+    state.agent_holds_turns = True
+    say_http_intent(state, "magnus", "on it, running the tests", intent=True)
+    assert state.lane_holds_turns["magnus"] is True, (
+        "an --intent announcement has not answered the batch — clearing holds here is exactly what "
+        "made the following pre-say watch block off-lane"
+    )
+    assert state.agent_holds_turns is True
+
+
+def test_a_real_reply_still_ends_the_batch(state, sock):
+    """The other half, and the guard against a HOT-SPIN: a normal (non-intent) say must still clear
+    holds, or every subsequent listen would enter the pre-say fast path and re-arm instantly.
+
+    Mutation: always skip the clear (gate it the wrong way) and this goes red.
+    """
+    state.lanes.switch("magnus")
+    state.lane_holds_turns["magnus"] = True
+    state.agent_holds_turns = True
+    say_http_intent(state, "magnus", "here is the actual answer", intent=False)
+    assert state.lane_holds_turns["magnus"] is False, (
+        "a real reply answers the batch — the next wait must be a blocking listen, not a fast check"
+    )

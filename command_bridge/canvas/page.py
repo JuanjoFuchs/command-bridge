@@ -121,11 +121,35 @@ PAGE = """<!doctype html>
   /* Age sits to the right of the title and stays quieter than it: it answers
      "is this still true", which is a second question, not the headline. */
   .card > .bar > .age { opacity: .62; letter-spacing: .04em; }
+  /* COPY BUTTONS in the title bar (JJ, 2026-10-01): one copies the frame's content (its source,
+     or the image itself), one copies the full path of the file it renders. Quiet until hovered. */
+  .card > .bar > .tools { margin-left: auto; display: flex; gap: .3rem; }
+  .card > .bar > .tools > button {
+    font: inherit; font-size: 10px; letter-spacing: .04em; color: var(--dim); background: none;
+    border: 1px solid var(--edge); border-radius: 4px; padding: 0 .4rem; cursor: pointer; opacity: .55;
+  }
+  .card:hover > .bar > .tools > button { opacity: 1; }
+  .card > .bar > .tools > button:hover { color: var(--fg, #e7eaf1); }
+  .card > .bar > .tools > button.done { color: #5fd38d; border-color: #5fd38d; }
+  /* AN IMAGE NEVER GRABS THE DRAG (JJ, 2026-10-01: "when I try to drag the canvas it doesn't move
+     and it's like as if I'm grabbing the image"). The browser's native image drag swallowed the
+     pan gesture; with it off, a drag over a picture pans the canvas like anywhere else. */
+  .card img, .card video, .card svg image { -webkit-user-drag: none; user-drag: none; user-select: none; }
   /* `zoom` rather than `transform: scale()` — zoom changes the element's LAYOUT
      box, so the packer and the camera measure the scaled size and everything
      downstream just works. A transform would leave a card claiming its
      unscaled footprint and overlapping its neighbour. */
   .card > .body { padding: .4rem; }
+  /* Media fills the frame. A body whose ONLY child is an image or a video sheds
+     its padding and the element bleeds to the card edges — no wasted margin, no
+     caption strip. The LABEL goes in the frame title (the `.bar`), never a line of
+     text below the media. `line-height:0` kills the inline descender gap that
+     otherwise leaves a thin strip under a replaced element. (Live 2026-09-11 —
+     JJ: "the content should feel the full frame, and don't add labels below it.") */
+  .card > .body:has(> img:only-child),
+  .card > .body:has(> video:only-child) { padding: 0; line-height: 0; }
+  .card > .body > img:only-child,
+  .card > .body > video:only-child { display: block; max-width: 100%; border-radius: 0 0 7px 7px; }
   .card svg { max-width: none !important; }
   .card pre { white-space: pre-wrap; font: 13px/1.5 ui-monospace, "Cascadia Code", monospace; }
   /* Markdown. Deliberately narrow: a measure wider than about 70 characters is
@@ -152,6 +176,12 @@ PAGE = """<!doctype html>
   .md pre { background: rgba(128,128,128,.09); border: 1px solid rgba(128,128,128,.22);
             border-radius: 6px; padding: .7rem .9rem; white-space: pre-wrap; }
   .md pre code { background: none; padding: 0; font-size: 13px; }
+  /* A mermaid diagram rendered inside a markdown frame keeps mermaid's natural pixel width, which
+     ran past the card's right edge; scale it DOWN to the prose column instead (never up). */
+  .md-mermaid { margin: 12px 0; }
+  /* !important because mermaid writes its natural width as an INLINE max-width on the svg, which
+     outranks any stylesheet rule — the first version of this rule was silently ignored. */
+  .md-mermaid svg { max-width: 100% !important; height: auto; }
   .md blockquote { border-left: 3px solid var(--edge); padding-left: .9em;
                    margin-left: 0; opacity: .85; }
   .md table { border-collapse: collapse; margin: 0 0 .9em; }
@@ -185,8 +215,17 @@ PAGE = """<!doctype html>
   .pointed {
     outline: 2px solid var(--glow) !important;
     outline-offset: 3px; border-radius: 3px;
-    animation: pulse 1.1s ease-out 2;
   }
+  /* The pulse is on the HTML halo ONLY, never on `.pointed`. A CSS animation on
+     an SVG element that lives inside a CSS-`transform`ed, `will-change: transform`
+     ancestor (our `#stage` camera) makes WebKit promote that element to its own
+     layer WITHOUT the ancestor transform — so the node visibly JUMPS to the
+     untransformed origin, animates there, and snaps back. JJ saw exactly this:
+     "the box has an animation and moves around away from its location on the
+     diagram" (2026-09-11). The box-shadow the pulse animates is invisible on an
+     SVG node anyway, so scoping it to the halo loses nothing and the static
+     outline still holds the highlight for a late glance. */
+  div.pointed { animation: pulse 1.1s ease-out 2; }
   /* A mermaid node (g.node) is a self-contained box: the `.pointed` outline above
      already IS the pointer rectangle. Recolouring its own border on top drew a
      SECOND orange line 3px inside the outline — "two orange lines next to each
@@ -301,7 +340,13 @@ PAGE = """<!doctype html>
       clusterBkg: "#f3f5f8", clusterBorder: "#c7cdd8", titleColor: "#2d3142",
       edgeLabelBackground: "#f3f5f8",
     };
-    mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "base", themeVariables: vars });
+    // suppressErrorRendering: on a bad definition mermaid otherwise injects its
+    // own "Syntax error in text" bomb graphic into document.body — an orphan that
+    // is NOT scoped to the failing card, so it hangs over EVERY lane in an already-
+    // open browser until a reload. We already catch the throw in paint() and show
+    // the message inside the card; this stops the global bomb so a single agent's
+    // bad frame can't smear an error across the whole canvas. (Live 2026-09-11.)
+    mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "base", themeVariables: vars, suppressErrorRendering: true });
   })();
 
   const stage = document.getElementById("stage");
@@ -349,6 +394,14 @@ PAGE = """<!doctype html>
     hands.delete(lane);
     paintLanes();
     layout();
+    repaintPending();   // diagrams this lane received while hidden (see place())
+    // spec 022: a lane he has never framed opens on its latest edited frame (a held off-lane look,
+    // replayed right after this by the server, still wins — it is the more specific ask).
+    if (focusLatestFor === lane) { focusLatestFor = null; focusLatestOnOpen(); }
+    else if (cards.size && cam.x === 0 && cam.y === 0 && cam.k === 1) {
+      const latest = latestCardId();
+      if (latest) autoFocus(latest, false);
+    }
     // The moment that matters for a held clip: this lane just got the floor, so
     // anything armed for it starts now.
     fireArmed(lane);
@@ -477,6 +530,7 @@ PAGE = """<!doctype html>
     // the full available canvas").
     const port = view.getBoundingClientRect();
     if (!box || !box.w || !box.h) return;
+    if (!portReady()) { focusWhenShown = true; return; }
     const k = Math.max(0.05, Math.min(
       (port.width - margin) / box.w, (port.height - margin) / box.h, 8));
     cam = {
@@ -490,22 +544,122 @@ PAGE = """<!doctype html>
   function fit(animate) { frameBox(extent(), animate); }
 
   function boxOf(el) {
-    // An element's box in CANVAS space, whatever the camera is doing.
+    // An element's box in CANVAS space, whatever the camera is doing. The element's rect is what is
+    // RENDERED right now, so divide by the RENDERED transform (the computed matrix, which tracks a
+    // CSS transition mid-flight), not by `cam` — `apply(true)` sets `cam` to the TARGET at once, and
+    // measuring against the target during the 0.35s glide landed the camera off its frame (JJ,
+    // 2026-09-28: "whenever I open it, it kind of sometimes scrolls off screen").
     const b = el.getBoundingClientRect();
     const port = view.getBoundingClientRect();
+    let k = cam.k, x = cam.x, y = cam.y;
+    const m = getComputedStyle(stage).transform;
+    if (m && m.startsWith("matrix(")) {
+      const v = m.slice(7, -1).split(",").map(Number);
+      if (v.length === 6 && v.every(isFinite) && v[0] > 0) { k = v[0]; x = v[4]; y = v[5]; }
+    }
     return {
-      x: (b.left - port.left - cam.x) / cam.k,
-      y: (b.top - port.top - cam.y) / cam.k,
-      w: b.width / cam.k,
-      h: b.height / cam.k,
+      x: (b.left - port.left - x) / k,
+      y: (b.top - port.top - y) / k,
+      w: b.width / k,
+      h: b.height / k,
     };
   }
 
-  // Below this, text is on screen but not readable — so "fits" and "can be
-  // read" stop being the same thing and the camera has to choose.
-  const READABLE = 0.62;
+  // The canvas is created with the parent page and stays display:none until he opens it, so for
+  // most of its life the viewport measures 0x0. Camera maths against a 0x0 port lands at the 5% zoom
+  // floor with the frame on the top-left corner — and that bad camera was then KEPT (parked per lane,
+  // and no longer the untouched default that triggers a re-focus), so the canvas opened on empty
+  // space. Every framing function now refuses while the port is not really there; the focus it
+  // skipped is replayed the moment the canvas becomes visible (the #view ResizeObserver below).
+  function portReady() {
+    const p = view.getBoundingClientRect();
+    return p.width > 40 && p.height > 40;
+  }
+  let focusWhenShown = false;
+
+  // The FR1/FR2 fork (spec 018): CONTAIN the whole frame down to this fraction of its authored
+  // size; below it, a whole-frame view is too small to be worth it, so a genuinely long DOCUMENT
+  // fits its width and parks at the top instead (reading position, pan down). This is the "diagram
+  // vs long document" decision, made by SCALE — the page owns it (TC2), and it is the ONE knob.
+  //
+  // Lowered from 0.62 to 0.30 on 2026-09-11. At 0.62 a frame merely TALLER than wide — a status
+  // board, contain-scale ~0.44 measured in a 1280x800 window — fell below the floor and was
+  // width-filled, so its top and bottom ran off screen and JJ could not see the whole thing
+  // ("frames that have a lot more height than width ... do not allow me to see the full height").
+  // Measured (scripts/framefit.py): tall/wide diagrams and boards contain at 0.42-0.52 and a
+  // genuinely long markdown document contains at ~0.07 — so 0.30 sits with clear margin between the
+  // two clusters, containing the diagrams (FR1) while the long document still falls back (FR2).
+  const READABLE = 0.30;
+
+  // ---- spec 019: per-frame font legibility ----------------------------------------------------
+  // The page is the only thing that knows the rendered text sizes AND the contain fit (TC1), so it
+  // measures, on the same `report()` beat it already sends geometry and the viewport, each frame's
+  // EFFECTIVE minimum font: its smallest text element, times the scale a `look` would CONTAIN the
+  // frame at on his screen (spec 018's fit). The agent that drew it reads that back and knows whether
+  // the frame will be readable before JJ ever focuses it.
+  //
+  // FOCUS_MARGIN is the gutter `look` leaves around a focused frame (`zoomTo(el, 80)` — the `look`
+  // event handler below passes 80), so the fit scale reported here is the scale `look` actually
+  // applies, never a second inferable number (NFR1).
+  const FOCUS_MARGIN = 80;
+
+  function fitScaleFor(w, h) {
+    // Spec 018's contain fit for a w×h CANVAS-space box (offset sizes, camera-independent) in the
+    // current viewport: the scale that makes the WHOLE frame fit, bounded by the tighter axis. The
+    // same math `camFor` uses, so the fit an agent reasons about is the fit `look` will apply.
+    const port = view.getBoundingClientRect();
+    if (!w || !h) return null;
+    return Math.max(0.05, Math.min((port.width - FOCUS_MARGIN) / w,
+                                   (port.height - FOCUS_MARGIN) / h, 8));
+  }
+
+  function renderedFontPx(el) {
+    // One text element's font size in CANVAS space (stage scale 1) — the camera divided out, so the
+    // caller can multiply by the predictive fit scale to get the on-screen size when focused.
+    // Measured from the element's OWN geometry (its screen box over its local box) so SVG viewBox
+    // scaling, mermaid's intrinsic sizing and a body `zoom` are all captured with no per-kind special
+    // case: font-size is in the same local space as that box, so the ratio cancels cleanly and the
+    // result is the true rendered px whatever the drawing's internal scale.
+    const local = parseFloat(getComputedStyle(el).fontSize) || 0;
+    if (!local) return 0;
+    const rect = el.getBoundingClientRect();
+    if (!rect.height) return 0;
+    let screenPerLocal;
+    if (el.getBBox) {                        // SVG text: getBBox is in user units
+      let bb; try { bb = el.getBBox(); } catch (_) { return 0; }
+      if (!bb || !bb.height) return 0;
+      screenPerLocal = rect.height / bb.height;
+    } else {                                 // HTML: offsetHeight is the same box in local px
+      const oh = el.offsetHeight || 0;
+      if (!oh) return 0;
+      screenPerLocal = rect.height / oh;
+    }
+    return local * screenPerLocal / cam.k;
+  }
+
+  function minFontPx(bodyEl) {
+    // The SMALLEST rendered text in the frame's BODY (KD3 — the worst-case glyph decides readability,
+    // not the average; the title BAR is chrome held at a fixed size, so it is excluded — the caller
+    // passes `.body`). Leaf text runs only: an element whose whole text is already carried by a child
+    // is a wrapper, and measuring it would just re-measure the child.
+    if (!bodyEl) return null;
+    const nodes = bodyEl.querySelectorAll(
+      "text, tspan, li, p, h1, h2, h3, h4, h5, h6, td, th, code, blockquote, a, span, div, pre");
+    let min = Infinity;
+    for (const el of nodes) {
+      const s = (el.textContent || "").trim();
+      if (!s) continue;
+      if ([...el.children].some(c => (c.textContent || "").trim() === s)) continue;  // a wrapper
+      const fs = renderedFontPx(el);
+      if (fs > 0) min = Math.min(min, fs);
+    }
+    return isFinite(min) ? min : null;
+  }
 
   function zoomTo(el, margin = 24, fly = false) {
+    // Hidden: remember THIS target (spec 037). A bare focusWhenShown replays as "the latest edit",
+    // which is not what an explicit look asked for.
+    if (!portReady()) { lookWhenShown = { el, margin }; return; }
     const box = boxOf(el);
     const port = view.getBoundingClientRect();
     if (!box.w || !box.h) return;
@@ -547,10 +701,65 @@ PAGE = """<!doctype html>
   }, { passive: false });
 
   let drag = null;
+
+  // ---- pinch-zoom (touch) ----------------------------------------------
+  // Two fingers zoom the camera about their midpoint (and pan by it) in BOTH pan and draw modes, so
+  // a phone can zoom into a sketch without leaving the pen. `touch-action: none` stops the browser
+  // doing this for us, so we track the raw pointers and drive the same `cam` the wheel handler does.
+  // Registered BEFORE the pan and draw handlers so `pts` is already updated when their
+  // `pts.size >= 2` guards run — a second finger then turns a pan, or a half-drawn stroke, into a
+  // pinch cleanly. JJ 2026-09-09: two-finger zoom did nothing on the phone.
+  const pts = new Map();          // every active canvas pointer: id -> {x, y} in client coords
+  let pinch = null;               // set when the 2nd finger lands: start distance, anchor, and k
+
+  function pinchStart() {
+    const [a, b] = [...pts.values()];
+    const port = view.getBoundingClientRect();
+    const mx = (a.x + b.x) / 2 - port.left, my = (a.y + b.y) / 2 - port.top;
+    // The canvas-space point under the initial midpoint; held under the (moving) midpoint as they
+    // zoom, which is zoom-about-the-pinch and two-finger pan at once.
+    pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+              ax: (mx - cam.x) / cam.k, ay: (my - cam.y) / cam.k, k: cam.k };
+    // A pinch is neither a pan nor a stroke: drop whatever the first finger began so it neither
+    // commits a stray line nor keeps panning under the zoom.
+    drag = null; view.classList.remove("dragging");
+    if (inking) { curStroke = null; inking = false; renderInk(); }
+  }
+
+  function pinchMove() {
+    const [a, b] = [...pts.values()];
+    const port = view.getBoundingClientRect();
+    const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const mx = (a.x + b.x) / 2 - port.left, my = (a.y + b.y) / 2 - port.top;
+    cancelFlight();                 // the human always wins an in-flight move
+    cam.k = Math.max(0.05, Math.min(6, pinch.k * dist / pinch.dist));
+    cam.x = mx - pinch.ax * cam.k;
+    cam.y = my - pinch.ay * cam.k;
+    apply(false);
+  }
+
+  view.addEventListener("pointerdown", e => {
+    if (e.target.closest("#tools")) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) { e.preventDefault(); pinchStart(); }
+  }, { passive: false });
+  view.addEventListener("pointermove", e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size >= 2 && pinch) { e.preventDefault(); pinchMove(); }
+  }, { passive: false });
+  const dropPinchPointer = e => {
+    if (!pts.delete(e.pointerId)) return;
+    if (pts.size < 2) pinch = null;   // back to one finger: pan/draw resumes on the next fresh touch
+  };
+  view.addEventListener("pointerup", dropPinchPointer);
+  view.addEventListener("pointercancel", dropPinchPointer);
+
   view.addEventListener("pointerdown", e => {
     // A pointerdown on a toolbar button bubbles up to here; capturing it would steal the button's
     // own click (pointer capture retargets the click off the button). So the toolbar owns its taps.
     if (e.target.closest("#tools")) return;
+    if (pts.size >= 2) return;          // two fingers is a pinch-zoom, not a pan
     if (drawMode) return;              // a drawing tool owns the pointer (spec 015); do not pan
     cancelFlight();
     stage.style.transition = "none";
@@ -558,6 +767,7 @@ PAGE = """<!doctype html>
     view.setPointerCapture(e.pointerId);
   });
   view.addEventListener("pointermove", e => {
+    if (pts.size >= 2) return;          // a pinch is in progress; the pan is suspended
     if (!drag) return;
     // Only claim the gesture once it has actually moved. A click that never
     // travels should still be able to select, focus or follow a link.
@@ -644,6 +854,7 @@ PAGE = """<!doctype html>
 
   view.addEventListener("pointerdown", e => {
     if (!drawMode) return;             // pan mode owns the pointer (handler above)
+    if (pts.size >= 2) return;         // two fingers is a pinch-zoom, not a stroke
     if (e.target.closest("#tools")) return;   // a tap on Send/Erase is not the start of a stroke
     e.preventDefault();
     view.setPointerCapture(e.pointerId);
@@ -654,6 +865,7 @@ PAGE = """<!doctype html>
     renderInk();
   });
   view.addEventListener("pointermove", e => {
+    if (pts.size >= 2) return;          // suspended while a pinch-zoom is happening
     if (!drawMode || !inking) return;
     const p = viewToCanvas(e);
     if (drawMode === "erase") { eraseAt(p); return; }
@@ -721,30 +933,180 @@ PAGE = """<!doctype html>
     // for as long as this is not cleared, which is worse than no highlight.
     stage.querySelectorAll(".halo").forEach(n => n.remove());
 
-    // Deterministic shelf packing in insertion order: the same sequence of
-    // frames produces the same positions every time. Explicitly-placed cards
-    // are honoured and excluded from the packing.
-    let x = 0, y = 0, rowH = 0;
+    // STICKY placement (spec 022 FR6 — JJ: "I wouldn't want the whole board to jump every time").
+    // Walk the frames oldest first. A frame that already has a position KEEPS it; a new one goes into
+    // the first free gap (top-most, then left-most) that clears every frame already placed, and is
+    // then PINNED there — so adding, editing or removing a frame never moves any other. If a pinned
+    // frame now overlaps an OLDER one (the older grew), only the newer frame moves. A frame with no
+    // size yet (still rendering) is placed provisionally and pinned once it has one. Ink (the human's
+    // sketch) is exempt: it is drawn ON TOP of what it annotates, so it keeps its spot and blocks
+    // nothing. Deterministic: the same frames in the same order land in the same places.
+    const placed = [];
+    const hits = (x, y, w, h) => placed.some(r =>
+      x < r.x + r.w + GAP && x + w + GAP > r.x && y < r.y + r.h + GAP && y + h + GAP > r.y);
+    const freeSpot = (w, h) => {
+      let bottom = 0;
+      const cand = [[0, 0]];
+      for (const r of placed) {
+        cand.push([r.x + r.w + GAP, r.y], [r.x, r.y + r.h + GAP]);
+        bottom = Math.max(bottom, r.y + r.h + GAP);
+      }
+      cand.push([0, bottom]);
+      let best = null;
+      for (const [x, y] of cand) {
+        if (x > 0 && x + w > ROW_WIDTH) continue;
+        if (hits(x, y, w, h)) continue;
+        if (!best || y < best[1] || (y === best[1] && x < best[0])) best = [x, y];
+      }
+      return best || [0, bottom];
+    };
     for (const id of order) {
       const c = cards.get(id);
       if (!c) continue;
-      if (c.at) {
-        c.el.style.left = c.at[0] + "px";
-        c.el.style.top = c.at[1] + "px";
-        continue;
-      }
       const w = c.el.offsetWidth, h = c.el.offsetHeight;
-      if (x > 0 && x + w > ROW_WIDTH) { x = 0; y += rowH + GAP; rowH = 0; }
-      c.el.style.left = x + "px";
-      c.el.style.top = y + "px";
-      x += w + GAP;
-      rowH = Math.max(rowH, h);
+      const ink = c.el.dataset.kind === "ink";
+      let pos = c.at;
+      if (!ink && (!pos || hits(pos[0], pos[1], w, h))) {
+        pos = freeSpot(w, h);
+        if (w > 0 && h > 0) c.at = pos;
+      }
+      if (!pos) pos = [0, 0];
+      c.el.style.left = pos[0] + "px";
+      c.el.style.top = pos[1] + "px";
+      if (!ink) placed.push({ x: pos[0], y: pos[1], w, h });
     }
     emptyTag.style.display = cards.size ? "none" : "grid";
     countTag.textContent = cards.size
       ? cards.size + (cards.size === 1 ? " frame" : " frames") : "";
     report();
   }
+
+  // RE-PACK WHEN A FRAME'S MEASURED SIZE SETTLES (JJ, 2026-09-22: frames "one on top of the other",
+  // and "blank" until a double-click). `layout()` shelf-packs by offsetWidth/offsetHeight, but async
+  // content — a mermaid SVG being unshrunk, markdown reflow, a webfont load — finishes AFTER the
+  // post-paint layout ran, so that first pack measured 0/partial sizes and laid every frame at the
+  // origin on top of the last. A ResizeObserver re-runs the pack whenever a card actually changes
+  // size (debounced so a burst of settling frames costs one pass), and re-frames the view IF he has
+  // not moved it yet — so switching to a lane lands on its frames instead of empty space.
+  let _relayoutTimer = null;
+  let pendingFocus = null;   // spec 022: an auto-focus still waiting for its card's final size
+  // AN EXPLICIT CAMERA MOVE WINS (spec 037). `point --look`, `look` and `zoom` are an agent choosing
+  // what he sees while it talks about it; an auto-focus is only "here is the latest edit". The edit's
+  // own settle timers and pendingFocus used to re-frame the latest edit AFTER the explicit move — so
+  // "write the frame, then point at it" reported ok and the camera went elsewhere (backlog 10-09).
+  let lastExplicit = 0;
+  let lookWhenShown = null;   // an explicit target asked for while the canvas was hidden
+  function explicitCamera() {
+    lastExplicit = Date.now();
+    pendingFocus = null;
+    bootFocusUntil = 0;
+    focusWhenShown = false;
+  }
+  // spec 022: for a moment after the page (re)loads, the backlog is still arriving and sizing, so
+  // each settle re-lands on the latest edited frame instead of the first frame's whole-board fit.
+  let bootFocusUntil = Date.now() + 2500;
+  // AUTO-FOCUS ZOOM CAP (spec 022, JJ 2026-09-25: "the camera flew to an empty space"). The contain
+  // fit of spec 018 blows a SMALL frame up to 8x, so a three-line note filled the screen and a few
+  // pixels of settling offset landed him in blank card. An automatic focus is a "here is the new
+  // thing", not a close read: it frames the card at no more than AUTOFOCUS_MAX_K, so it arrives at
+  // reading size with the board around it for context.
+  const AUTOFOCUS_MAX_K = 1.25;
+  function autoFocus(id, fly) {
+    const el = liveCardEl(id);
+    if (!portReady()) { focusWhenShown = true; return; }
+    if (!el || !el.offsetWidth || !el.offsetHeight) return;
+    focused = id;
+    const box = boxOf(el);
+    const t = camFor(box, 80);
+    if (t.k > AUTOFOCUS_MAX_K) {
+      const port = view.getBoundingClientRect();
+      const k = AUTOFOCUS_MAX_K;
+      t.k = k;
+      t.x = port.width / 2 - (box.x + box.w / 2) * k;
+      t.y = port.height / 2 - (box.y + box.h / 2) * k;
+    }
+    if (fly) { flyTo(t); } else { cam = t; apply(true); }
+  }
+  // The live lane's most recently created or edited frame (by the server's `updated` stamp; ink is
+  // the human's own sketch, not something to be brought to).
+  function latestCardId() {
+    let best = null, t = -1;
+    for (const [id, c] of cards || []) {
+      if (c.el.dataset.kind === "ink") continue;
+      if (String(id).startsWith("_")) continue;   // a `_status.md`-style background frame updates quietly; it is never "the latest thing"
+      if ((c.updated || 0) > t) { t = c.updated || 0; best = id; }
+    }
+    return best;
+  }
+  // The parent page opened the canvas (spec 022): land on the latest edited frame. Same-origin only.
+  // OPENING always lands on the latest frame (JJ, 2026-09-28: "is not scrolling to the file they
+  // touched last") — even on a lane whose view he panned before, because opening is "show me what's
+  // new". The message names the lane: it is posted 350ms after the parent's switch request, and when
+  // the canvas's own `switch` event has not arrived yet, focusing now would frame the PREVIOUS lane's
+  // cards and the new lane would then restore its parked view. So a mismatch waits for useLane.
+  let focusLatestFor = null;
+  function focusLatestOnOpen() {
+    layout();
+    const latest = latestCardId();
+    if (!latest) return;
+    // retried by relayoutSoon while the card is still sizing (mermaid renders after this)
+    pendingFocus = { id: latest, until: Date.now() + 2500 };
+    autoFocus(latest, false);
+  }
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin || !e.data || e.data.type !== "cb-focus-latest") return;
+    const lane = e.data.lane;
+    if (lane && lane !== live) {
+      focusLatestFor = lane;
+      // …but not forever: when the parent already believed it was on this lane it sends no switch at
+      // all, so if none arrives, he tapped THIS lane open — show it.
+      setTimeout(() => { if (focusLatestFor === lane && live !== lane) useLane(lane); }, 1500);
+      return;
+    }
+    focusLatestOnOpen();
+  });
+  // The canvas becoming VISIBLE (display:none -> shown) resizes the viewport from 0x0: replay any
+  // framing that was refused while hidden.
+  new ResizeObserver(() => {
+    if (portReady()) repaintPending();   // the canvas was just shown: draw what arrived while hidden
+    if (lookWhenShown && portReady()) {   // an explicit target wins over "the latest edit" (spec 037)
+      const t = lookWhenShown;
+      lookWhenShown = null;
+      focusWhenShown = false;
+      if (t.el && t.el.isConnected) zoomTo(t.el, t.margin, false);
+      return;
+    }
+    if (focusWhenShown && portReady()) { focusWhenShown = false; focusLatestOnOpen(); }
+  }).observe(view);
+  // The LIVE lane's card for an id. `cardEl` searches every lane's canvas, and a hidden lane that
+  // happens to hold the same id would answer first with a zero-size box.
+  function liveCardEl(id) {
+    const c = cards && cards.get(id);
+    return c ? c.el : null;
+  }
+  function relayoutSoon() {
+    clearTimeout(_relayoutTimer);
+    _relayoutTimer = setTimeout(() => {
+      layout();
+      if (pendingFocus) {
+        if (Date.now() < pendingFocus.until && liveCardEl(pendingFocus.id)) {
+          autoFocus(pendingFocus.id, false);
+          return;
+        }
+        pendingFocus = null;
+      }
+      // cam at the untouched default means he has neither panned nor been framed here yet. spec 022
+      // (JJ, 2026-09-25: "whenever I come back to the canvas or open the canvas, the camera would be
+      // focused on the last edited or created frame"): land on the most recently edited frame, not
+      // the whole board. A panned/zoomed lane is left exactly as he left it.
+      if (cards && cards.size && (Date.now() < bootFocusUntil
+                                  || (cam.x === 0 && cam.y === 0 && cam.k === 1))) {
+        const latest = latestCardId();
+        if (latest) autoFocus(latest, false); else fit(false);
+      }
+    }, 60);
+  }
+  const RO = new ResizeObserver(() => relayoutSoon());
 
   function report() {
     // Tell the server where things ended up and what is on screen. The server
@@ -753,7 +1115,18 @@ PAGE = """<!doctype html>
     const port = view.getBoundingClientRect();
     const frames = {}, visible = [], partial = [], offscreen = [];
     for (const [id, { el }] of cards) {
-      frames[id] = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+      const g = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+      // spec 019 FR1: the EFFECTIVE min font — the smallest BODY text, at the scale a `look` would
+      // contain this frame at on his screen — reported per frame beside the geometry, so the agent
+      // that drew it learns whether it is readable without JJ having to look first. `fit_scale` is
+      // spec 018's contain fit; `min_font_px` is (smallest canvas-space font) × that scale.
+      const fs = fitScaleFor(g.w, g.h);
+      if (fs != null) {
+        g.fit_scale = Math.round(fs * 1000) / 1000;
+        const mf = minFontPx(el.querySelector(".body"));
+        if (mf != null) g.min_font_px = Math.round(mf * fs * 10) / 10;
+      }
+      frames[id] = g;
       const b = el.getBoundingClientRect();
       const inside = b.left >= port.left && b.right <= port.right
                   && b.top >= port.top && b.bottom <= port.bottom;
@@ -763,9 +1136,63 @@ PAGE = """<!doctype html>
     }
     fetch("/placed", {
       method: "POST", headers: { "Content-Type": "application/json" },
+      // width/height are the MEASURED canvas area (spec 018 FR3/NFR1): the exact rect the fit above
+      // uses, so the aspect an agent reads (derived server-side as width/height) is the same ratio
+      // the camera fits to — never a second, inferable value that could disagree.
       body: JSON.stringify({ lane: live, frames,
-                             viewport: { visible, partial, offscreen, scale: cam.k } }),
+                             viewport: { visible, partial, offscreen, scale: cam.k,
+                                         width: Math.round(port.width),
+                                         height: Math.round(port.height) } }),
     }).catch(() => { /* the surface works fine without the server knowing */ });
+  }
+
+  // AN HTML FRAME'S CSS STAYS IN ITS FRAME (2026-09-25). HTML frames are inserted raw, so a frame
+  // authored as a standalone page — `<style>body { padding:28px; font:16px Roboto }</style>`, which is
+  // what an agent writes for a kanban board or a design mock — restyled the WHOLE canvas document: the
+  // leak padded <body> 28px, which is why JJ saw the Pen/Erase/Send bar sitting far from the canvas
+  // corner, and it swapped the canvas font too. Every rule in the frame's own <style> tags is rewritten
+  // to match only inside this card's body: `html`/`body`/`:root` become the frame itself (so the page's
+  // own padding/background still apply — to the frame, as its author meant), everything else becomes a
+  // descendant of it. NOT a shadow root: `point`, `cue` and the legibility report find frame elements
+  // by id in THIS document, and a shadow boundary would hide them.
+  // LINKS IN A FRAME OPEN OUTSIDE THE PAGE (JJ, 2026-10-09). A plain <a href> in a markdown or html
+  // frame navigated the canvas document itself, so tapping a Google Drive link replaced the whole
+  // page with Drive and dropped the voice UI. Every outward link opens a new tab instead; in-frame
+  // anchors (#…) keep their default.
+  function openLinksOutside(body) {
+    for (const a of body.querySelectorAll("a[href]")) {
+      if (a.getAttribute("href").startsWith("#")) continue;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+    }
+  }
+
+  let frameScopeSeq = 0;
+  function scopeFrameStyles(body) {
+    const styles = body.querySelectorAll("style");
+    if (!styles.length) return;
+    const tag = body.dataset.cbscope || (body.dataset.cbscope = "f" + (++frameScopeSeq));
+    const scope = '[data-cbscope="' + tag + '"]';
+    const one = (sel) => {
+      const s = sel.trim();
+      if (!s) return s;
+      // (backslashes doubled: this JS lives in a plain Python string, PAGE)
+      const rest = s.replace(/^((html|body|:root)(?![\\w-])\\s*)+/i, "");
+      if (rest === s) return scope + " " + s;             // an ordinary selector: inside the frame
+      if (!rest) return scope;                            // `body` / `html` / `:root` alone: the frame
+      return /^[.#\\[:]/.test(rest) ? scope + rest        // `body.dark` -> the frame, with that class
+                                   : scope + " " + rest;  // `body .x` / `html > p` -> inside the frame
+    };
+    const fix = (rules) => {
+      for (const r of rules) {
+        if (r.selectorText != null) {
+          try { r.selectorText = r.selectorText.split(",").map(one).join(", "); } catch (_) {}
+        } else if (r.cssRules) {
+          fix(r.cssRules);                                // @media / @supports / @layer blocks
+        }
+      }
+    };
+    for (const st of styles) { try { if (st.sheet) fix(st.sheet.cssRules); } catch (_) {} }
   }
 
   async function paint(body, msg) {
@@ -779,6 +1206,11 @@ PAGE = """<!doctype html>
       } catch (err) {
         body.innerHTML = "<pre></pre>";
         body.firstChild.textContent = String(err && err.message || err);
+        // JJ, 2026-09-24: the error shows on the canvas but the AGENT that drew it never learned and
+        // gave up, falling back to markdown. RETURN it so `place()` reports the failure to the server
+        // regardless of live lane — the real case is an agent drawing while JJ is on ANOTHER lane,
+        // where the live-lane-only `report()` never runs, so a silent "ok" was all the agent saw.
+        return String(err && err.message || err);
       }
     } else if (msg.kind === "vega") {
       // Keep the VIEW, not just the markup: `rows` later calls change() on it,
@@ -816,6 +1248,29 @@ PAGE = """<!doctype html>
       // layout. Markdown is the cheapest tier that can carry prose.
       if (window.marked) {
         body.innerHTML = '<div class="md">' + marked.parse(msg.content) + "</div>";
+        openLinksOutside(body);
+        // FENCED MERMAID INSIDE MARKDOWN (JJ, 2026-09-29: "agents are writing a markdown frame with
+        // Mermaid inside of it, and the mermaid doesn't render"). marked turns ```mermaid into a plain
+        // <pre><code class="language-mermaid"> block and stops there, so the diagram showed as its
+        // source. Render each block with the same mermaid.render a `.mmd` frame uses, in place. A bad
+        // block shows its error where the diagram would be, and the first error is RETURNED so the
+        // agent learns it, as for a `.mmd` frame (see the mermaid branch above).
+        let firstErr = null;
+        for (const code of [...body.querySelectorAll("pre > code.language-mermaid")]) {
+          const pre = code.parentElement;
+          try {
+            const { svg } = await mermaid.render("m" + (++seq), code.textContent);
+            const fig = document.createElement("div");
+            fig.className = "md-mermaid";
+            fig.innerHTML = svg;
+            pre.replaceWith(fig);
+          } catch (err) {
+            const msgText = String(err && err.message || err);
+            code.textContent = msgText + "\\n\\n" + code.textContent;   // doubled backslashes: PAGE is a Python string, so a single one becomes a real line break in the JS
+            if (!firstErr) firstErr = msgText;
+          }
+        }
+        if (firstErr) return firstErr;
       } else {
         body.innerHTML = '<pre class="md"></pre>';
         body.firstChild.textContent = msg.content;
@@ -825,14 +1280,117 @@ PAGE = """<!doctype html>
       // like any inline svg; the card CSS makes it a transparent, click-through overlay so it sits
       // ON TOP of whatever it was drawn over.
       body.innerHTML = msg.content;
+      if (msg.kind === "html") scopeFrameStyles(body);
+      openLinksOutside(body);
     } else if (msg.kind === "text") {
       body.innerHTML = "<pre></pre>";
       body.firstChild.textContent = msg.content;
+    } else if (msg.kind === "image") {
+      // spec 022: an image the agent dropped into its lane folder. The frame carries the URL the
+      // server serves it from (content-hashed, so an overwrite re-renders), never the bytes.
+      const img = document.createElement("img");
+      img.src = msg.content;
+      img.alt = msg.id || "";
+      img.draggable = false;   // a drag over a picture pans the canvas (see the CSS rule)
+      img.style.maxWidth = "100%";
+      img.style.display = "block";
+      img.onload = () => relayoutSoon();
+      body.innerHTML = "";
+      body.appendChild(img);
     } else {
       body.innerHTML = "";
     }
     unshrink(body);
     highlight(body);
+  }
+
+  // Belt and braces for the image drag: an <img> inside an html frame isn't created by paint(), so
+  // stop any native drag that starts inside a card (Firefox ignores -webkit-user-drag).
+  document.addEventListener("dragstart", e => { if (e.target.closest && e.target.closest(".card")) e.preventDefault(); }, true);
+
+  // ---- copy buttons (JJ, 2026-10-01) ------------------------------------------------------------
+  // "content" copies what the agent wrote — the frame's SOURCE (markdown, mermaid, html, svg, json,
+  // text), which is what pastes usefully elsewhere — or, for an image frame, the picture itself.
+  // "path" copies the full path of the file the frame renders.
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+    // Fallback for a context without the async clipboard (an iframe policy, plain http off-box).
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand("copy"); } catch (_) {}
+    ta.remove(); return ok;
+  }
+  async function copyImage(url) {
+    try {
+      const blob = await (await fetch(url)).blob();
+      let png = blob;
+      if (blob.type !== "image/png") {   // the clipboard takes PNG everywhere; convert anything else
+        const bmp = await createImageBitmap(blob);
+        const cv = document.createElement("canvas"); cv.width = bmp.width; cv.height = bmp.height;
+        cv.getContext("2d").drawImage(bmp, 0, 0);
+        png = await new Promise(res => cv.toBlob(res, "image/png"));
+      }
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+      return true;
+    } catch (_) { return copyText(new URL(url, location.href).href); }
+  }
+  function flash(btn, ok) {
+    const was = btn.textContent;
+    btn.textContent = ok ? "copied" : "failed"; btn.classList.toggle("done", ok);
+    setTimeout(() => { btn.textContent = was; btn.classList.remove("done"); }, 1200);
+  }
+  function addCopyTools(bar, c) {
+    const tools = document.createElement("span");
+    tools.className = "tools";
+    const mk = (label, title, fn) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label; b.title = title;
+      // Stop the press from starting a pan or a frame drag on the card underneath.
+      b.addEventListener("pointerdown", e => e.stopPropagation());
+      b.addEventListener("click", async e => { e.stopPropagation(); flash(b, await fn()); });
+      tools.appendChild(b);
+    };
+    mk("copy", "Copy this frame's content", () => {
+      const m = c.src || {};
+      return m.kind === "image" ? copyImage(m.content) : copyText(String(m.content ?? ""));
+    });
+    if (c.path) mk("path", "Copy the path of this frame's file", () => copyText(c.path));
+    bar.appendChild(tools);
+  }
+
+  // Frames whose rendering needs real layout (mermaid, alone or fenced inside markdown).
+  function needsLayout(msg) {
+    return msg.kind === "mermaid" ||
+      (msg.kind === "markdown" && /```\\s*mermaid/.test(String(msg.content || "")));
+  }
+  // A DIAGRAM'S SYNTAX, CHECKED WITHOUT DRAWING IT (atlas, 2026-10-06, with JJ's go: a frame that failed
+  // to parse was never reported to the agent that wrote it). Drawing waits until the lane is on screen
+  // (see place()), and with the canvas closed — the fleet home — that is never, so the error JJ later saw
+  // had reached nobody. `mermaid.parse` needs no layout, so the verdict is reported the moment the frame
+  // arrives. Covers a `.mmd` frame and every ```mermaid block in a markdown one; null when all parse.
+  async function diagramSyntaxError(msg) {
+    const blocks = msg.kind === "mermaid" ? [String(msg.content || "")]
+      : [...String(msg.content || "").matchAll(/```\\s*mermaid\\s*\\n([\\s\\S]*?)```/g)].map((m) => m[1]);
+    for (const src of blocks) {
+      try { await mermaid.parse(src); }
+      catch (err) { return String(err && err.message || err); }
+    }
+    return null;
+  }
+  function reportRendered(lane, id, error) {
+    // Fire-and-forget — the surface still works if the server never learns.
+    fetch("/rendered", { method: "POST", headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({ lane, id, error: error || null }) }).catch(() => {});
+  }
+  // Paint any deferred diagram on the LIVE lane now that it can be measured (see place()).
+  async function repaintPending() {
+    for (const c of (cards || new Map()).values()) {
+      if (!c.pending || !c.body.getClientRects().length) continue;
+      const msg = c.pending;
+      c.pending = null;
+      await place(msg);
+    }
   }
 
   async function place(msg) {
@@ -851,8 +1409,10 @@ PAGE = """<!doctype html>
       c = { el, body: el.querySelector(".body"), at: null };
       known.set(id, c);
       canvas.order.push(id);
+      RO.observe(el);   // re-pack when this card's content finishes rendering (see relayoutSoon)
     }
     if (msg.at) c.at = msg.at;
+    if (msg.updated) c.updated = msg.updated;   // spec 022: which frame is the latest edit
     // Scale is how the canvas carries IMPORTANCE. A frame rendered at 2x is
     // readable at the zoom level where a 1x frame beside it is not, so the
     // summary is what you take in from the overview and the full text is what
@@ -876,6 +1436,8 @@ PAGE = """<!doctype html>
       age.className = "age";
       bar.appendChild(age);
     }
+    c.src = msg; c.path = msg.path || msg.file || "";
+    if (msg.kind !== "ink") addCopyTools(bar, c);
     paintAges();
     // A background lane must be invisible until it raises a hand — so it does
     // not touch the title, the count, or the camera.
@@ -883,7 +1445,28 @@ PAGE = """<!doctype html>
       title.textContent = msg.title || id;
       requestAnimationFrame(() => layout());
     }
-    await paint(c.body, msg);
+    // A DIAGRAM IS NOT DRAWN WHILE IT CANNOT BE SEEN (JJ, 2026-09-29: "after opening the canvas … the
+    // mermaid inside the markdown frame is not rendering"). mermaid lays text out with real
+    // measurements, and inside a display:none lane — or the whole canvas iframe before it is opened —
+    // there are none, so it throws "Could not find a suitable point for the given distance" and the
+    // frame shows the error instead of the diagram. Defer it: keep the message on the card and paint it
+    // the moment its lane is visible (repaintPending, from useLane and from the canvas being shown).
+    if (needsLayout(msg) && !c.body.getClientRects().length) {
+      reportRendered(lane, id, await diagramSyntaxError(msg));   // known now, even unseen
+      c.pending = msg;
+      c.body.innerHTML = '<pre class="md"></pre>';
+      c.body.firstChild.textContent = "diagram renders when this lane is on screen";
+      return;
+    }
+    c.pending = null;
+    const renderError = await paint(c.body, msg);
+    if (needsLayout(msg)) {
+      // Report the render outcome for a diagram frame REGARDLESS of live lane (JJ, 2026-09-24), so
+      // the drawing agent learns it FAILED instead of seeing a silent "ok" on a blank frame. null
+      // clears a prior failure on a good re-render. Markdown with ```mermaid blocks counts too: its
+      // error was returned by paint() and then dropped here (2026-10-06).
+      reportRendered(lane, id, renderError);
+    }
     if (lane === live) requestAnimationFrame(() => layout());
     paintLanes();
   }
@@ -892,6 +1475,7 @@ PAGE = """<!doctype html>
     const canvas = canvasFor(lane || live);
     const c = canvas.cards.get(id);
     if (!c) return;
+    try { RO.unobserve(c.el); } catch (_) {}
     c.el.remove();
     canvas.cards.delete(id);
     const i = canvas.order.indexOf(id);
@@ -1050,8 +1634,10 @@ PAGE = """<!doctype html>
       }
     }
 
-    // A frame id wins: `point costs` means that card, not something inside one.
-    const card = cardEl(selector);
+    // A frame id wins: `point costs` means that card, not something inside one. The LIVE lane's card
+    // first: `cardEl` searches every lane, and a hidden lane holding the same id answers with a
+    // zero-size box the camera cannot move to (spec 037).
+    const card = liveCardEl(String(selector).replace(/^[#.]/, "")) || cardEl(selector);
     if (card) return card;
 
     // Then the focused frame, before anything else on the canvas.
@@ -1238,16 +1824,54 @@ PAGE = """<!doctype html>
     // pinned to a lane that is not live — and a camera verb from a background
     // lane is refused, correctly. This is local to the capture page.
     //
-    // It runs late in the settle window: frames arrive over a second or two and
-    // the page fits the first one as it lands, so an early look is overwritten
-    // by the page's own startup. (A window RESIZE used to overwrite it too;
-    // that handler no longer refits.)
+    // Both `?look=` and `?point=` (spec 020) POLL for their target rather than firing once at a
+    // fixed fraction of `settle`. A busy lane (several other frames already on it, real magnus
+    // evidence 2026-09-16) means the just-drawn frame's card can exist before its CONTENTS finish
+    // rendering — a mermaid diagram lays out asynchronously — so a single fixed-time shot at the
+    // target gambled on a race it does not always win: `point` fired before the node existed, found
+    // nothing, and applied no highlight at all. Polling applies each one the MOMENT it resolves.
+    // The deadline is `settle * 2`, not `settle`: `shot.capture` (the Python caller) waits ONE
+    // `settle` window for `/settle` to answer before `load` fires, THEN — with no `wait_selector`,
+    // which a `?point=` target never has (there is no plain CSS selector for a fuzzy mermaid-node
+    // match) — waits a SECOND full `settle_ms` after load before the shutter actually fires. Polling
+    // to only one `settle` window (this render's earlier bug) gives up a whole window before the
+    // picture is even taken. The very last attempt at the deadline still runs unconditionally — so a
+    // genuinely bad selector still reports itself honestly (no highlight), rather than the poll
+    // just going quiet forever; and once the browser is torn down for the screenshot, the poll's
+    // timers simply stop firing, so there is no cost to a generous bound.
+    const shotDeadline = performance.now() + Math.max(600, settle * 2);
     const WANT = new URLSearchParams(location.search).get("look");
-    if (WANT) setTimeout(() => {
-      focused = WANT;
-      const el = cardEl(WANT) || findEl(WANT);
-      if (el) zoomTo(el, 80, false);   // no flight: the shutter is not waiting
-    }, Math.max(200, settle * 0.8));
+    if (WANT) {
+      const tryLook = () => {
+        // `focused` is set on every attempt, not only a resolving one: `point` (below) scopes ITS
+        // OWN search to `cardEl(focused)` FIRST (`findEl`'s "the focused frame, before anything
+        // else on the canvas" rule) — the card usually exists well before its contents finish
+        // rendering, so setting this early is what lets a `[point:]` mark resolve against the
+        // FRAME JUST DRAWN instead of matching some unrelated node elsewhere on a busy canvas
+        // (the second, compounding half of the same live failure: an unscoped stage-wide search).
+        focused = WANT;
+        const el = cardEl(WANT) || findEl(WANT);
+        if (el) { zoomTo(el, 80, false); return; }   // no flight: the shutter is not waiting
+        if (performance.now() < shotDeadline) setTimeout(tryLook, 100);
+      };
+      setTimeout(tryLook, 200);
+    }
+
+    // `?point=<selector>` (spec 020): apply ONE highlight LOCALLY, for the verify capture only.
+    // Same reasoning as `?look=` above — a `point` from a background lane is refused server-side
+    // (live-lane-only), and this render may be pinned to a lane that is not live. Calling the
+    // page's own `point()` directly never touches the server's `_point` state or fans an SSE event,
+    // so it cannot be seen by anyone else and cannot fight a highlight already showing for real.
+    // Starts after `look` above so `focused` is already scoped by the time this searches.
+    const WANT_POINT = new URLSearchParams(location.search).get("point");
+    if (WANT_POINT) {
+      const tryPoint = () => {
+        if (findEls(WANT_POINT).length) { point(WANT_POINT); return; }
+        if (performance.now() < shotDeadline) { setTimeout(tryPoint, 100); return; }
+        point(WANT_POINT);   // last attempt regardless — an honest empty point, not silence
+      };
+      setTimeout(tryPoint, 300);
+    }
 
     const hold = document.createElement("script");
     hold.src = "/settle?ms=" + settle;
@@ -1262,24 +1886,53 @@ PAGE = """<!doctype html>
     if (JSON.parse(e.data).version !== PAGE_VERSION) location.reload();
   });
   // A pushed `reload` (POST /reload, spec 013) re-runs THIS iframe's JS in place. The canvas owns
-  // its own reload the same way it owns the version self-reload above — because the PARENT page
-  // holds the AudioContext and the voice socket and must NEVER reload for a canvas change, or the
-  // audio blips. `location.reload()` here reloads only this iframe; the parent stays put, so a
-  // page.py edit costs nothing audible. Only a `canvas`-targeted (or untyped) event is ours; a
-  // `page`-targeted change is the parent's — it full-reloads and recreates this iframe anyway.
+  // its own reload the same way it owns the version self-reload above — because the audio shell
+  // around it must NEVER reload for a canvas change, or the audio blips. `location.reload()` here
+  // reloads only this iframe, so a page.py edit costs nothing audible. A `ui`-targeted event is the
+  // one to skip: the UI frame that holds this iframe is reloading and recreates it anyway (spec 023).
+  // A `page` (shell) change waits for the orb to go off, so this reloads now rather than wait for it.
   es.addEventListener("reload", e => {
     let target = "canvas";
     try { target = (JSON.parse(e.data || "{}").target) || "canvas"; } catch (_) {}
-    if (target === "canvas") location.reload();
+    if (target !== "ui") location.reload();
   });
   es.addEventListener("frame", async e => {
     const msg = JSON.parse(e.data);
     const lane = msg.lane || "main";
     await place(msg);
+    // AUTO-FOCUS FOLLOWS THE LATEST EDIT (spec 022 FR7). The server marks a frame event `focus` when
+    // an agent's file was just created or edited on the LIVE lane; the camera flies to it (the
+    // zoom-out, pan, zoom-in of `flyTo`) once the card has rendered and been laid out — which is why
+    // it rides on the frame event rather than a separate `look` that would race the paint. Off-lane
+    // the server holds the look instead (spec 017) and it replays on switch-back.
+    if (msg.focus && lane === live && !PIN) {
+      const id = msg.id || "main";
+      // The card's size can still be settling (a mermaid SVG unshrinking, a webfont), and a camera
+      // framed on a half-sized card lands zoomed into empty space — JJ, 2026-09-25: "I see spec
+      // twenty two, but it's empty." So fly there once it has laid out, and keep the focus PENDING
+      // for a short window: every re-layout in that window (relayoutSoon) re-frames it on its
+      // final size, without the flight.
+      pendingFocus = { id, until: Date.now() + 2500 };
+      // Each settle yields to an explicit camera move made after this edit (spec 037).
+      const at = Date.now();
+      setTimeout(() => { if (lastExplicit < at) autoFocus(id, true); }, 250);
+      // A second, flight-free settle: the sticky placer may still move a just-sized card once.
+      setTimeout(() => { if (lastExplicit < at) autoFocus(id, false); }, 1000);
+      return;
+    }
     // First frame on an empty canvas: fit it, so a single drawing still fills
     // the window the way it did before there was a canvas. Only for the live
     // lane — a background lane must never move the view.
-    if (lane === live && cards.size === 1) requestAnimationFrame(() => fit(false));
+    if (lane === live && cards.size === 1 && Date.now() >= bootFocusUntil)
+      requestAnimationFrame(() => fit(false));
+  });
+  es.addEventListener("relayout", e => {
+    // spec 022 FR6's on-demand re-pack: forget every pinned position on the lane and pack it afresh
+    // (the new positions are pinned again and reported, so the tidy board is the sticky one).
+    const lane = JSON.parse(e.data).lane || "main";
+    const canvas = canvasFor(lane);
+    for (const c of canvas.cards.values()) if (c.el.dataset.kind !== "ink") c.at = null;
+    if (lane === live) { layout(); fit(true); }
   });
   es.addEventListener("sync", e => {
     // The server just told us what it believes in. Anything we are still
@@ -1388,6 +2041,7 @@ PAGE = """<!doctype html>
     // Pointing and moving the camera are one gesture when asked for together:
     // a highlight outside the viewport is a reference with no referent.
     if (msg.zoom || msg.look) {
+      explicitCamera();
       const el = findEl(msg.selector);
       if (el) zoomTo(el);
     }
@@ -1395,21 +2049,23 @@ PAGE = """<!doctype html>
   es.addEventListener("look", e => {
     const msg = JSON.parse(e.data);
     if (msg.lane && msg.lane !== live) return;  // server already refused it
+    explicitCamera();
     // `look --all` is a deliberate step back to the whole canvas, so it drops
     // the scope with the view: nothing is focused, and a selector may match
     // anywhere again.
     if (msg.all || !msg.id) { focused = null; fit(true); return; }
-    const el = cardEl(msg.id) || findEl(msg.id);
+    const el = liveCardEl(msg.id) || cardEl(msg.id) || findEl(msg.id);
     if (el) {
       // The camera and the search scope move together. This is the rule:
       // focus a frame, THEN highlight inside it.
-      if (cardEl(msg.id)) focused = msg.id;
+      if (liveCardEl(msg.id) || cardEl(msg.id)) focused = msg.id;
       zoomTo(el, 80, true);
     }
   });
   es.addEventListener("zoom", e => {
     const msg = JSON.parse(e.data);
     if (msg.lane && msg.lane !== live) return;  // server already refused it
+    explicitCamera();
     if (msg.selector) {
       const el = findEl(msg.selector);
       if (el) zoomTo(el);

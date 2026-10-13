@@ -116,21 +116,9 @@ def test_a_single_lane_session_answers_exactly_as_before(monkeypatch, tmp_path):
     assert st.lane_cursor("magnus") == 7
 
 
-# ------------------------------------------------------------------ AC-5: the watchdog prompt
-
-def test_the_watchdog_prompt_names_the_per_lane_cursor():
-    """AC-5 — FR4. The prompt in `describe` is the text JJ actually schedules, so a fix that leaves
-    it saying `consumed_cursor` ships the bug to every agent that follows it. `describe` outranks
-    every prose copy of this instruction, which is exactly why it has to be the one that is right.
-    """
-    from command_bridge import cli
-
-    prompt = cli.WATCHDOG_PROMPT if hasattr(cli, "WATCHDOG_PROMPT") else cli.describe()[
-        "watchdog"]["prompt"]
-    assert "lane_consumed" in prompt, (
-        "the scheduled prompt still sends every agent to the session-wide cursor"
-    )
-    assert "turns_logged" in prompt, "the older warning must survive alongside the new one"
+# AC-5 retired with the watchdog (2026-09-17): the prompt that named the per-lane cursor is gone.
+# The tool now resolves the per-lane cursor itself — covered by `test_lane_cursor_falls_back...`
+# and the `st.lane_cursor` assertions above, which pin the behaviour rather than a prompt's wording.
 
 
 def _unused_asyncio_guard():

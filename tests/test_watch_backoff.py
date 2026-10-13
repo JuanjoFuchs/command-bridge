@@ -103,11 +103,23 @@ def test_the_disconnected_wait_is_flat_rather_than_growing():
 def test_there_is_still_a_hard_ceiling():
     """A wait with no ceiling is indistinguishable from a hang, can never report
     `listening: false`, and would hold a socket for an abandoned session until the machine
-    restarted. Eight hours is the longest absence after which this session is still the right
-    thing to be waiting on — a working day, or a night — so a six-hour absence costs ONE watch."""
-    assert cli.WATCH_DISCONNECTED_MAX_S == 28800.0
+    restarted. It was eight hours until 2026-10-01; it is now 110 minutes, inside Claude Code's
+    two-hour background limit, so the watch returns and is re-armed instead of being stopped by the
+    harness and abandoned (atlas, 2026-10-01)."""
+    assert cli.WATCH_DISCONNECTED_MAX_S == 6600.0
     assert cli._watch_ceiling(30.0, 99, reachable=False, unattended=True,
-                              off_lane=False, explicit=False) == 28800.0
+                              off_lane=False, explicit=False) == 6600.0
+
+
+def test_an_env_override_cannot_outlive_the_harness(monkeypatch):
+    """JJ's `.env` asked for eight hours. A detached call that long is stopped by the harness at two
+    hours, and the harness then tells the agent not to restart it — so the cap applies to the
+    override too, or the `.env` brings the deaf lane straight back."""
+    monkeypatch.setenv("COMMAND_BRIDGE_WATCH_DISCONNECTED_MAX_S", "28800")
+    assert cli._disconnected_ceiling() == cli.WATCH_HARNESS_MAX_S
+    assert cli.WATCH_HARNESS_MAX_S < 7200.0
+    assert cli._watch_ceiling(30.0, 0, reachable=True, unattended=False, off_lane=False,
+                              explicit=False, background=True) == cli.WATCH_HARNESS_MAX_S
 
 
 def test_an_explicit_timeout_still_wins_over_the_long_wait():
@@ -129,19 +141,18 @@ def test_describe_states_the_long_wait_where_an_agent_reads_it():
     as far as the next agent is concerned — and the ladder it DOES publish would then be a
     confident, wrong answer to "how long will this block"."""
     published = cli._human_seconds(cli.WATCH_DISCONNECTED_MAX_S)
-    assert published == "8h"
+    assert published == "110min"
 
     notes = cli.DESCRIBE["commands"]["watch"]["notes"]
-    timeout = cli.DESCRIBE["commands"]["watch"]["args"]["--timeout"]
-    backoff = cli.DESCRIBE["watchdog"]["backoff"]
+    background = cli.DESCRIBE["commands"]["watch"]["args"]["--background"]
 
-    for text in (notes, timeout, backoff):
+    for text in (notes, background):
         assert published in text, (
             f"this copy does not publish the disconnected ceiling: {text[:90]}"
         )
-    assert "DETACH" in notes.upper(), (
-        "the ceiling exceeds every harness tool timeout on purpose; say so where it is stated, or "
-        "the next agent shortens it with --timeout and re-creates the ~35 wakes"
+    assert "--background" in notes, (
+        "the ceiling exceeds every harness tool timeout on purpose; say to run it with --background "
+        "where it is stated, or the next agent re-arms short waits and re-creates the ~35 wakes"
     )
 
 
@@ -175,12 +186,46 @@ def _run(monkeypatch, tmp_path, first, later, ceiling, lane=None):
         session="s", since=6, timeout=None, force=False, all_turns=False, lane=lane))
 
 
+def _capture_ceiling(monkeypatch):
+    """Record the flags `cmd_watch` hands `_watch_ceiling`, and make the wait tiny.
+
+    The ceiling it CHOSE used to be readable off the payload (`waited`/`next_wait`), but those
+    fields were informational-only — the agent re-arms `watch` per `next` regardless of the number
+    — so they were pruned (JJ, 2026-09-15). The ceiling SELECTION is still the thing under test, so
+    verify it at the source: which (reachable, unattended, off_lane) flags cmd_watch computed. This
+    is more direct than the old field read and returns instantly instead of waiting the ceiling out."""
+    seen: dict = {}
+    real = cli._watch_ceiling
+
+    def spy(base, streak, *, reachable, unattended, off_lane, explicit, background=False):
+        seen.update(reachable=reachable, unattended=unattended, off_lane=off_lane, explicit=explicit,
+                    background=background)
+        real(base, streak, reachable=reachable, unattended=unattended,
+             off_lane=off_lane, explicit=explicit, background=background)   # keep the real arithmetic exercised
+        return 0.1
+
+    monkeypatch.setattr(cli, "_watch_ceiling", spy)
+    return seen
+
+
 # ------------------------------------------------- off-lane is a long-wait state too (2026-09-03)
 #
 # Connected, orb on, but he is talking to ANOTHER agent: nothing addressed to THIS lane can arrive
 # until he switches back, and a switch wakes the poll within ~1s regardless of the ceiling. So the
 # 9-minute ladder has nothing to pace — the wait holds long and detached and resolves the instant he
 # returns, exactly like the disconnected case. Before this, an off-lane agent re-armed every ~9 min.
+
+
+def test_a_foreground_watch_keeps_its_short_ceiling_when_the_orb_goes_off(monkeypatch, tmp_path):
+    """magnus, 2026-10-05 and -06: a blocking watch opened with the orb ON took the short ceiling,
+    then the orb went off mid-wait and the off-branch re-armed it to the hours-long hold — so the
+    call outlived the 10-minute tool timeout it was sized for. It must return inside its window."""
+    monkeypatch.setattr(cli, "_backoff_ceiling", lambda base, streak, reachable: 1.5)
+    on = {"clients": 1, "channel_open": True, "capturing": True, "muted": False, "lane": "magnus"}
+    off = dict(on, channel_open=False, capturing=False)
+    t0 = time.monotonic()
+    _run(monkeypatch, tmp_path, on, off, 30.0, lane="magnus")
+    assert time.monotonic() - t0 < 6, "the orb going off stretched a foreground watch past its ceiling"
 
 
 def test_the_ceiling_picks_the_long_hold_when_off_lane():
@@ -194,11 +239,12 @@ def test_the_ceiling_picks_the_long_hold_when_off_lane():
 def test_cmd_watch_holds_long_when_he_is_on_another_lane(monkeypatch, tmp_path):
     """The report, at the call site: magnus is off-lane (he is on kepler), so its watch takes the
     long hold, not the 30 s rung it would take if this were its own quiet lane."""
+    seen = _capture_ceiling(monkeypatch)
     on_kepler = {"clients": 1, "channel_open": True, "capturing": True, "muted": False,
                  "lane": "kepler"}
-    result = _run(monkeypatch, tmp_path, on_kepler, on_kepler, 0.5, lane="magnus")
-    assert result["waited"] == 0.5, "it laddered instead of holding — 30.0 means the off-lane path did not run"
-    assert result["next_wait"] == 0.5
+    _run(monkeypatch, tmp_path, on_kepler, on_kepler, 0.5, lane="magnus")
+    assert seen["off_lane"] is True and seen["unattended"] is False, (
+        "off-lane must take the long hold, not the 30 s ladder")
 
 
 def test_a_switch_back_to_my_lane_ends_the_long_off_lane_wait_immediately(monkeypatch, tmp_path):
@@ -233,11 +279,12 @@ def test_cmd_watch_picks_the_long_ceiling_when_nobody_is_connected(monkeypatch, 
     """The whole point, at the call site rather than in the arithmetic: an empty streak of zero
     would wait 30 s if a page were open, and this session's page is not."""
     gone = {"clients": 0, "channel_open": True, "capturing": True, "muted": False}
+    seen = _capture_ceiling(monkeypatch)
 
-    result = _run(monkeypatch, tmp_path, gone, gone, 0.5)
+    _run(monkeypatch, tmp_path, gone, gone, 0.5)
 
-    assert result["waited"] == 0.5, "it laddered instead of holding — 30.0 means the old path ran"
-    assert result["next_wait"] == 0.5, "and the next one must not quietly drop back to the ladder"
+    assert seen["unattended"] is True and seen["reachable"] is False, (
+        "nobody connected must take the long hold, not the ladder")
 
 
 def test_a_page_reconnecting_still_ends_the_wait_immediately(monkeypatch, tmp_path):
@@ -323,11 +370,11 @@ def test_cmd_watch_picks_the_long_ceiling_when_the_orb_is_off(monkeypatch, tmp_p
     """The report, at the call site. An empty streak of zero waited 30 s and a streak of fifteen
     waited nine minutes; both were guaranteed empty."""
     off = {"clients": 1, "channel_open": False, "capturing": False, "muted": False}
+    seen = _capture_ceiling(monkeypatch)
 
-    result = _run(monkeypatch, tmp_path, off, off, 0.5)
+    _run(monkeypatch, tmp_path, off, off, 0.5)
 
-    assert result["waited"] == 0.5, "it laddered instead of holding — 30.0 means the old path ran"
-    assert result["next_wait"] == 0.5, "and the next one must not quietly drop back to the ladder"
+    assert seen["unattended"] is True, "orb off must take the long hold, not the ladder"
 
 
 def test_the_orb_coming_back_on_still_ends_the_wait_immediately(monkeypatch, tmp_path):
@@ -348,10 +395,55 @@ def test_a_quiet_but_listening_tunnel_still_ladders(monkeypatch, tmp_path):
     """The regression guard for the fix itself: with the orb ON and him merely silent, the very
     next wait must still be the 30 s rung, because now an empty result IS evidence."""
     live = {"clients": 1, "channel_open": True, "capturing": True, "muted": False}
+    seen = _capture_ceiling(monkeypatch)
 
-    result = _run(monkeypatch, tmp_path, live, live, 0.5)
+    _run(monkeypatch, tmp_path, live, live, 0.5)
 
-    assert result["waited"] == 30.0, "the orb-off ceiling leaked onto the listening path"
+    assert seen == {"reachable": True, "unattended": False, "off_lane": False, "explicit": False,
+                    "background": False}, (
+        "a listening-but-quiet tunnel must take the ladder, not the orb-off/long hold")
+
+
+# ------------------------------------------------ 2026-10-01: no ladder, and `--background`
+#
+# JJ: "maybe just have it be 9 minutes without that build up, and then we want a way for the agents
+# to pass a flag to declare the intent that they will background the command so that it holds
+# longer, and then maybe we retire --timeout."
+
+
+def test_an_idle_wait_is_a_flat_nine_minutes_from_the_first_one():
+    """The ladder's first rung was 30 s and every event reset it, so a quiet agent woke every half
+    minute after each clip. The default base now IS the cap."""
+    assert cli.WATCH_BASE_S == cli.WATCH_BACKOFF_MAX_S
+    assert cli._backoff_ladder() == [cli.WATCH_BACKOFF_MAX_S]
+    assert cli._watch_ceiling(cli._backoff_cap(), 0, reachable=True, unattended=False,
+                              off_lane=False, explicit=False) == cli.WATCH_BACKOFF_MAX_S
+
+
+def test_background_takes_the_long_hold():
+    """The caller declared it will not block on the call, so the 10-minute tool-timeout reason for
+    the 9-minute cap does not apply."""
+    assert cli._watch_ceiling(cli._backoff_cap(), 0, reachable=True, unattended=False, off_lane=False,
+                              explicit=False, background=True) == cli._disconnected_ceiling()
+
+
+def test_cmd_watch_passes_background_through(monkeypatch, tmp_path):
+    live = {"clients": 1, "channel_open": True, "capturing": True, "muted": False}
+    seen = _capture_ceiling(monkeypatch)
+    monkeypatch.setattr(cli.config, "session_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(cli, "_request", lambda s, p, payload=None: live if p == "/status" else {})
+    monkeypatch.setattr(cli.store, "watch", lambda *a, **k: ([], 6))
+    cli.cmd_watch(types.SimpleNamespace(session="s", since=6, timeout=None, force=False,
+                                        all_turns=False, lane=None, background=True))
+    assert seen["background"] is True
+
+
+def test_the_timeout_flag_is_retired_with_a_pointed_error():
+    """Passing `--timeout` returns `retired_flag` naming `--background`, not argparse's bare error."""
+    args = cli.build_parser().parse_args(["watch", "--since", "3", "--timeout", "30"])
+    out = cli.cmd_watch(args)
+    assert out["code"] == "retired_flag"
+    assert "--background" in out["remedy"]
 
 
 def test_the_closed_channel_guidance_says_it_holds_rather_than_re_arms(monkeypatch, tmp_path):

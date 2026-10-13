@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark light" />
+<title>Pair the phone app</title>
+<!-- PAIRING IS ITS OWN LINK (spec 035, JJ 2026-10-09: "It should be a different link. Just to do the
+     [pairing] and the linking and trigger the app"). It mints a one-time code with this page's token and
+     offers the link the Android app owns. The bridge itself has no pair button any more. -->
+<style>
+  :root { --bg:#080b11; --card:#121722; --fg:#e6e9ef; --dim:#9aa3b2; --edge:#262d3a; --accent:#3b6fe0; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#e7e9e7; --card:#ffffff; --fg:#151a22; --dim:#5a6372; --edge:#cfd4dc; --accent:#2f5fd0; }
+  }
+  html, body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui, sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:32px 16px; }
+  h1 { font-size:1.25rem; margin:0 0 4px; }
+  p { color:var(--dim); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:12px; padding:20px; }
+  #open { display:block; text-align:center; padding:14px 16px; border-radius:10px; background:var(--accent);
+          color:#fff; font-weight:600; text-decoration:none; font-size:1.05rem; }
+  #open[hidden], #details[hidden] { display:none; }
+  #details { margin-top:14px; font-size:.85rem; color:var(--dim); word-break:break-all; }
+  #status { margin:0 0 14px; }
+  button { margin-top:16px; padding:10px 14px; border-radius:8px; border:1px solid var(--edge);
+           background:transparent; color:var(--fg); font:inherit; cursor:pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pair the phone app</h1>
+  <p>Open this page on the phone, then tap the button. The code works once and expires.</p>
+  <div class="card">
+    <div id="status">Making a pairing code…</div>
+    <!-- target=_top: Chrome on Android hands an intent:// link to an app only from the top window. -->
+    <a id="open" href="#" target="_top" hidden>Open in Command Bridge app</a>
+    <div id="details" hidden></div>
+    <button id="again" type="button">New code</button>
+  </div>
+</main>
+<script>
+(() => {
+  "use strict";
+  const token = new URLSearchParams(location.search).get("token") || "";
+  const $status = document.getElementById("status");
+  const $open = document.getElementById("open");
+  const $details = document.getElementById("details");
+  async function mint() {
+    $open.hidden = true;
+    $details.hidden = true;
+    if (!token) { $status.textContent = "This link needs its ?token= — ask for the pairing link again."; return; }
+    $status.textContent = "Making a pairing code…";
+    try {
+      const r = await fetch(`/pair/new?token=${encodeURIComponent(token)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base: location.origin }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.status);
+      $open.href = j.intent_link;
+      $open.hidden = false;
+      const mins = Math.round(j.expires_in / 60);
+      $status.textContent = `Ready. One use, expires in ${mins} min.`;
+      $details.textContent = `Or copy into the phone: ${j.link}`;
+      $details.hidden = false;
+    } catch (e) {
+      $status.textContent = "Couldn't make a pairing code: " + e.message;
+    }
+  }
+  document.getElementById("again").addEventListener("click", mint);
+  mint();
+})();
+</script>
+</body>
+</html>

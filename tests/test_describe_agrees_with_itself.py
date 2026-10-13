@@ -28,7 +28,7 @@ def test_describe_documents_every_field_say_actually_returns():
     talking while you wrote it). An agent obeying the tie-break checked neither."""
     documented = cli.DESCRIBE["commands"]["say"]["returns"]
 
-    for field in ("queued", "id", "seconds", "held_for", "delivered", "reason", "next"):
+    for field in ("queued", "id", "held_for", "delivered", "reason", "next"):
         assert field in documented, f"`say` returns {field} and describe does not mention it"
 
 
@@ -141,62 +141,34 @@ def test_the_next_action_for_a_quiet_session_tells_you_to_stay_quiet():
 # --------------------------------------------------------------------- detaching the watch
 
 
-def test_describe_resolves_its_own_argument_about_detaching():
-    """It contradicted ITSELF: `watchdog.do_not_detach` said never, `watch --timeout` said run
-    long waits detached deliberately. Both are right about different situations and neither said
-    which, so an agent reading the whole document had to pick one and guess.
+def test_the_background_flag_resolves_its_own_argument_about_detaching():
+    """The detaching rule lives in ONE place — since 2026-10-01 the `--background` arg, which
+    replaced `--timeout` — and must name both halves: a LISTEN run in the background holds long and
+    is fine, and the PRE-SAY wait, which gates your own mouth, must never be backgrounded —
+    foreground and last. One home, so there is nothing left to drift against."""
+    bg = cli.DESCRIBE["commands"]["watch"]["args"]["--background"]
 
-    The blanket NEVER was then narrowed on 2026-08-14 at the owner's direction — heads-down in
-    long work, backgrounding ONE watch is sanctioned, because its completion pokes the agent the
-    moment he starts talking. What the exception must still name is the actual failure: detaching
-    and then not READING the result, and the drain, which gates the agent's own mouth and is
-    never legitimately backgrounded."""
-    exception = cli.DESCRIBE["watchdog"]["detaching_the_exception"]
-
-    assert "watch_open" in exception, "name the mechanism that makes it safe"
-    assert "heads-down" in exception, "name the sanctioned second case, or the guide contradicts us"
-    assert "not reading the result" in exception, (
-        "name the real failure — an unread background watch, not backgrounding itself"
+    assert "BACKGROUND" in bg.upper(), "say it is the flag for a watch you run in the background"
+    assert "PRE-SAY" in bg and "FOREGROUND" in bg and "LAST" in bg, (
+        "and say the wait that gates your own mouth must never be backgrounded — foreground and last"
     )
-    assert "PRE-SAY WAIT" in exception and "foreground" in exception, (
-        "and say the wait that gates your own mouth is the thing that must never be detached"
-    )
-
-
-def test_the_timeout_flag_points_at_the_resolution_instead_of_restating_it():
-    """Two copies of a rule is how they drifted into contradicting each other in the first
-    place."""
-    timeout = cli.DESCRIBE["commands"]["watch"]["args"]["--timeout"]
-
-    assert "detaching_the_exception" in timeout
-    assert "do NOT shorten" in timeout
 
 
 # ------------------------------------------------------------------------ the backoff ladder
 
 
 def test_the_published_ladder_is_the_one_the_code_computes():
-    """It was being quoted from memory as 30s -> 60s -> 9min, which skips three rungs and turns a
-    gentle ramp into a cliff. Every document described the RULE and none printed the RESULT."""
-    assert cli._backoff_ladder() == [30.0, 60.0, 120.0, 240.0, 480.0, 540.0]
-
-    ladder = cli._backoff_ladder_text()
-    assert ladder == "30s -> 1min -> 2min -> 4min -> 8min -> 9min"
-    assert ladder in cli.DESCRIBE["commands"]["watch"]["args"]["--timeout"]
-    assert ladder in cli.DESCRIBE["watchdog"]["backoff"]
+    """Since 2026-10-01 there is no ramp: the idle wait is the cap from the first call, and the
+    document states that number from the constant rather than a typed copy."""
+    assert cli._backoff_ladder() == [540.0]
+    assert cli._backoff_ladder_text() == "9min"
+    assert cli._human_seconds(cli.WATCH_BACKOFF_MAX_S) in cli.DESCRIBE["commands"]["watch"]["args"]["--background"]
 
 
 def test_the_ladder_is_generated_rather_than_typed():
-    """Change the cap and the document has to follow, or this is just a fourth hand-written copy
-    of a number that has already drifted three ways."""
-    import command_bridge.cli as c
-
-    original = c.WATCH_BACKOFF_MAX_S
-    try:
-        c.WATCH_BACKOFF_MAX_S = 120.0
-        assert c._backoff_ladder() == [30.0, 60.0, 120.0]
-    finally:
-        c.WATCH_BACKOFF_MAX_S = original
+    """The arithmetic still clamps to the cap, so an explicit smaller base would still ramp — the
+    published flat wait is a property of the default base, not a hard-coded string."""
+    assert cli._backoff_ladder(30.0) == [30.0, 60.0, 120.0, 240.0, 480.0, 540.0]
 
 
 def test_each_rung_is_what_a_watch_would_actually_wait(monkeypatch):

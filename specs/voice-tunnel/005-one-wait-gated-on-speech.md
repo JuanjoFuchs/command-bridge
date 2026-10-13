@@ -109,7 +109,7 @@ the tail of a sentence.
 - **The two commands were never two jobs.** They are one job with two hard-coded wait strategies,
   and the distinction dissolves once the gate is on speech rather than on a clock.
 - **A tool that cannot be used wrongly beats a rule an agent must remember.** Four sections of the
-  Voice Tunnel Guide exist only to teach the `watch`/`drain` distinction; most of that prose
+  the voice operating guide (not in this repo) exist only to teach the `watch`/`drain` distinction; most of that prose
   deletes itself when there is one command. This is the same principle as encoding the guide into
   `describe`.
 - **The invariant to build against:** *no speech may be pending when you speak.* Everything else —
@@ -771,7 +771,7 @@ scope here.
 - Replacing the RMS/percentile speech detector with Silero VAD. Tracked separately in
   Voice Tunnel; this spec consumes whatever signal exists.
 - Any change to TTS, the de-esser, or voice selection.
-- Editing Voice Tunnel Guide. The implementer **names** the sections that become obsolete; the
+- Editing the voice operating guide (not in this repo). The implementer **names** the sections that become obsolete; the
   owner cuts them himself.
 - The two pre-existing `scripts/e2e.py` failures, except where FR5 changes the first one — in which
   case say so explicitly rather than fixing it silently.
@@ -785,4 +785,4 @@ scope here.
 - Voice Tunnel — Next Actions carries the full rationale, the owner's verbatim words, and the
   live incident that produced this spec.
 - `specs/004-turn-detection.md` — the smart-turn integration this modifies.
-- Voice Tunnel Guide — the behaviour contract the collapse simplifies.
+- the voice operating guide (not in this repo) — the behaviour contract the collapse simplifies.

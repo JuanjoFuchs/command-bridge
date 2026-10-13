@@ -215,15 +215,15 @@ def test_a_normal_speed_leaves_the_status_line_alone(monkeypatch, _kokoro_presen
     assert tts.available() == f"kokoro (resident, {config.kokoro_voice()})"
 
 
-def test_a_clamped_speed_says_so_in_the_status_line(monkeypatch, _kokoro_present):
-    """Reported from CONFIG, not from what a past synthesis did: a CLI process has never spoken,
-    and the warning is worth most BEFORE the first reply rather than after it."""
+def test_a_stretched_speed_says_so_in_the_status_line(monkeypatch, _kokoro_present):
+    """Reported from CONFIG, not from what a past synthesis did: a CLI process has never spoken.
+    Since spec 039 a fast speed is no longer clamped; it is a stretch, and the line says so."""
     monkeypatch.setattr(config, "speech_speed", lambda: 2.5)
     line = tts.available()
 
-    assert "clamped" in line
-    assert "2.5" in line and str(config.KOKORO_SPEED_MAX) in line
-    assert "COMMAND_BRIDGE_SPEECH_SPEED" in line, "name the setting to change, not just the symptom"
+    assert "clamped" not in line
+    assert "2.5" in line and str(config.KOKORO_NATIVE_SPEED_MAX) in line and "stretch" in line
+    assert "COMMAND_BRIDGE_SPEECH_SPEED" in line, "name the setting, not just the symptom"
 
 
 class _StubKokoro:
@@ -241,14 +241,14 @@ class _StubKokoro:
         return ["bm_daniel", "bm_lewis"]
 
 
-def test_an_over_ceiling_speed_reaches_kokoro_clamped_instead_of_raising(monkeypatch):
+def test_an_over_ceiling_speed_never_reaches_kokoros_assertion(monkeypatch):
     """THE CRASH, reproduced against upstream's real assertion and then not happening.
 
-    The stub carries `kokoro_onnx`'s own assert verbatim, so this fails the way production would
-    if the clamp were removed — rather than passing because the stub is more forgiving than the
-    package."""
+    The stub carries `kokoro_onnx`'s own assert verbatim. Since spec 039 the model is asked for at
+    most KOKORO_NATIVE_SPEED_MAX and the rest of the speed is a time-stretch, recorded, not hidden."""
     stub = _StubKokoro()
     monkeypatch.setattr(tts._KOKORO, "_load", lambda: stub)
+    monkeypatch.setattr(tts._KOKORO, "_timed", False)
 
     # THREE VALUES SINCE SPEC 020: the third is the word schedule, None unless `timings`
     # was asked for and the loaded export carries durations. The stub carries neither.
@@ -256,20 +256,21 @@ def test_an_over_ceiling_speed_reaches_kokoro_clamped_instead_of_raising(monkeyp
                                               pause=0.0)
     assert sched is None, "a schedule must not appear when nobody asked for one"
 
-    assert stub.speeds == [config.KOKORO_SPEED_MAX]
+    assert stub.speeds == [config.KOKORO_NATIVE_SPEED_MAX]
     assert rate == config.KOKORO_SR
-    assert pcm, "clamping must still produce audio, not an empty reply"
-    assert tts._KOKORO.speed_clamped_from == 2.5, "the clamp is recorded, not swallowed"
+    assert pcm, "a fast speed must still produce audio, not an empty reply"
+    assert tts._KOKORO.stretched_by == pytest.approx(2.5 / config.KOKORO_NATIVE_SPEED_MAX)
 
 
-def test_a_speed_within_the_ceiling_is_not_recorded_as_clamped(monkeypatch):
+def test_a_speed_within_the_ceiling_is_not_stretched(monkeypatch):
     stub = _StubKokoro()
     monkeypatch.setattr(tts._KOKORO, "_load", lambda: stub)
+    monkeypatch.setattr(tts._KOKORO, "_timed", False)
 
     tts._KOKORO.synthesize("Hello there.", "bm_daniel", speed=1.2, pause=0.0)
 
     assert stub.speeds == [pytest.approx(1.2)]
-    assert tts._KOKORO.speed_clamped_from is None
+    assert tts._KOKORO.stretched_by is None
 
 
 def test_the_missing_model_remedy_names_a_command_that_exists(monkeypatch, tmp_path):

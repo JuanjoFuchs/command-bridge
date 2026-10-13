@@ -37,7 +37,8 @@ def test_a_second_watch_is_refused_while_one_is_open(monkeypatch):
     result = cli.cmd_watch(_args())
     assert result["error"] == "a wait is already open on this session"
     assert result["watch_open"] is True
-    assert "--force" in result["next"]
+    # `--force` is no longer advertised (retired 2026-10-01); a LANED watch takes over instead.
+    assert "running wait has it" in result["next"]
     # And the refusal is still a REFUSAL to speak, not merely a refusal to wait: a caller that
     # branches on `finished` must not read "another watch has it" as permission.
     assert result["finished"] is False

@@ -74,6 +74,38 @@ def no_live_tunnel(monkeypatch):
     monkeypatch.delenv("COMMAND_BRIDGE_PUBLIC_URL", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def draw_shots(monkeypatch):
+    """Stop a `/draw` in any test from launching a real screenshot browser (spec 015, JJ 2026-09-09).
+
+    `apply("/draw")` now fires an auto-shot subprocess, so a human draw reaches the agent WITH its
+    picture rather than a pointer to run `shot`. That subprocess launches Playwright and expects a
+    running server — neither of which a unit test has — so left alone, every draw test would spawn a
+    doomed multi-second browser. Replace the spawn with a recorder: the one test that cares reads this
+    list to assert the shot fired for the right lane at the path the turn names; every other draw test
+    is simply spared the browser.
+    """
+    from command_bridge.canvas import server as canvas
+
+    calls: list = []
+    monkeypatch.setattr(canvas, "_spawn_draw_shot", lambda lane, out: calls.append((lane, out)))
+    return calls
+
+
+@pytest.fixture(autouse=True)
+def legacy_canvas(tmp_path, monkeypatch):
+    """Keep spec 022's one-time migration away from the developer's REAL canvas.
+
+    `start_folder` migrates `~/.command-bridge-canvas.json` into the session's lane folders and
+    renames it `.migrated`. Under test the session dir is a tmp path, so without this a test that
+    calls `init_canvas` would move his real canvas into a directory pytest then deletes."""
+    from command_bridge.canvas import folder
+
+    path = tmp_path / "legacy-canvas.json"
+    monkeypatch.setattr(folder, "LEGACY_FILE", path)
+    return path
+
+
 @pytest.fixture()
 def tmp_sessions(tmp_path, monkeypatch):
     """Isolate turn logs per test so nothing leaks between them or into the repo.

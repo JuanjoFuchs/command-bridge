@@ -58,22 +58,61 @@ def log_path(session: str, base: str | None = None) -> str:
     return os.path.join(base, f"{session}.jsonl")
 
 
+# path -> {"ino", "head", "offset", "turns"}: what has been parsed so far, up to the last newline.
+_READ_CACHE: dict[str, dict[str, Any]] = {}
+_HEAD_BYTES = 256
+
+
 def read_turns(session: str, base: str | None = None) -> list[dict[str, Any]]:
     """Every turn in the log, in id order. Malformed lines are skipped rather than fatal —
-    a partially-written final line must never make the whole log unreadable."""
+    a partially-written final line must never make the whole log unreadable.
+
+    🔴 **INCREMENTAL, BECAUSE THE WHOLE-FILE READ STALLED THE SERVER (JJ, 2026-10-07).** Every
+    `/status` re-parsed the entire log twice (`last_turn_id`, `lane_unanswered`), and with seven
+    agents polling a 2.9 MB, 10,000-turn log, py-spy put 92% of the event loop's samples in
+    `handle_status`. Everything else queued behind it: a clip's 0.8 s pre-speech grace measured
+    3.4 s by the wall clock, and he heard every reply ~2.5 s late. The log is append-only, so we
+    keep what was parsed and read only the bytes past the last complete line. A partial final line
+    is left for the next read, exactly as the full read skipped it. The cache resets when the file
+    shrinks, is replaced, or its first bytes change (a test rewriting a log in place).
+    The returned list is new on every call; the turn dicts are shared, and no caller mutates them."""
     path = log_path(session, base)
-    if not os.path.exists(path):
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        _READ_CACHE.pop(path, None)
         return []
-    out: list[dict[str, Any]] = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
+    with open(path, "rb") as fh:
+        head = fh.read(_HEAD_BYTES)
+        c = _READ_CACHE.get(path)
+        if (c is None or c["ino"] != st.st_ino or st.st_size < c["offset"]
+                or head[:len(c["head"])] != c["head"]):
+            c = {"ino": st.st_ino, "head": head, "offset": 0, "turns": []}
+            _READ_CACHE[path] = c
+        elif len(c["head"]) < _HEAD_BYTES and len(head) > len(c["head"]):
+            c["head"] = head
+        fh.seek(c["offset"])
+        chunk = fh.read()
+    end = chunk.rfind(b"\n")
+    if end >= 0:
+        for raw in chunk[:end].split(b"\n"):
+            line = raw.strip()
             if not line:
                 continue
             try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
+                c["turns"].append(json.loads(line.decode("utf-8")))
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
+        c["offset"] += end + 1
+    out = list(c["turns"])
+    # A final line with no newline yet: returned if it already parses (a writer that omits the
+    # trailing newline), never cached, so a half-written line is re-read once it completes.
+    tail = chunk[end + 1:].strip()
+    if tail:
+        try:
+            out.append(json.loads(tail.decode("utf-8")))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
     return out
 
 
@@ -120,6 +159,7 @@ def append_turn(
     lane: str | None = None,
     stamp_lane: bool = False,
     source: str = "",
+    speaker: str = "",
 ) -> dict[str, Any]:
     """Append one turn and return it (with its assigned `id`).
 
@@ -153,6 +193,9 @@ def append_turn(
         turn["lane"] = lane
     if source:
         turn["source"] = source
+    # Spec 042: WHO spoke when it was not him — "guest" on a guest lane. Only when set, like `source`.
+    if speaker:
+        turn["speaker"] = speaker
     path = log_path(session, base)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(turn, ensure_ascii=False) + "\n")
@@ -319,6 +362,39 @@ def read_lanes(session: str, base: str | None = None) -> list[str]:
         return []
 
 
+def _live_lane_path(session: str, base: str | None = None) -> str:
+    validate_session(session)
+    base = base or config.session_dir()
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, f"{session}.live.json")
+
+
+def read_live_lane(session: str, base: str | None = None) -> str | None:
+    """The lane he was on when the server last stopped, or None (2026-09-30).
+
+    A restart used to put him back on the default lane, so the next thing he said to the agent he was
+    actually talking to landed on another one. Best-effort like the lane set: a missing or broken file
+    is simply "no preference", and the default lane stands."""
+    path = _live_lane_path(session, base)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lane = json.load(fh).get("lane")
+        return str(lane) if isinstance(lane, str) and lane else None
+    except (json.JSONDecodeError, OSError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def write_live_lane(session: str, lane: str, base: str | None = None) -> None:
+    """Persist the live lane on every switch. Best-effort: a disk error must never block a switch."""
+    try:
+        with open(_live_lane_path(session, base), "w", encoding="utf-8") as fh:
+            json.dump({"lane": str(lane)}, fh)
+    except OSError:
+        pass
+
+
 def write_lanes(session: str, names: Iterable[str], base: str | None = None) -> None:
     """Persist the lane set beside the log it belongs to.
 
@@ -334,13 +410,75 @@ def write_lanes(session: str, names: Iterable[str], base: str | None = None) -> 
         pass
 
 
-def write_consumed_cursor(session: str, cursor: int, base: str | None = None) -> None:
-    """Persist the read position beside the log it describes. Best-effort by design: a disk
-    error here must never break the consume call itself — the cost is only that a future
-    restart over-reports pending, which is the bug this softens, not a new one."""
-    path = _consumed_path(session, base)
+def _lane_colors_path(session: str, base: str | None = None) -> str:
+    validate_session(session)
+    base = base or config.session_dir()
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, f"{session}.lane_colors.json")
+
+
+def read_lane_colors(session: str, base: str | None = None) -> dict[str, str]:
+    """The hues assigned to lanes the roster does not colour, by NAME (spec 029 FR5).
+
+    Persisted so an unrostered agent keeps its colour across restarts and re-adds; a colour that
+    depended on who else was up was the bug. Empty on a missing or broken file: colour is cosmetic
+    and must never stop the server (NFR2)."""
+    path = _lane_colors_path(session, base)
+    if not os.path.exists(path):
+        return {}
     try:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump({"cursor": int(cursor)}, fh)
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh).get("assigned", {})
+        return {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
+    except (json.JSONDecodeError, OSError, TypeError, ValueError, AttributeError):
+        return {}
+
+
+def write_lane_colors(session: str, assigned: dict[str, str], base: str | None = None) -> None:
+    """Persist the assigned hues. Best-effort, like the lane set."""
+    try:
+        with open(_lane_colors_path(session, base), "w", encoding="utf-8") as fh:
+            json.dump({"assigned": dict(assigned)}, fh)
     except OSError:
         pass
+
+
+def write_consumed_cursor(session: str, cursor: int, base: str | None = None,
+                          lanes: dict[str, int] | None = None) -> None:
+    """Persist the read position beside the log it describes. Best-effort by design: a disk
+    error here must never break the consume call itself — the cost is only that a future
+    restart over-reports pending, which is the bug this softens, not a new one.
+
+    `lanes` is the per-lane read position (spec 015 FR1), kept in the same file for the same
+    reason — see `read_lane_consumed`."""
+    path = _consumed_path(session, base)
+    payload: dict = {"cursor": int(cursor)}
+    if lanes:
+        payload["lanes"] = {str(k): int(v) for k, v in lanes.items()}
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+    except OSError:
+        pass
+
+
+def read_lane_consumed(session: str, base: str | None = None) -> dict[str, int]:
+    """How far each lane had read before the last restart.
+
+    🔴 **The session cursor above was persisted and the per-lane ones were not**, so a restart
+    brought every lane back with no read position at all. The page reads "no cursor" as "has
+    read nothing", and every turn he ever spoke came back counted as unread on every card
+    (JJ, 2026-09-30, the first turn after a restart: *"it says in all the agents that there are
+    multiple turns from me that you have not read but that is not true"*).
+
+    Empty when nothing was recorded, which is a lane that genuinely has read nothing yet.
+    """
+    path = _consumed_path(session, base)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh).get("lanes") or {}
+        return {str(k): int(v) for k, v in raw.items()}
+    except (json.JSONDecodeError, OSError, TypeError, ValueError, AttributeError):
+        return {}

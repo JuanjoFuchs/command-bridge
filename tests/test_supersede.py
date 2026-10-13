@@ -45,33 +45,59 @@ def test_a_newer_clip_supersedes_a_held_intent(state):
     assert r1["held_off_lane"] is True
     assert held_texts(state, "codex") == ["on it, running the tests"]
 
-    r2 = say(state, "tests pass", "codex")          # a newer RESULT
-    assert r2["superseded"] == 1, "the stale announcement was dropped"
-    assert held_texts(state, "codex") == ["tests pass"], "only the current state is held"
+    say(state, "tests pass", "codex")               # a newer RESULT
+    assert held_texts(state, "codex") == ["tests pass"], (
+        "the stale announcement was dropped; only the current state is held")
 
 
 def test_a_result_is_not_dropped_by_a_newer_clip(state):
     say(state, "tests pass", "codex")               # NOT an intent
-    r2 = say(state, "and coverage is up", "codex")
-    assert r2["superseded"] == 0
-    assert held_texts(state, "codex") == ["tests pass", "and coverage is up"]
+    say(state, "and coverage is up", "codex")
+    assert held_texts(state, "codex") == ["tests pass", "and coverage is up"], (
+        "a result is not dropped by a newer clip")
 
 
 def test_a_newer_intent_supersedes_an_older_one(state):
     say(state, "about to start A", "codex", intent=True)
-    r = say(state, "about to start B", "codex", intent=True)
-    assert r["superseded"] == 1
-    assert held_texts(state, "codex") == ["about to start B"]
+    say(state, "about to start B", "codex", intent=True)
+    assert held_texts(state, "codex") == ["about to start B"], "a newer intent supersedes an older one"
 
 
 # ============================================================ scoped strictly (NFR2)
 
 def test_superseding_does_not_cross_lanes(state):
     say(state, "codex about to", "codex", intent=True)
-    r = say(state, "gpt about to", "gpt", intent=True)   # a DIFFERENT lane
-    assert r["superseded"] == 0
-    assert held_texts(state, "codex") == ["codex about to"]
+    say(state, "gpt about to", "gpt", intent=True)   # a DIFFERENT lane
+    assert held_texts(state, "codex") == ["codex about to"], "superseding does not cross lanes"
     assert held_texts(state, "gpt") == ["gpt about to"]
+
+
+def test_a_clip_played_LIVE_supersedes_the_lanes_held_intent(state, monkeypatch):
+    """2026-09-30: an "about to" held before a restart stayed parked after the agent's next clip went
+    out live, so the card showed an intent pending on the lane he was talking to. Supersede used to
+    run only on the held path."""
+    say(state, "about to restart the server", "codex", intent=True)
+    assert held_texts(state, "codex") == ["about to restart the server"]
+
+    async def _noop(*a, **k):
+        return None
+    monkeypatch.setattr(server, "_send_clip", _noop)
+    monkeypatch.setattr(server, "_broadcast_json", _noop)
+    monkeypatch.setattr(server, "_push_cue", _noop)
+    state.clients.add(object())                     # a page is connected...
+    state.lanes.switch("codex")                     # ...and he is on codex, so this one plays live
+    r = say(state, "server's back", "codex")
+    assert r["held_off_lane"] is False
+    assert held_texts(state, "codex") == [], "the live result retired the stale announcement"
+
+
+def test_a_clip_is_counted_in_flight_only_until_it_is_stored(state):
+    """The graceful-shutdown drain waits on `synth_inflight` (2026-09-30: a restart killed dexter's
+    "shipped and live" mid-synthesis). It must return to zero once the clip is held or sent, and on
+    a failure too, or every restart would wait out the full cap."""
+    say(state, "shipped and live", "codex")
+    assert state.synth_inflight == 0
+    assert held_texts(state, "codex") == ["shipped and live"], "stored before the count dropped"
 
 
 def test_an_intent_played_live_is_never_held_or_superseded(state):

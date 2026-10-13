@@ -35,6 +35,17 @@ CUES: dict[str, tuple[tuple[float, float], float]] = {
     "thinking": ((520.0, 520.0), 0.09),
     "tool": ((320.0, 320.0), 0.06),
     "speaking": ((880.0, 590.0), 0.13),
+    # JJ, 2026-09-14: he asked for a sound at transcribing and when synthesis FINISHES, so the
+    # silent gap after he speaks is legible and — the point he clarified — from ANOTHER lane he
+    # hears that an agent's reply is ready. `synthesized` fires on every lane when synthesis
+    # completes: on his live lane the reply plays right after (that IS the done signal), but OFF his
+    # lane the reply is HELD, so the cue is the only audible "this lane has a reply waiting" — which
+    # is exactly what he wants across agents. Contour keeps the rule (rising = arriving) AND stays
+    # distinguishable by (contour, register): `transcribing` is a LOW rise — your speech arriving as
+    # text — kept above `tool` (320) so `tool` stays the lowest; `synthesized` RISES to a bright top
+    # (a reply is ready) clearing `heard`'s ceiling.
+    "transcribing": ((340.0, 440.0), 0.09),
+    "synthesized": ((720.0, 1180.0), 0.11),
 }
 
 CUE_MEANING = {
@@ -48,6 +59,9 @@ CUE_MEANING = {
     "thinking": "flat, mid — working on it",
     "tool": "flat, low, short — running something (a tick, so a burst reads as activity)",
     "speaking": "falling — about to talk, so stop if you were not finished",
+    "transcribing": "low rise — your speech is arriving as text (fires the instant you stop)",
+    "synthesized": "rising to a bright top — an agent's reply has finished synthesizing (fires on "
+                   "EVERY lane, so from another lane you hear a reply is ready and waiting there)",
 }
 """Four states, four sounds. `tool` is deliberately the shortest and lowest: it fires repeatedly
 while the agent works, so it has to read as a background tick rather than an announcement — a

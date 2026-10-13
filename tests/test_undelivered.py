@@ -61,9 +61,11 @@ def test_anything_older_than_the_window_is_dropped(state):
 
 def test_the_bounds_are_tight_enough_to_be_a_conversation(state):
     """Guards the *reason* for the numbers. Unbounded, the fix is worse than the bug: come back
-    after an hour and get read a stack of answers to questions you stopped caring about."""
+    and get read a stack of answers to questions you stopped caring about. The COUNT cap is that
+    guard now; the age bound was raised to a working day by JJ, 2026-09-29 (clips said before a page
+    connected expired unheard, and agents re-said them) — so it is bounded, not tight."""
     assert config.UNDELIVERED_MAX <= 10
-    assert config.UNDELIVERED_MAX_AGE_S <= 900
+    assert config.UNDELIVERED_MAX_AGE_S <= config.LANE_HELD_MAX_AGE_S
 
 
 def test_flushing_delivers_oldest_first_and_empties_the_queue(state, monkeypatch):
@@ -74,6 +76,8 @@ def test_flushing_delivers_oldest_first_and_empties_the_queue(state, monkeypatch
 
     monkeypatch.setattr(server, "_send_clip", fake_send)
     queue(state, 3)
+    # A phone back with its orb ON. With the orb off the flush holds (spec 036, test_notices).
+    state.channel_open = True
 
     # asyncio.run rather than a pytest-asyncio marker: this suite has no async plugin, and adding
     # a dependency to await two coroutines is a worse trade than three lines here.
@@ -94,6 +98,7 @@ def test_a_flushed_clip_says_how_long_it_waited(state, monkeypatch):
 
     monkeypatch.setattr(server, "_send_clip", fake_send)
     queue(state, 1, at=time.time() - 45)
+    state.channel_open = True
 
     asyncio.run(server._flush_undelivered(state))
 

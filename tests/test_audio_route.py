@@ -47,22 +47,29 @@ import re
 import pytest
 
 PAGE = pathlib.Path(__file__).resolve().parents[1] / "command_bridge" / "web" / "index.html"
+# Spec 023: the page is two documents. The audio — capture, playback, the socket, the route — lives
+# in the SHELL; the pickers and everything painted live in the UI frame (`PAGE`). The rules in this
+# file are about the page's behaviour, so they read both.
+SHELL = PAGE.with_name("shell.html")
 
 
 def page() -> str:
     return PAGE.read_text(encoding="utf-8")
 
 
+def _first_script(raw: str) -> str:
+    start = raw.index("<script>") + len("<script>")
+    return raw[start : raw.index("</script>", start)]
+
+
 def script() -> str:
-    """Only the `<script>` block.
+    """Only the `<script>` blocks — the shell's, then the UI frame's main one.
 
     Scoped deliberately. The blanker below understands JavaScript quoting and nothing else, and
     the HTML comments in this page are full of prose apostrophes ("the transcript's OWN header")
     which it would read as an unterminated string and blank half the file behind.
     """
-    raw = page()
-    start = raw.index("<script>") + len("<script>")
-    return raw[start : raw.index("</script>", start)]
+    return _first_script(SHELL.read_text(encoding="utf-8")) + "\n" + _first_script(page())
 
 
 def blanked(js: str) -> str:
@@ -190,7 +197,8 @@ def test_the_reconnect_path_re_applies_the_route():
     speaking — because the page cannot assume a server that went away kept anything. The output
     route was the one fact still assuming it had survived.
     """
-    assert "refreshDevices" in body_of("reconnect"), (
+    # Spec 023: reconnect is the shell's, and `refreshRoute` is its door to the UI's `refreshDevices`.
+    assert "refreshRoute" in body_of("reconnect"), (
         "reconnect() no longer re-reads the devices or re-applies the output route; a server "
         "restart will silently leave audio wherever the OS moved it while the socket was down"
     )

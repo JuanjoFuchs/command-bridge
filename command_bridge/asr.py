@@ -19,6 +19,7 @@ unit-testable without faster-whisper installed.
 """
 from __future__ import annotations
 
+import sys
 import threading
 from collections import deque
 
@@ -51,8 +52,45 @@ def is_silent(samples: np.ndarray, floor: float = config.SILENCE_RMS_FLOOR) -> b
     return rms(samples) < floor
 
 
+def has_speech(samples: np.ndarray, floor: float = config.SILENCE_RMS_FLOOR,
+               window_s: float = config.PIECE_SPEECH_WINDOW_S) -> bool:
+    """True if ANY short window reaches the energy floor (spec 027).
+
+    The gate for a piece of a turn the segmenter already accepted as speech. `is_silent` averages
+    over the whole buffer, and a turn's tail is its last words plus seconds of closing silence: a
+    short or soft ending averaged that way read as silence and was dropped undecoded (turns 11200,
+    11229 on 2026-10-08, which JJ had to say again)."""
+    if samples is None or len(samples) == 0:
+        return False
+    a = np.asarray(samples, dtype=np.float32)
+    win = max(1, int(config.TARGET_SR * window_s))
+    voiced = 0
+    for i in range(0, a.size, win):
+        if rms(a[i:i + win]) >= floor:
+            voiced += 1
+            if voiced >= config.PIECE_SPEECH_MIN_WINDOWS:
+                return True
+    return False
+
+
 def is_hallucination(text: str) -> bool:
     return text.strip().lower() in _HALLUCINATIONS
+
+
+def join_pieces(pieces: list[str]) -> str:
+    """One turn's text from the pieces transcribed at his pauses, then judged as a whole.
+
+    Each piece is decoded as if it were a complete utterance, so the model may close it with a
+    full stop where he only paused for breath. When the next piece opens in lower case, the
+    model itself is saying the sentence went on, so that stop is dropped."""
+    out = ""
+    for p in (p.strip() for p in pieces):
+        if not p:
+            continue
+        if out and p[0].islower() and out.endswith("."):
+            out = out[:-1]
+        out = f"{out} {p}" if out else p
+    return "" if is_hallucination(out) else out
 
 
 def pcm16_to_float32(raw: bytes) -> np.ndarray:
@@ -142,6 +180,10 @@ class UtteranceBuffer:
         self.preroll_samples = int(sr * 0.2)
         """Audio kept before detected speech onset. Enough to protect a soft first consonant,
         which the energy gate can miss, without handing the model a long silent runway."""
+        self.last_cut = 0
+        """Samples trimmed off the FRONT of the buffer in the last utterance `feed` returned (the
+        silent runway before speech). A piece committed mid-turn is indexed in buffer samples, so
+        this is what maps its end into the returned utterance."""
 
     @property
     def seconds_buffered(self) -> float:
@@ -159,6 +201,39 @@ class UtteranceBuffer:
         return self._buf.copy()
 
     @property
+    def utterance_id(self) -> int:
+        """Changes every time the buffer starts a new utterance — including one it discarded as
+        too short or as noise, which `feed` reports the same way as 'not finished'. Pieces cut from
+        an utterance are only valid while this is unchanged."""
+        return self._buf_start_total
+
+    def onset_index(self) -> int:
+        """Buffer index where the in-flight utterance's audio begins: speech onset minus the
+        preroll, the same trim `feed` applies to the utterance it returns."""
+        onset = self._utterance_start_sample - self._buf_start_total
+        return max(0, onset - self.preroll_samples)
+
+    def commit_point(self, start: int, pause_samples: int, min_samples: int) -> int | None:
+        """Where to cut a piece for transcription mid-turn, or None.
+
+        A piece ends inside a pause he is in RIGHT NOW (trailing silence of at least
+        `pause_samples`), halfway into it so neither side clips a consonant, and only when at
+        least `min_samples` of audio lie between `start` and the pause. Called per chunk, so the
+        caller moves `start` to the returned point; the same pause then cannot fire again."""
+        if not self._seen_speech or pause_samples <= 0:
+            return None
+        if self._trailing_silence < pause_samples:
+            return None
+        speech_end = self._buf.size - self._trailing_silence
+        if speech_end - start < min_samples:
+            return None
+        return speech_end + self._trailing_silence // 2
+
+    def span(self, start: int, end: int | None = None) -> np.ndarray:
+        """A copy of buffer samples [start, end)."""
+        return self._buf[start:end].copy()
+
+    @property
     def speech_active(self) -> bool:
         """True when someone is mid-utterance — speech has started and the end-of-utterance
         silence has not yet elapsed.
@@ -167,6 +242,18 @@ class UtteranceBuffer:
         difference between a conversation and a dictation machine that shouts.
         """
         return self._seen_speech and self._trailing_silence < self.end_silence_samples
+
+    @property
+    def utterance_open(self) -> bool:
+        """True from his first syllable until the utterance is CLOSED and handed off — including the
+        stretch where the end-of-utterance silence has passed but the turn model judged him
+        unfinished and is holding the turn open for more (TURN_MAX_WAIT_MS, bounded).
+
+        `speech_active` already reads False in that stretch, and nothing is `speech_pending` yet
+        because nothing has closed, so a reply held only on those two played into his mid-turn pause
+        (JJ, 2026-10-05: a clip played while "there is a bunch of text already recognized from me
+        because … you haven't read what I … have just said or I am saying")."""
+        return self._seen_speech
 
     def feed(self, samples: np.ndarray) -> tuple[np.ndarray, float, float] | None:
         """Add audio. Returns `(samples, t_start, t_end)` when an utterance completes."""
@@ -284,6 +371,7 @@ class UtteranceBuffer:
         # same audio re-transcribed from its speech onset. Later utterances start near speech
         # and were always fine — which is what made the first one look like an ASR problem.
         cut = max(0, min(onset - self.preroll_samples, out.size - self.min_samples))
+        self.last_cut = cut
         if cut > 0:
             out = out[cut:]
             # t_start must be the absolute time of the FIRST SAMPLE IN `out`, which is
@@ -311,8 +399,60 @@ class UtteranceBuffer:
         out = self._buf
         t_start = self._utterance_start_sample / float(self.sr)
         t_end = self._total_fed / float(self.sr)
+        self.last_cut = 0
         self._reset_buffer()
         return out, t_start, t_end
+
+
+def parakeet_files(d: str) -> dict[str, str]:
+    """The model files in a Parakeet directory, whichever precision it holds (spec 041): the int8
+    export (the CPU's), the fp32 build (the GPU's), or the fp16 export (correct on the CPU only).
+    `{encoder, decoder, joiner, tokens, precision}`."""
+    import os
+
+    for precision in ("int8", "fp32", "fp16"):
+        if os.path.exists(os.path.join(d, f"encoder.{precision}.onnx")):
+            break
+    else:
+        precision = "int8"      # the historic name, so a missing model still errors on that path
+    path = {k: os.path.join(d, f"{k}.{precision}.onnx") for k in ("encoder", "decoder", "joiner")}
+    return {**path, "tokens": os.path.join(d, "tokens.txt"), "precision": precision}
+
+
+def _add_cuda_dll_dirs() -> int:
+    """See `config.add_cuda_dll_dirs` (spec 041); a name here so tests can stub it."""
+    return config.add_cuda_dll_dirs()
+
+
+def _sherpa_has_cuda() -> bool:
+    """Is the installed sherpa-onnx a CUDA build? (spec 041) The CPU wheel ACCEPTS provider="cuda"
+    and silently runs on the CPU, and in the server nvidia-smi cannot tell (Kokoro already makes the
+    process a GPU compute app). The build can: a CUDA wheel ships onnxruntime_providers_cuda.dll."""
+    import importlib.util
+    import os
+
+    spec = importlib.util.find_spec("sherpa_onnx")
+    if spec is None or not spec.origin:
+        return False
+    lib = os.path.join(os.path.dirname(spec.origin), "lib")
+    return any(os.path.exists(os.path.join(lib, n))
+               for n in ("onnxruntime_providers_cuda.dll", "libonnxruntime_providers_cuda.so"))
+
+
+def asr_device() -> dict:
+    """Is the live recognizer really on the GPU? Asked of nvidia-smi, because a provider that loads
+    can still run elsewhere (spec 041; the research's "silent fallback" trap). `{listed, why}`."""
+    import os
+    import subprocess
+
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"listed": None, "why": f"nvidia-smi unavailable: {exc}"}
+    listed = str(os.getpid()) in {line.strip() for line in out.splitlines()}
+    return {"listed": listed,
+            "why": "this process is a GPU compute app" if listed else "not listed by nvidia-smi"}
 
 
 class Recognizer:
@@ -342,6 +482,10 @@ class Recognizer:
         self.compute_type = compute_type
         self._model = None
         self._hotwords = ""  # set by _ensure_parakeet; "" means no biasing / preview streams
+        # Spec 041: the provider the model ACTUALLY loaded on (cuda can fall back to cpu), and why
+        # when it did. None until the model loads.
+        self.provider_effective: str | None = None
+        self.provider_note: str | None = None
         # One recognizer, potentially two callers: the live partial preview and the real
         # end-of-utterance transcription, both dispatched to a thread pool. Neither
         # sherpa-onnx nor faster-whisper promises thread safety on a shared model, and
@@ -369,10 +513,8 @@ class Recognizer:
             d = config.parakeet_dir()
             if not d:
                 raise RuntimeError("parakeet engine selected but no model directory found")
-            encoder = os.path.join(d, "encoder.int8.onnx")
-            decoder = os.path.join(d, "decoder.int8.onnx")
-            joiner = os.path.join(d, "joiner.int8.onnx")
-            tokens = os.path.join(d, "tokens.txt")
+            files = parakeet_files(d)
+            encoder, decoder, joiner, tokens = (files[k] for k in ("encoder", "decoder", "joiner", "tokens"))
             threads = config.asr_threads()
             # CONTEXTUAL BIASING, opt-in and gated on config.parakeet_hotwords() — see there for
             # why (bpe.vocab, phrases, modified_beam_search) must line up. When it returns None the
@@ -384,22 +526,58 @@ class Recognizer:
             # "Claude Claude Claude" (he saw exactly this in the live window). So the model is built
             # with modified_beam_search + bpe.vocab but NO hotwords_file; the phrases ride on the
             # final's stream and never the preview's. See _transcribe_parakeet.
-            hw = config.parakeet_hotwords()
-            if hw:
-                self._hotwords = hw["phrases"]
-                self._model = sherpa_onnx.OfflineRecognizer.from_transducer(
+            # provider: cpu (default) / cuda / directml — moves the 0.6B decode off the CPU
+            # (JJ, 2026-09-21). 🔴 A CUDA/cuDNN mismatch SILENTLY falls back to cpu — verify with nvidia-smi.
+            provider = config.asr_provider()
+            # Force-greedy bypasses hotword biasing, which needs modified_beam_search — documented to
+            # hallucinate / return empty ~20% on NeMo TDT (sherpa-onnx#3267) and heavier on CPU than greedy.
+            hw = None if config.asr_force_greedy() else config.parakeet_hotwords()
+            self._hotwords = hw["phrases"] if hw else ""
+
+            def build(provider, encoder, decoder, joiner, tokens):
+                if hw:
+                    return sherpa_onnx.OfflineRecognizer.from_transducer(
+                        encoder=encoder, decoder=decoder, joiner=joiner, tokens=tokens,
+                        num_threads=threads, model_type="nemo_transducer",
+                        decoding_method="modified_beam_search",
+                        hotwords_score=hw["score"],
+                        modeling_unit="bpe", bpe_vocab=hw["bpe_vocab"],
+                        provider=provider,
+                    )
+                return sherpa_onnx.OfflineRecognizer.from_transducer(
                     encoder=encoder, decoder=decoder, joiner=joiner, tokens=tokens,
                     num_threads=threads, model_type="nemo_transducer",
-                    decoding_method="modified_beam_search",
-                    hotwords_score=hw["score"],
-                    modeling_unit="bpe", bpe_vocab=hw["bpe_vocab"],
+                    provider=provider,
                 )
+
+            self.provider_note = None
+
+            def on_cpu(why: str):
+                # NEVER A DEAD ASR, AND NEVER A FAKE GPU. Back to the CPU on the int8 model it is
+                # fast on, with the reason in the serve log and on `provider_note`.
+                self.provider_note = f"cuda unavailable, on cpu: {why}"
+                print(f"command-bridge ASR: {self.provider_note}", file=sys.stderr, flush=True)
+                cpu_dir = os.path.join(config.models_dir(),
+                                       "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
+                cpu = parakeet_files(cpu_dir if os.path.isdir(cpu_dir) else d)
+                self.provider_effective = "cpu"
+                return build("cpu", cpu["encoder"], cpu["decoder"], cpu["joiner"], cpu["tokens"])
+
+            if provider == "cuda" and not _sherpa_has_cuda():
+                self._model = on_cpu("the installed sherpa-onnx is the CPU build (no "
+                                     "onnxruntime_providers_cuda.dll); install the +cuda12.cudnn9 wheel")
+            elif provider == "cuda":
+                # The CUDA provider needs cuDNN 9 / cuBLAS 12, which come from the nvidia-* wheels
+                # Kokoro already uses; without their folders on the search path it fails to LOAD.
+                _add_cuda_dll_dirs()
+                try:
+                    self._model = build("cuda", encoder, decoder, joiner, tokens)
+                    self.provider_effective = "cuda"
+                except RuntimeError as exc:
+                    self._model = on_cpu(str(exc))
             else:
-                self._hotwords = ""
-                self._model = sherpa_onnx.OfflineRecognizer.from_transducer(
-                    encoder=encoder, decoder=decoder, joiner=joiner, tokens=tokens,
-                    num_threads=threads, model_type="nemo_transducer",
-                )
+                self._model = build(provider, encoder, decoder, joiner, tokens)
+                self.provider_effective = provider
         return self._model
 
     def _transcribe_whisper(self, samples: np.ndarray) -> str:
@@ -428,27 +606,35 @@ class Recognizer:
         return stream.result.text or ""
 
     # -- the interface ------------------------------------------------------
-    def _run(self, samples: np.ndarray, final: bool) -> str:
+    def _run(self, samples: np.ndarray, final: bool, piece: bool = False) -> str:
         if self.engine == "parakeet":
             text = self._transcribe_parakeet(samples, final)
         else:
             text = self._transcribe_whisper(samples)
         text = " ".join(text.split())
-        if not text or is_hallucination(text):
+        # The artifact filter judges a WHOLE utterance ("so" alone is junk, "so what" is not).
+        # A mid-turn piece is not one: "Yeah." followed by a pause is a real word of a longer
+        # turn, so pieces skip it and the joined turn is judged as a whole instead.
+        if not text or (not piece and is_hallucination(text)):
             return ""
         return text
 
-    def transcribe(self, samples: np.ndarray) -> str:
+    def transcribe(self, samples: np.ndarray, piece: bool = False) -> str:
         """Transcribe one complete utterance at 16 kHz. Returns '' for silence/artifacts.
 
         Takes the model lock and waits: a real turn must never be dropped or degraded because
-        a preview happened to be running.
+        a preview happened to be running. `piece=True` is a mid-turn piece (see `join_pieces`),
+        which skips the whole-utterance artifact filter and is gated on speech PRESENCE rather than
+        whole-buffer energy (spec 027): a piece lies inside a turn already accepted as speech, so the
+        gate may keep his words but can never create a turn.
         """
-        if samples is None or samples.size == 0 or is_silent(samples):
+        if samples is None or samples.size == 0:
+            return ""
+        if (not has_speech(samples)) if piece else is_silent(samples):
             return ""
         samples = np.asarray(samples, dtype=np.float32)
         with self._lock:
-            return self._run(samples, final=True)
+            return self._run(samples, final=True, piece=piece)
 
     def try_transcribe(self, samples: np.ndarray) -> str | None:
         """Transcribe only if the model is free; return None if it is busy.

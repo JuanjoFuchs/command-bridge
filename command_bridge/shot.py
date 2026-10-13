@@ -20,11 +20,13 @@ remedy}` shape every other command uses, and carry on rather than crash mid-sess
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import quote
 
 
 def capture(url: str, out: str | Path, viewport: tuple[int, int] = (390, 844),
             lane: str = "", settle_ms: int = 4000,
-            wait_selector: str = "", color_scheme: str = "") -> dict:
+            wait_selector: str = "", color_scheme: str = "", point: str = "",
+            look: str = "") -> dict:
     """Render `url` in a private headless browser and write a full-page PNG to `out`.
 
     `viewport` is a real device size (a phone by default), not a crop — the whole document is
@@ -32,8 +34,16 @@ def capture(url: str, out: str | Path, viewport: tuple[int, int] = (390, 844),
     lane's view by passing `?lane=` (the page decides what that means). `color_scheme`
     ('dark'/'light') emulates `prefers-color-scheme`, so a page whose theme (or an embedded frame's)
     follows the system setting can be shot in the theme it will actually be seen in — the meeting
-    page is dark, so its embedded canvas must be shot dark too. Returns a dict; the caller reads
-    `ok` or `error`.
+    page is dark, so its embedded canvas must be shot dark too. `point` (spec 020) applies ONE
+    highlight, purely LOCALLY to this private render (`?point=<selector>`), the same trick the page
+    already uses for `?look=` in shot mode — it never touches the live `/point` verb, so it never
+    hits that verb's live-lane-only refusal and never disturbs what anyone else sees. `look` (a
+    frame id) focuses the camera on THAT frame instead of fitting the whole canvas — and, just as
+    important on a lane with several other frames already on it, it is what scopes `point`'s OWN
+    search to inside that frame first (`findEl`'s "the focused frame, before anything else on the
+    canvas" rule): without it, a bare mermaid-node selector like `A` is resolved against the WHOLE
+    stage and can light the wrong frame's node, or none at all, on a busy canvas (reported live
+    2026-09-16 on the real `magnus` lane). Returns a dict; the caller reads `ok` or `error`.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -51,6 +61,13 @@ def capture(url: str, out: str | Path, viewport: tuple[int, int] = (390, 844),
     params = ["shot=" + str(int(settle_ms))]
     if lane:
         params.append("lane=" + lane)
+    if look:
+        params.append("look=" + quote(look, safe=""))
+    if point:
+        # MUST be encoded: a selector routinely starts with `#`, which is a URL FRAGMENT marker —
+        # unescaped, everything from it on never reaches `location.search` at all (reported live
+        # while building spec 020: an unescaped `#bar-q3` silently vanished into `location.hash`).
+        params.append("point=" + quote(point, safe=""))
     full_url = url + (("&" if "?" in url else "?") + "&".join(params))
     w, h = viewport
 

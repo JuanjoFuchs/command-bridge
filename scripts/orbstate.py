@@ -91,8 +91,17 @@ AGENT_STATES = ["idle", "transcribing", "thinking", "synthesizing", "waiting", "
 PHASES = ["idle", "starting", "warming", "live", "denied"]
 TIMED = {"transcribing", "thinking", "synthesizing", "waiting"}
 
+# A scratch HOME as well as a scratch COMMAND_BRIDGE_DIR: the shared canvas file lives at
+# `~/.command-bridge-canvas.json`, which COMMAND_BRIDGE_DIR does NOT isolate. Without this, a
+# session that has drawn frames leaks them into this harness's server, which flips `body.sharing`
+# on — and `body.sharing #collapse{display:none}` then hides the transcript toggle, so the collapse
+# step times out clicking an element that is correctly invisible. layout.py already guards this the
+# same way (see its iso_home note); orbstate was missing it and only failed once the canvas had
+# frames. Isolating HOME makes the run deterministic regardless of the real canvas state.
+_iso_home = tempfile.mkdtemp(prefix="command-bridge-orb-home-")
 env = dict(os.environ, COMMAND_BRIDGE_DIR=tempfile.mkdtemp(prefix="command-bridge-orb-"),
-           COMMAND_BRIDGE_TTS="sapi")
+           COMMAND_BRIDGE_TTS="sapi",
+           USERPROFILE=_iso_home, HOME=_iso_home, HOMEPATH=_iso_home)
 server = subprocess.Popen(
     [sys.executable, f"{ROOT}/bin/command-bridge-run.py", "serve",
      "--session", SESSION, "--port", str(PORT), "--token", TOKEN],
@@ -101,6 +110,7 @@ server = subprocess.Popen(
 try:
     time.sleep(7)
     from playwright.sync_api import sync_playwright
+    from pagesplit import ui_frame
 
     with sync_playwright() as p:
         browser = p.chromium.launch(args=[
@@ -108,9 +118,12 @@ try:
             "--use-fake-ui-for-media-stream",       # auto-grant, no prompt to click
             "--autoplay-policy=no-user-gesture-required",
         ])
-        page = browser.new_page()
-        page.add_init_script(FAKE_MIC)
-        page.goto(f"http://127.0.0.1:{PORT}/?token={TOKEN}", wait_until="load")
+        top = browser.new_page()
+        top.add_init_script(FAKE_MIC)   # init scripts run in every frame, so the shell gets it too
+        top.goto(f"http://127.0.0.1:{PORT}/?token={TOKEN}", wait_until="load")
+        # Spec 023: everything he sees is the UI frame inside the audio shell. `__voiceTunnel` is
+        # the same object in both documents, so every check below runs in the frame.
+        page = ui_frame(top)
         page.wait_for_function(
             "() => window.__voiceTunnel && window.__voiceTunnel.orbView", timeout=15000)
 
@@ -354,8 +367,11 @@ try:
         #
         # `watch` is THE command: spec 005 made it smart enough that `drain` was unnecessary rather
         # than renaming it. A tool that keeps teaching a spelling it is retiring is how
-        # `--waits 5,3,2` outlived the ladder it configured.
-        check("command-bridge watch --session" in nxt and "stop watching" not in nxt,
+        # `--waits 5,3,2` outlived the ladder it configured — and this check made the same mistake in
+        # reverse: it pinned `watch --session`, but the CLI's resume hints have all been the
+        # session-defaulting `watch --since <cursor>` since 2026-09-04 (cli.py builds them that way),
+        # so the assertion asserted a spelling the code had retired. Match the canonical form.
+        check("command-bridge watch --since" in nxt and "stop watching" not in nxt,
               "and hands back a runnable watch instead of telling the agent to stop",
               f"next={nxt!r}")
         check(result.get("elapsed", 99) < 20,
@@ -400,7 +416,8 @@ try:
         check(page.evaluate("() => document.body.scrollHeight <= window.innerHeight + 1"),
               "and the page still fits without a hole where the transcript was")
 
-        page.reload(wait_until="load")
+        top.reload(wait_until="load")
+        page = ui_frame(top)
         page.wait_for_function("() => window.__voiceTunnel", timeout=10000)
         check(page.evaluate("() => document.getElementById('log').hidden"),
               "collapsed survives a reload")
@@ -456,10 +473,11 @@ try:
         # a silent device: real permission grant, real enumerateDevices, real track settings. The
         # audio is worthless and that is fine — this asserts the session STARTS, not what it hears.
         real = browser.new_context()
-        rp = real.new_page()
+        rtop = real.new_page()
         rerrors = []
-        rp.on("pageerror", lambda e: rerrors.append(str(e)))
-        rp.goto(f"http://127.0.0.1:{PORT}/?token={TOKEN}", wait_until="load")
+        rtop.on("pageerror", lambda e: rerrors.append(str(e)))
+        rtop.goto(f"http://127.0.0.1:{PORT}/?token={TOKEN}", wait_until="load")
+        rp = ui_frame(rtop)
         rp.wait_for_function("() => window.__voiceTunnel", timeout=15000)
         check(rp.evaluate("() => document.getElementById('orblabel').textContent") == "Tap to start",
               "a fresh page invites the first tap")
@@ -537,11 +555,12 @@ try:
         # A REFUSED microphone must be visible and RETRYABLE. Third context, no fake device
         # flag at all, so the permission is genuinely unavailable.
         denied = browser.new_context()
-        dp = denied.new_page()
-        dp.add_init_script(
+        dtop = denied.new_page()
+        dtop.add_init_script(
             "navigator.mediaDevices.getUserMedia = () => "
             "Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));")
-        dp.goto(f"http://127.0.0.1:{PORT}/?token={TOKEN}", wait_until="load")
+        dtop.goto(f"http://127.0.0.1:{PORT}/?token={TOKEN}", wait_until="load")
+        dp = ui_frame(dtop)
         dp.wait_for_function("() => window.__voiceTunnel", timeout=15000)
         dp.click("#orb")
         time.sleep(1.2)

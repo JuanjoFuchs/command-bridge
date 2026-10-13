@@ -163,6 +163,7 @@ def wav_duration(path: str) -> float:
 
 def run(headed: bool, keep: bool) -> int:
     from playwright.sync_api import sync_playwright
+    from pagesplit import ui_frame
 
     workdir = tempfile.mkdtemp(prefix="command-bridge-e2e-")
     session = "e2e"
@@ -231,9 +232,13 @@ def run(headed: bool, keep: bool) -> int:
         # createMediaStreamSource -> ScriptProcessor -> Int16 -> WebSocket path the phone uses,
         # the real server, real Whisper, real TTS, real playback. Only the driver is stubbed,
         # and a headless browser could never exercise that anyway.
-        page.add_init_script(_fake_mic_script(wav))
-        page.on("console", lambda m: print(f"    [console:{m.type}] {m.text}", flush=True))
-        page.goto(f"http://127.0.0.1:{port}/?token={token}", wait_until="load")
+        top = page
+        top.add_init_script(_fake_mic_script(wav))   # init scripts run in every frame, the shell included
+        top.on("console", lambda m: print(f"    [console:{m.type}] {m.text}", flush=True))
+        top.goto(f"http://127.0.0.1:{port}/?token={token}", wait_until="load")
+        # Spec 023: the controls are in the UI frame inside the audio shell; `__voiceTunnel` is the
+        # same object in both, so every check below runs in the frame.
+        page = ui_frame(top)
         ok("client page loaded")
 
         page.click("#orb")   # the user gesture: mic permission + AudioContext unlock
@@ -429,7 +434,8 @@ def run(headed: bool, keep: bool) -> int:
               "the switch reports its state as a switch, not a button")
         # The client must ADOPT the server's value rather than push its own, or a second device
         # silently reverts what was set on the first.
-        page.reload()
+        top.reload()
+        page = ui_frame(top)
         page.wait_for_timeout(2500)
         check(page.locator("#verbose").get_attribute("aria-checked") == str(not before_v).lower(),
               "a reloaded page adopts verbose from the server, not from its own storage",

@@ -114,8 +114,10 @@ def test_no_acknowledgement_when_a_turn_is_merely_logged(state, monkeypatch):
     transcribed(state, monkeypatch, "hey claude, are you there")
 
     assert store.last_turn_id(state.session) == 0, "the turn must still be logged — only the sound moved"
-    assert cues_played(state) == [], (
-        "capture is not acknowledgement: nobody has read this yet, and nobody may ever answer it"
+    assert cues_played(state) == ["transcribing"], (
+        "the only sound is the `transcribing` cue (JJ's 2026-09-14 addition — 'working on your "
+        "words', fired the instant he stops). The ACKNOWLEDGEMENT cue `heard` still does NOT fire: "
+        "nobody has read this yet, and nobody may ever answer it"
     )
 
 
@@ -225,13 +227,14 @@ def test_the_speaking_cue_still_fires_from_the_say_path(state, monkeypatch):
     assert "speaking" in cues_played(state)
 
 
-def test_the_tool_cue_is_untouched_and_the_vocabulary_is_still_four(state):
-    """TC4 froze the vocabulary at four sounds. FR3 moves one of them; it adds none, and a fifth
-    (a quieter capture tick, to buy back the liveness signal) is his call, not the implementer's."""
+def test_the_tool_cue_is_untouched_and_the_vocabulary_grew_on_his_call(state):
+    """TC4 froze the vocabulary at four sounds and said a fifth was HIS call, not the implementer's.
+    He made it (JJ, 2026-09-14: "add some sounds to transcribing and synthesizing"). The `tool` cue
+    is untouched; the set now carries the two stage cues he asked for."""
     asyncio.run(server.handle_cue(_Req(state, {"name": "tool"})))
 
     assert cues_played(state) == ["tool"]
-    assert set(cues.CUES) == {"heard", "thinking", "tool", "speaking"}
+    assert set(cues.CUES) == {"heard", "thinking", "tool", "speaking", "transcribing", "synthesized"}
 
 
 def test_the_documented_meaning_matches_when_it_now_fires(state):

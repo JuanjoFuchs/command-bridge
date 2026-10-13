@@ -96,6 +96,47 @@ def test_a_restart_does_not_forget_how_far_the_agent_had_read(monkeypatch, tmp_p
     )
 
 
+def test_a_restart_does_not_forget_how_far_each_LANE_had_read(monkeypatch, tmp_path):
+    """The per-lane half of the same bug (2026-09-30). The session cursor was persisted and the
+    per-lane ones were not, so every lane came back from a restart having "read nothing" and the
+    page counted every turn he had ever spoken as unread on every card: *"it says in all the
+    agents that there are multiple turns from me that you have not read but that is not true."*"""
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    store.write_consumed_cursor("t", 305, lanes={"magnus": 305, "atlas": 290})
+
+    restarted = server.TunnelState("t", token=None)
+
+    assert restarted.lane_consumed == {"magnus": 305, "atlas": 290}
+    assert restarted.consumed_cursor == 305, "the session cursor still round-trips beside them"
+
+
+def test_a_restart_keeps_the_lane_he_was_on(monkeypatch, tmp_path):
+    """2026-09-30: *"I want the lane that I am on to be remembered across restarts."* A restart used
+    to drop him on the default lane, so his next sentence to dexter reached magnus."""
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    store.write_lanes("t", ["atlas", "dexter"])
+    store.write_live_lane("t", "dexter")
+
+    restarted = server.TunnelState("t", token=None)
+
+    assert restarted.lanes.current == "dexter"
+
+
+def test_a_remembered_lane_that_left_the_room_falls_back_to_the_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    store.write_live_lane("t", "ghost")
+    restarted = server.TunnelState("t", token=None)
+    assert restarted.lanes.current == restarted.lanes.default
+
+
+def test_a_consumed_file_from_before_lanes_were_persisted_still_loads(monkeypatch, tmp_path):
+    """The old file shape (no `lanes` key) must read as 'no lane positions yet', not a crash."""
+    monkeypatch.setenv("COMMAND_BRIDGE_DIR", str(tmp_path))
+    store.write_consumed_cursor("t", 12)
+    assert store.read_lane_consumed("t") == {}
+    assert store.read_consumed_cursor("t") == 12
+
+
 def test_a_genuinely_fresh_session_still_starts_at_minus_one(state):
     """The fix must not break the fresh case the old default was right about: no consumed
     file means no reader yet, and -1 is the honest 'behind by everything'."""

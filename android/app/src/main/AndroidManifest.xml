@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Spec 034: notice Wi-Fi <-> cellular, to move between the home path and the tunnel. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Spec 036: the light orb-off connection that relays agents' heads-ups. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/ic_btn_speak_now"
+        android:label="Command Bridge"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+        <!-- Spec 033 FR2: no action bar (the page has its own title), and DayNight so the WebView's
+             prefers-color-scheme follows the system's dark or light setting. -->
+        <activity
+            android:name=".MainActivity"
+            android:theme="@style/Bridge"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Spec 031: the page's one-time pairing link, commandbridge://pair?base=…&code=… -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="commandbridge" android:host="pair" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".VoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback" />
+
+        <service
+            android:name=".NotifyService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+    </application>
+</manifest>

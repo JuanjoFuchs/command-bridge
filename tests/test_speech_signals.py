@@ -355,4 +355,6 @@ def test_say_samples_unread_before_synthesis():
         "sample it before the early return, or the hurried path is the one path without it"
     )
     fire = body[body.index("if fire_and_forget:"):]
-    assert "**unread" in fire, "the fire-and-forget response must carry it too"
+    assert "**public_unread" in fire, (
+        "the fire-and-forget response must carry the unread info too (minus `since`, which is the "
+        "refusal path's business — see the informational-field prune, 2026-09-15)")
