@@ -1,6 +1,6 @@
 {
   "name": "@juanjofuchs/command-bridge",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "description": "A local voice tunnel: talk to your coding agent from a phone browser, no app",
   "author": "JuanjoFuchs",
   "license": "MIT",

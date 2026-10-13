@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-13
+
+**The first release under the name `command-bridge`.** 0.2.7 and earlier shipped as `voice-tunnel`
+(PyPI `voice-tunnel`, npm `@juanjofuchs/voice-tunnel`); the package, the CLI, the module
+(`command_bridge`) and every `COMMAND_BRIDGE_*` setting are renamed. The version continues the
+series rather than restarting at 0.1.0, because this repository already carries the `v0.1.0`–`v0.2.7`
+tags and a release is cut by pushing a tag.
+
+Since 0.2.7, in short: the **fleet view** as the home screen (`fleet hide|unhide|hidden`), several
+agents on **lanes** with their own orbs, colours and order, **liaison mode** and its hierarchy,
+**guest mode**, the **canvas** (frames as files the agent writes and points at, a drawable canvas
+the human can send back), **reload without losing audio**, `watch --idle`, **GPU speech to text**
+with a clean CPU fallback, pronunciation that holds at any speed, and the **Android companion app**
+(pairing, home-network mode, heads-up, "heard you", hanging up when the orb goes off).
+
+### Fixed (release day)
+
+- 🔴 **`describe` crashed on Windows when its output was piped** — `UnicodeEncodeError` on the first
+  non-ASCII character under the cp1252 console code page, which is how an agent always reads the
+  tool. stdout/stderr are now UTF-8 regardless of the code page.
+- CI was red on every push since the public repo opened: 114 lint findings stopped the run before
+  the tests, and behind them five word-timing tests needed the optional `kokoro-onnx`. Both fixed;
+  the suite passes on the core-only floor on Linux, macOS and Windows.
+
+**Earlier in this cycle** (written as it landed):
 
 A backlog audit found the Kokoro TTS backend shipped, running in production, and undeclared
 everywhere a user or an agent would look for it — the same defect that made turn detection

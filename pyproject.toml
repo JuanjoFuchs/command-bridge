@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "command-bridge"
-version = "0.1.0"
+version = "0.3.0"
 description = "A local command bridge: talk to your coding agent from a phone browser, no app"
 authors = [{ name = "JuanjoFuchs" }]
 readme = "README.md"
