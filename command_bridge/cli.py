@@ -8,6 +8,7 @@ Output is JSON on stdout, always, so the caller never parses prose. `--human` is
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -6572,6 +6573,14 @@ def _unknown_command(argv: list[str], parser: argparse.ArgumentParser) -> dict[s
 
 
 def main(argv=None) -> int:
+    # UTF-8 OUT, before anything prints. Every payload is `ensure_ascii=False`, and on Windows a
+    # PIPED stdout (which is how an agent always reads this tool) takes the ANSI code page — cp1252
+    # — so the first `Δ` or `→` in `describe` raised UnicodeEncodeError and the command exited 1.
+    # A developer with PYTHONUTF8=1 never sees it; CI's windows runners did, on every shim test.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper) and stream.encoding.lower() not in ("utf-8", "utf8"):
+            stream.reconfigure(encoding="utf-8")
+
     # FIRST, before anything reads a setting. This is what makes `command-bridge watch --session x --since -1`
     # a complete command: COMMAND_BRIDGE_TTS / COMMAND_BRIDGE_PIPER_BIN / COMMAND_BRIDGE_PIPER_VOICE / COMMAND_BRIDGE_DIR come off disk instead of
     # off the caller's memory. Never overwrites a variable already exported, so a one-off override
