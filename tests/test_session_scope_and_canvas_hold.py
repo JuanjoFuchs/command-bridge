@@ -208,6 +208,20 @@ def test_explicit_moves_are_remembered_and_only_a_focusing_edit_clears_them():
     assert "explicitTarget = null" in focus_branch
 
 
+def test_pointing_at_a_frame_outlines_it_and_never_recolours_its_insides():
+    # JJ, 2026-10-13: "you're highlighting every word and every line inside of the frame".
+    import re
+    from command_bridge.canvas import page
+    css = page.PAGE[:page.PAGE.index("</style>")]
+    descendant = re.findall(r"\.pointed[^,{]*\s+(?:rect|polygon|circle|path|text|tspan)\b", css)
+    assert descendant, "the descendant recolour rules moved — update this test"
+    for sel in descendant:
+        assert ":not([data-frame])" in sel, sel
+    # ...and a frame id still resolves to the card itself, which carries data-frame.
+    assert "el.dataset.frame = id;" in page.PAGE
+    assert "if (card) return card;" in page.PAGE
+
+
 def test_the_show_route_relays_open_and_close_and_rejects_anything_else(monkeypatch):
     from command_bridge.canvas import server as canvas
     assert canvas.Handler.OPS["show"] == "/show"

@@ -232,8 +232,15 @@ PAGE = """<!doctype html>
      other" (JJ, 2026-09-03). So exclude `.node` from the descendant recolour and
      let the outline stand alone; non-node containers (a hand-authored group, a
      sequence step's parts) still get their inner shapes marked. */
-  .pointed:not(.node):not(.cluster) rect, .pointed:not(.node):not(.cluster) polygon,
-  .pointed:not(.node):not(.cluster) circle, .pointed:not(.node):not(.cluster) path {
+  /* 🔴 NEVER A WHOLE FRAME'S INSIDES (JJ, 2026-10-13: "you're highlighting every word and every
+     line inside of the frame. Make sure that when you highlight, you highlight specific pieces on
+     purpose, or the frame outline"). `point <frame-id>` puts `.pointed` on the CARD, and these
+     descendant recolours then lit every bar, axis and label of a chart. A card (`[data-frame]`) gets
+     the outline alone; only a piece pointed at INSIDE a frame recolours its own parts. */
+  .pointed:not(.node):not(.cluster):not([data-frame]) rect,
+  .pointed:not(.node):not(.cluster):not([data-frame]) polygon,
+  .pointed:not(.node):not(.cluster):not([data-frame]) circle,
+  .pointed:not(.node):not(.cluster):not([data-frame]) path {
     stroke: var(--glow) !important; stroke-width: 2.5px !important;
   }
   /* A sequence STEP is pointed at as three separate elements, and two of them
@@ -242,7 +249,8 @@ PAGE = """<!doctype html>
      which is what "only the number was highlighted" looked like. Text takes a
      fill; a line takes a stroke. */
   line.pointed { stroke: var(--glow) !important; stroke-width: 2.5px !important; }
-  text.pointed, .pointed:not(.node):not(.cluster) text, .pointed:not(.node):not(.cluster) tspan {
+  text.pointed, .pointed:not(.node):not(.cluster):not([data-frame]) text,
+  .pointed:not(.node):not(.cluster):not([data-frame]) tspan {
     fill: var(--glow) !important; font-weight: 600;
   }
   /* When the thing being pointed at is SEVERAL elements — a sequence step is a
