@@ -2,7 +2,11 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/command-bridge/ci.yml?branch=main&label=CI)](https://github.com/JuanjoFuchs/command-bridge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/actions/workflow/status/JuanjoFuchs/command-bridge/release.yml?label=Release)](https://github.com/JuanjoFuchs/command-bridge/actions/workflows/release.yml)
+[![PyPI](https://img.shields.io/pypi/v/command-bridge)](https://pypi.org/project/command-bridge/)
+[![Python](https://img.shields.io/pypi/pyversions/command-bridge)](https://pypi.org/project/command-bridge/)
 [![GitHub Release](https://img.shields.io/github/v/release/JuanjoFuchs/command-bridge)](https://github.com/JuanjoFuchs/command-bridge/releases)
+[![PyPI downloads](https://img.shields.io/pepy/dt/command-bridge?label=pypi%20downloads)](https://pepy.tech/project/command-bridge)
+[![GitHub downloads](https://img.shields.io/github/downloads/JuanjoFuchs/command-bridge/total?label=github%20downloads)](https://github.com/JuanjoFuchs/command-bridge/releases)
 [![License](https://img.shields.io/github/license/JuanjoFuchs/command-bridge)](LICENSE)
 
 **Talk to your coding agent from your phone.** One command opens a page any phone browser can
