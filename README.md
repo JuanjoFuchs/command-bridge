@@ -20,7 +20,7 @@ phone will not give a web page a microphone over plain http.
 
 ## Watch it work
 
-[![Command Bridge demo: a team of Claude Code agents driven by voice (click to play, with sound)](docs/demo-thumb.png)](https://github.com/JuanjoFuchs/command-bridge/blob/main/docs/demo.mp4)
+https://github.com/user-attachments/assets/3da24122-e4d5-4661-9d06-1386f7a8bdcc
 
 Talking to a team of Claude Code agents by voice: ask for the roster, bring agents up, see the board
 of what each one is on, and watch one explain a blog post with a diagram it points at box by box.
