@@ -217,6 +217,7 @@ def test_explicit_moves_are_remembered_and_only_a_focusing_edit_clears_them():
 def test_pointing_at_a_frame_outlines_it_and_never_recolours_its_insides():
     # JJ, 2026-10-13: "you're highlighting every word and every line inside of the frame".
     import re
+
     from command_bridge.canvas import page
     css = page.PAGE[:page.PAGE.index("</style>")]
     descendant = re.findall(r"\.pointed[^,{]*\s+(?:rect|polygon|circle|path|text|tspan)\b", css)
