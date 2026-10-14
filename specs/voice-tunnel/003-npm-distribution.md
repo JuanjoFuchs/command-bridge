@@ -1,12 +1,26 @@
 ---
 id: "003"
 title: npm Distribution
-status: in_progress
+status: superseded
 blocked_by: ["002"]
 blocks: []
 ---
 
 # npm Distribution
+
+> **Superseded 2026-10-14 — command-bridge does not ship on npm.** No npm version under the
+> `command-bridge` name was ever published, and the channel is dropped along with WinGet. The `npm/`
+> launcher, `npm-publish.yml` and the release workflow's `trigger-npm` job were deleted in the same
+> change. JJ, deciding it:
+>
+> > "I am wondering if we should do NPM at all. Or WinGet for the same thing. Maybe with just the
+> > PowerShell [script] or the install directly from the git, and PyPI. We're good with that, right?"
+>
+> The ways in are now PyPI (`pipx` / `uv tool install command-bridge`), the install script from the
+> repository (`install.ps1` / `install.sh`), and the Windows bundle zip on GitHub Releases. This
+> package only ever wrapped a pip install behind a Python prerequisite it could not remove, so it
+> was a second registry to keep in lockstep with PyPI for no audience PyPI does not already reach.
+> The spec below is kept as the record of what was built and why.
 
 ## Overview
 

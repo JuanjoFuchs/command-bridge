@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- **The npm and WinGet channels.** command-bridge installs from PyPI (`pipx` / `uv tool install
+  "command-bridge[all]"`), with the install script straight from this repository (`install.ps1` /
+  `install.sh`), or — on Windows without Python — from the bundle zip on each GitHub Release.
+  Neither channel ever shipped a version under the `command-bridge` name; the `npm/` launcher, the
+  `npm-publish.yml` / `winget-init.yml` / `winget-publish.yml` workflows and the release
+  workflow's jobs that dispatched them are gone. The README's install section now describes the
+  three channels that exist instead of saying packages "are not out yet". Spec 003 (npm) is marked
+  superseded and spec 002 notes the WinGet withdrawal.
+
 ## 0.3.0 — 2026-10-13
 
 **The first release under the name `command-bridge`.** 0.2.7 and earlier shipped as `voice-tunnel`

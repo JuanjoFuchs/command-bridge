@@ -1,7 +1,8 @@
 #
 # command-bridge installer for Windows (PowerShell).
 #
-# There is no PyPI, npm or WinGet release yet, so this installs from the Git repository: it finds
+# This installs from the Git repository (the other ways in are PyPI and the Windows zip on GitHub
+# Releases -- see the README): it finds
 # Python, clones (or updates) the repo, builds a private virtualenv beside it, installs
 # command-bridge with all of its neural engines, and prints how to run it. Nothing touches the
 # system Python or any active environment -- everything lives under the checkout and is removed by

@@ -1,11 +1,24 @@
 ---
 title: Invocation, settings, voice rate, and the fresh-install check
-description: How to invoke the tool from any cwd, where settings persist, how speed and pause are tuned, and how to test what a fresh install experiences without publishing.
+description: The three install channels (PyPI, install script, Windows zip — no npm, no WinGet), how to invoke the tool from any cwd, where settings persist, how speed and pause are tuned, and how to test what a fresh install experiences without publishing.
 applies_to: bin/, command_bridge/config.py, .env, scripts/coldstart.py
 read_before: an invocation failure, changing a setting or the voice rate, or changing doctor / setup / describe / remedies / extras
 ---
 
 # Invocation, settings, voice rate, and the fresh-install check
+
+## Distribution channels — three, and only three
+
+**PyPI** (`pipx install "command-bridge[all]"` / `uv tool install "command-bridge[all]"`), the
+**install script** straight from the repository (`install.ps1` / `install.sh`, which clone and build
+a private venv beside the checkout), and the **Windows `--onedir` bundle** as a zip on each GitHub
+Release. `release.yml` produces all of it from one tag: PyPI publish, the GitHub Release with wheel,
+sdist and zip attached.
+
+**There is no npm and no WinGet channel** — both dropped 2026-10-14 (spec
+`specs/voice-tunnel/003-npm-distribution.md` is superseded; spec 002 carries the note). Do not
+re-add either to a README, a remedy or `describe`; the old `voice-tunnel` names on those registries
+predate the rename and are not this tool.
 
 ## Invoking the tool — `command-bridge doctor`
 

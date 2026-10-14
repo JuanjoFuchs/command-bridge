@@ -8,6 +8,17 @@ blocks: ["003"]
 
 # Packaging and Distribution
 
+> **Changed 2026-10-14 — WinGet and npm are dropped.** The channels are now PyPI (`pipx` /
+> `uv tool install command-bridge`), the install script straight from the repository
+> (`install.ps1` / `install.sh`), and the Windows `--onedir` bundle as a zip on each GitHub Release.
+> `winget-init.yml`, `winget-publish.yml` and the release workflow's `trigger-winget` job were
+> deleted; no WinGet manifest was ever submitted under the `command-bridge` name. Everything below
+> about WinGet (FR5, TC3, pre-requisite 4, AC12-AC14, the `winget-*` workflow tasks) is withdrawn,
+> not pending; the bundle and its measurements stand, since the zip still serves Windows users
+> without Python. npm is spec 003, now superseded. JJ, deciding it: *"I am wondering if we should do
+> NPM at all. Or WinGet for the same thing. Maybe with just the PowerShell [script] or the install
+> directly from the git, and PyPI. We're good with that, right?"*
+
 ## Overview
 
 Publish the voice tunnel from spec 001 as a Python distribution on PyPI, release artifacts on
@@ -141,12 +152,12 @@ what to hand back.
   > exactly this and its v0.1.2 release failed with
   > `invalid-pending-publisher: valid token, but project already exists`.
 
-### 4. WinGet
+### 4. WinGet (withdrawn 2026-10-14 — see the note at the top)
 
 - [ ] Generate a GitHub Personal Access Token with `public_repo` scope and add it as repository
       secret `WINGET_TOKEN`. This is what opens the PR against `microsoft/winget-pkgs`.
 
-### 5. npm — trusted publishing, and one manual first publish
+### 5. npm — trusted publishing, and one manual first publish (withdrawn 2026-10-14 — spec 003 is superseded)
 
 **No `NPM_TOKEN`, deliberately.** The account has 2FA set to `auth-and-writes`, which a
 token-based CI publish cannot satisfy; automation tokens used to bypass that and npm is
@@ -308,9 +319,10 @@ every one of them.
 - [ ] `ci.yml` — lint, unit tests on Linux/macOS/Windows, and a build check on every push and PR.
 - [ ] `release.yml` — validate the tag against package metadata, build wheel and sdist, publish
       to PyPI, and create the GitHub Release with both artifacts attached.
-- [ ] `winget-init.yml` — one-time submission of `JuanjoFuchs.voice-tunnel` to
-      `microsoft/winget-pkgs`.
-- [ ] `winget-publish.yml` — subsequent version submissions on each release.
+- ~~`winget-init.yml` — one-time submission of `JuanjoFuchs.voice-tunnel` to
+  `microsoft/winget-pkgs`.~~ Withdrawn 2026-10-14; the workflow was deleted.
+- ~~`winget-publish.yml` — subsequent version submissions on each release.~~ Withdrawn
+  2026-10-14; the workflow was deleted.
 
 ### Documentation
 
@@ -357,7 +369,7 @@ every one of them.
 - [ ] **AC11**: An installed `voice-tunnel serve` returns the client page over HTTP with status
       200 and a non-trivial body. `integration`
 
-### WinGet
+### WinGet (withdrawn 2026-10-14 — the channel was dropped; these will not be verified)
 
 - [ ] **AC12**: The WinGet submission workflow opens a PR to `microsoft/winget-pkgs` for
       `JuanjoFuchs.voice-tunnel`. `manual`
@@ -422,7 +434,8 @@ After a tag push: the GitHub Release carries both artifacts, PyPI shows the vers
 - Homebrew, Scoop, Chocolatey, AUR, Docker.
 - Code signing and notarization.
 - Publishing the models anywhere; they are fetched from their existing upstreams at runtime.
-- npm and `npx`, which is spec 003.
+- npm and `npx`, which was spec 003 — superseded 2026-10-14; there is no npm channel.
+- WinGet, as of 2026-10-14 (see the note at the top).
 - Any change to spec 001 tunnel behaviour.
 
 ## References

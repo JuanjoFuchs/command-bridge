@@ -8,8 +8,8 @@ reason to publish; it was the only cold install lying around.
 
 `python -m build` produces the same wheel the release workflow uploads, from the same tree. Pip
 installs it into a throwaway virtualenv exactly as it would from the index. The only things this
-cannot exercise are the upload itself and the npm/WinGet shims, and neither has ever been the
-thing under test.
+cannot exercise are the upload itself and the frozen Windows bundle, and neither has ever been
+the thing under test.
 
 ISOLATION IS THE POINT, NOT A CONVENIENCE. A fresh virtualenv is not a fresh installation: 0.2.2
 came out of an audit that built one, believed it was pristine, and inherited another agent's wake
