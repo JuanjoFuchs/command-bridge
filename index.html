@@ -35,27 +35,27 @@
       <a class="btn primary" href="https://github.com/JuanjoFuchs/command-bridge">Get it on GitHub</a>
       <a class="btn" href="#how">See how it works</a>
     </div>
-    <div class="install">
-      <code>curl -fsSL https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/install.sh | bash</code>
-      <small>Then tell your agent: run <code style="display:inline;padding:0;border:0;background:none">command-bridge describe</code> and follow it. Windows and PyPI installs are in the <a href="https://github.com/JuanjoFuchs/command-bridge#install">README</a>.</small>
-    </div>
   </div>
   <figure style="margin:0">
     <video src="demo.mp4" poster="demo-thumb.png" controls muted playsinline preload="metadata"></video>
     <figcaption>Talking to a team of Claude Code agents: the roster, the board, and an agent pointing at a diagram as it explains it.</figcaption>
   </figure>
+  <div class="handoff">
+    <p class="handoff-line"><code>Read https://command-bridge.juanjofuchs.com/<wbr>install.md and follow it to install and start Command Bridge for me.</code><button type="button" class="copy">Copy</button></p>
+    <small>Paste it into Claude Code, Codex, or any agent that can run commands. It installs everything, starts the server and gives you the link to open.</small>
+  </div>
 </div>
 
 <section id="how">
   <div class="wrap">
     <h2>Why I built it</h2>
-    <p class="lede">I kept hitting the same wall with my agents: getting what I meant in was slow, and getting what they meant out was slower.</p>
+    <p class="lede">I'm exploring ways to increase the bandwidth between me and my AI agents.</p>
 
     <div class="step">
       <div class="n" aria-hidden="true">1</div>
       <div>
-        <h3>Typing to an agent</h3>
-        <p>I type a request, read a wall of text back, and type again. Most of my day with AI agents went into that loop.</p>
+        <h3>Typing is slow</h3>
+        <p>Most of my day with my agents went into typing requests to them.</p>
       </div>
       <div class="stage">
         <div class="frame" data-src="frames/typing.anim.html" data-title="Typing a request to an agent and reading the reply"></div>
@@ -79,7 +79,7 @@
       <div class="n" aria-hidden="true">3</div>
       <div>
         <h3>Reading is the bottleneck</h3>
-        <p>Reading the answer back is the slow half. What if I could hear it, and see what it means? <a href="https://juanjofuchs.com/blog/intent-per-minute">Intent and understanding per minute</a></p>
+        <p>Reading a huge wall of text back is very slow. What if I could hear it and see what it means? <a href="https://juanjofuchs.com/blog/intent-per-minute">Intent and understanding per minute</a></p>
       </div>
       <div class="stage">
         <div class="frame" data-src="frames/bandwidth.anim.html" data-title="Intent per minute against understanding per minute"></div>
@@ -153,8 +153,8 @@
   <div class="wrap get-it">
     <div>
       <h2>Get it</h2>
-      <p>Open source under the MIT license. One line installs it, then your agent sets up the rest.</p>
-      <code>curl -fsSL https://raw.githubusercontent.com/JuanjoFuchs/command-bridge/main/install.sh | bash</code>
+      <p>Open source under the MIT license. Give your agent this one line and it does the rest.</p>
+      <p class="handoff-line"><code>Read https://command-bridge.juanjofuchs.com/<wbr>install.md and follow it to install and start Command Bridge for me.</code><button type="button" class="copy">Copy</button></p>
     </div>
     <a class="btn primary" href="https://github.com/JuanjoFuchs/command-bridge">Get it on GitHub</a>
   </div>
@@ -169,5 +169,19 @@
 </footer>
 
 <script src="play.js"></script>
+<script>
+// Copy the handoff line; the button says Copied for a moment so the press shows what happened.
+document.querySelectorAll(".handoff-line .copy").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const text = btn.previousElementSibling.textContent;
+    try { await navigator.clipboard.writeText(text); btn.textContent = "Copied"; }
+    catch {   // no clipboard access (an old browser, an insecure page): select it so a long-press copies it
+      const r = document.createRange(); r.selectNodeContents(btn.previousElementSibling);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Selected";
+    }
+    setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+  });
+});
+</script>
 </body>
 </html>

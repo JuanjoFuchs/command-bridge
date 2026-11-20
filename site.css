@@ -45,9 +45,16 @@ img, video { max-width: 100%; display: block; }
 .hero video { width: 100%; border-radius: 8px; border: 1px solid var(--rule); background: #000; }
 .hero figcaption { color: var(--quiet); font-size: 0.85rem; margin-top: 0.6rem; }
 
-.install { margin-top: 1.75rem; }
-.install code { display: block; font: 0.86rem/1.5 var(--mono); background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; padding: 0.7rem 0.9rem; overflow-x: auto; white-space: nowrap; color: var(--text); }
-.install small { display: block; color: var(--quiet); font-size: 0.82rem; margin-top: 0.45rem; }
+/* The handoff: one sentence for your agent, across the full width under the hero. It wraps rather than
+   scrolls, so a phone shows all of it; the copy button is the way to take it. */
+.handoff { grid-column: 1 / -1; }
+.handoff small { display: block; color: var(--quiet); font-size: 0.88rem; margin-top: 0.6rem; }
+/* max-width: none, and the margin, beat the hero's and the close's paragraph rules: this line is never a 30rem column. */
+.hero .handoff-line, .get-it .handoff-line { display: flex; align-items: stretch; max-width: none; margin: 0; background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; }
+/* break-word, not anywhere: on a phone the URL breaks at its hyphen and after ".com/" (a <wbr>), never mid-word. */
+.handoff-line code { flex: 1 1 auto; min-width: 0; font: 0.86rem/1.55 var(--mono); padding: 0.85rem 1rem; color: var(--text); overflow-wrap: break-word; }
+.copy { flex: none; font: 600 0.92rem var(--sans); color: var(--ground); background: var(--teal); border: 0; border-left: 1px solid var(--rule); border-radius: 0 5px 5px 0; padding: 0 1.2rem; cursor: pointer; }
+.copy:hover { background: #7ad8cb; }
 
 /* The story: four steps, each with its real animation. */
 section { padding: 4rem 0; border-top: 1px solid var(--rule); }
@@ -80,11 +87,11 @@ h2 { font: 600 clamp(1.7rem, 2.8vw, 2.3rem)/1.15 var(--cond); margin: 0 0 1rem; 
 .posts span { display: block; color: var(--quiet); font-size: 0.9rem; line-height: 1.5; }
 .posts a:hover strong { color: var(--teal); }
 
-/* The close: the same install line as the hero, for whoever scrolled to the end. */
+/* The close: the same handoff line as the hero, for whoever scrolled to the end. */
 .get-it { display: flex; align-items: center; justify-content: space-between; gap: 2rem; flex-wrap: wrap; }
 .get-it > div { min-width: 0; flex: 1 1 32rem; }
 .get-it p { margin: 0 0 1.25rem; color: var(--quiet); max-width: var(--measure); }
-.get-it code { display: block; font: 0.86rem/1.5 var(--mono); background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; padding: 0.7rem 0.9rem; overflow-x: auto; white-space: nowrap; color: var(--text); }
+.get-it .handoff-line code { font-size: 0.9rem; }
 
 footer { border-top: 1px solid var(--rule); padding: 2rem 0 3rem; color: var(--quiet); font-size: 0.9rem; }
 footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
