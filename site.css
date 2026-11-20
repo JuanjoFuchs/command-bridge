@@ -1,0 +1,106 @@
+/* Command Bridge site. The palette is the product's own canvas skin, so the animated frames sit on it
+   with no seam: ground #12151b, raised #1b2029, rule #2c333f, text #e6e9ef, quiet #8a93a3,
+   and the one accent, the canvas teal #5cc8ba. */
+:root {
+  --ground: #12151b;
+  --raised: #1b2029;
+  --rule: #2c333f;
+  --text: #e6e9ef;
+  --quiet: #9aa3b2;
+  --teal: #5cc8ba;
+  --teal-deep: #173a38;
+  --sans: "IBM Plex Sans", system-ui, "Segoe UI", sans-serif;
+  --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --measure: 38rem;
+  --wide: 72rem;
+}
+* { box-sizing: border-box; }
+html { background: var(--ground); color: var(--text); }
+body { margin: 0; font: 400 1.0625rem/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: var(--teal); text-underline-offset: 0.18em; }
+a:hover { color: var(--text); }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; border-radius: 2px; }
+img, video { max-width: 100%; display: block; }
+
+.wrap { max-width: var(--wide); margin: 0 auto; padding: 0 1.5rem; }
+
+/* Top bar: the name and two links, nothing else. */
+.bar { display: flex; align-items: center; justify-content: space-between; padding-top: 1.25rem; padding-bottom: 1.25rem; }
+.bar .name { font: 600 1.05rem var(--cond); letter-spacing: 0.01em; color: var(--text); text-decoration: none; display: flex; align-items: center; gap: 0.6rem; }
+.orb { width: 0.85rem; height: 0.85rem; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 4px var(--teal-deep); }
+.bar nav { display: flex; gap: 1.5rem; }
+.bar nav a { color: var(--quiet); text-decoration: none; font-size: 0.95rem; }
+.bar nav a:hover { color: var(--text); }
+
+/* Hero: the claim on the left, the product working on the right. */
+.hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 3rem; align-items: center; padding-top: 3.5rem; padding-bottom: 4.5rem; }
+.hero h1 { font: 600 clamp(2.4rem, 4.6vw, 3.9rem)/1.04 var(--cond); letter-spacing: -0.015em; margin: 0 0 1.25rem; }
+.hero p { color: var(--quiet); font-size: 1.15rem; margin: 0 0 1.75rem; max-width: 30rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.btn { display: inline-block; padding: 0.7rem 1.15rem; border-radius: 6px; font-weight: 600; font-size: 0.98rem; text-decoration: none; border: 1px solid var(--rule); color: var(--text); }
+.btn.primary { background: var(--teal); border-color: var(--teal); color: var(--ground); }
+.btn.primary:hover { background: #7ad8cb; color: var(--ground); }
+.btn:hover { border-color: var(--quiet); color: var(--text); }
+.hero video { width: 100%; border-radius: 8px; border: 1px solid var(--rule); background: #000; }
+.hero figcaption { color: var(--quiet); font-size: 0.85rem; margin-top: 0.6rem; }
+
+.install { margin-top: 1.75rem; }
+.install code { display: block; font: 0.86rem/1.5 var(--mono); background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; padding: 0.7rem 0.9rem; overflow-x: auto; white-space: nowrap; color: var(--text); }
+.install small { display: block; color: var(--quiet); font-size: 0.82rem; margin-top: 0.45rem; }
+
+/* The story: four steps, each with its real animation. */
+section { padding: 4rem 0; border-top: 1px solid var(--rule); }
+h2 { font: 600 clamp(1.7rem, 2.8vw, 2.3rem)/1.15 var(--cond); margin: 0 0 1rem; letter-spacing: -0.01em; }
+.lede { color: var(--quiet); max-width: var(--measure); margin: 0 0 2.5rem; }
+
+.step { display: grid; grid-template-columns: 3.2rem minmax(0, 1fr); gap: 0 1.25rem; margin: 0 0 4rem; }
+.step:last-child { margin-bottom: 0; }
+.step .n { font: 600 1.4rem/1 var(--cond); color: var(--ground); background: var(--teal); width: 2.6rem; height: 2.6rem; border-radius: 50%; display: grid; place-items: center; margin-top: 0.2rem; }
+.step h3 { font: 600 1.45rem/1.25 var(--cond); margin: 0.25rem 0 0.5rem; }
+.step p { margin: 0 0 1.25rem; max-width: var(--measure); color: var(--quiet); }
+.step p a { white-space: nowrap; }
+.stage { grid-column: 2; position: relative; }
+
+.frame { position: relative; width: 100%; overflow: hidden; border-radius: 8px; border: 1px solid var(--rule); background: var(--ground); }
+.frame iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none; }
+.replay { position: absolute; right: 0.6rem; bottom: 0.6rem; font: 500 0.82rem var(--sans); color: var(--quiet); background: rgba(18, 21, 27, 0.85); border: 1px solid var(--rule); border-radius: 5px; padding: 0.3rem 0.65rem; cursor: pointer; }
+.replay:hover { color: var(--text); border-color: var(--quiet); }
+
+/* What it is, in three plain facts. */
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2.5rem; }
+.facts h3 { font: 600 1.15rem/1.3 var(--cond); margin: 0 0 0.4rem; }
+.facts p { margin: 0; color: var(--quiet); font-size: 0.98rem; }
+
+/* Writing: the posts the product came out of, newest first. */
+.posts { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2.25rem 1.75rem; }
+.posts a { text-decoration: none; color: var(--text); display: block; }
+.posts img { aspect-ratio: 16 / 9; object-fit: cover; width: 100%; border-radius: 6px; border: 1px solid var(--rule); margin-bottom: 0.8rem; }
+.posts strong { display: block; font: 600 1.05rem/1.3 var(--cond); margin-bottom: 0.3rem; }
+.posts span { display: block; color: var(--quiet); font-size: 0.9rem; line-height: 1.5; }
+.posts a:hover strong { color: var(--teal); }
+
+/* The close: the same install line as the hero, for whoever scrolled to the end. */
+.get-it { display: flex; align-items: center; justify-content: space-between; gap: 2rem; flex-wrap: wrap; }
+.get-it > div { min-width: 0; flex: 1 1 32rem; }
+.get-it p { margin: 0 0 1.25rem; color: var(--quiet); max-width: var(--measure); }
+.get-it code { display: block; font: 0.86rem/1.5 var(--mono); background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; padding: 0.7rem 0.9rem; overflow-x: auto; white-space: nowrap; color: var(--text); }
+
+footer { border-top: 1px solid var(--rule); padding: 2rem 0 3rem; color: var(--quiet); font-size: 0.9rem; }
+footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+
+@media (max-width: 860px) {
+  /* minmax(0, 1fr), not 1fr: a bare 1fr column grows to its widest unbreakable child,
+     and the install line would push the whole page wider than the phone. */
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 2rem; padding-top: 1.5rem; }
+  .facts, .posts { grid-template-columns: minmax(0, 1fr); }
+  .step { grid-template-columns: minmax(0, 1fr); }
+  .step .n { margin-bottom: 0.75rem; }
+  .stage { grid-column: 1; }
+  .bar nav { gap: 0.9rem; }
+  .bar nav a { font-size: 0.88rem; }
+}
+/* On a phone the header holds the name plus two links; Writing is one scroll away. */
+@media (max-width: 480px) {
+  .bar nav a[href="#writing"] { display: none; }
+}

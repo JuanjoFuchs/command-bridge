@@ -1,0 +1,93 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;background:#12151b;}
+  svg{display:block}
+  .lab{font:500 30px system-ui,Segoe UI,sans-serif;fill:#e6e9ef}
+  .val{font:700 34px system-ui,Segoe UI,sans-serif;fill:#e6e9ef}
+  .src{font:15px system-ui,Segoe UI,sans-serif;fill:#8a93a3}
+  .key{font:600 17px system-ui,Segoe UI,sans-serif;fill:#e6e9ef}
+  .trk{fill:#1b2029;stroke:#3a4252;stroke-width:2}
+  .trk.acc{fill:#173a38;stroke:#5cc8ba}
+</style></head>
+<body>
+<svg id="s" width="1280" height="520" viewBox="0 0 1280 520"></svg>
+<script>
+// Every label, bar and number is on screen from frame 0 and stays.
+// The motion is the real rate: what flows along each bar moves at a speed proportional to its words per minute.
+// Typing bars flow as keyboard keys, the talking bar as a waveform. Pure function of t; no timers.
+const NS='http://www.w3.org/2000/svg', S=document.getElementById('s');
+function el(t,a,p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);(p||S).appendChild(e);return e;}
+function tx(x,y,c,s,p){const e=el('text',{x,y,class:c},p);e.textContent=s;return e;}
+
+const X0=400, MAXW=760, MAXV=196, BH=76, PXS=1.25; // bar start, full width, its value, bar height, px/s per wpm
+// id, label, value, kind, row y
+const R=[
+  ['average','Regular person typing',52,'keys',70],
+  ['typist','Professional typist',68,'keys',200],
+  ['talking','Regular person talking',196,'wave',330],
+];
+const bars=[];
+for(const [id,label,v,kind,y] of R){
+  const g=el('g',{id:'bar-'+id}); const w=Math.round(MAXW*v/MAXV);
+  const t=tx(X0-24,y+BH/2+11,'lab',label,g); t.setAttribute('text-anchor','end');
+  const r=el('rect',{x:X0,y,width:w,height:BH,rx:6,class:'trk'+(kind==='wave'?' acc':'')},g);
+  tx(X0+w+18,y+BH/2+12,'val',String(v),g);
+  bars.push({id,v,kind,y,w,r,speed:v*PXS,items:[]});
+}
+tx(24,500,'src','Sources: Aalto typing study, 2018 (168,000 people); typing studies, 1980s; Penn conversation corpus, 2006');
+
+const L=el('g',{});
+const TEXT='THEQUICKBROWNFOXJUMPSOVERTHELAZYDOG';
+const KEY=32, KPER=42;       // keycap size, px between keys
+const COL=4;                 // px between waveform columns
+for(const b of bars){
+  if(b.kind==='keys'){const n=Math.ceil(b.w/KPER)+2;
+    for(let i=0;i<n;i++){const g=el('g',{opacity:0},L);
+      const cap=el('rect',{width:KEY,height:KEY,rx:5,fill:'#2a313d',stroke:'#aab2bf','stroke-width':1.5},g);
+      const ch=tx(0,0,'key','',g); ch.setAttribute('text-anchor','middle');
+      b.items.push({g,cap,ch});}}
+  else{const n=Math.floor((b.w-16)/COL);
+    for(let i=0;i<n;i++)b.items.push(el('rect',{x:X0+8+i*COL,width:2.5,rx:1.25,fill:'#5cc8ba'},L));}
+}
+// smooth deterministic noise for the waveform
+const hash=n=>{const s=Math.sin(n*127.1)*43758.5453;return s-Math.floor(s);};
+const noise=u=>{const i=Math.floor(u),f=u-i,g=f*f*(3-2*f);return hash(i)*(1-g)+hash(i+1)*g;};
+// a speech-like envelope: syllable bursts with pauses between phrases, in px of stream
+const amp=s=>{const syl=Math.pow(Math.abs(Math.sin(s*Math.PI/38)),0.7);
+  const phrase=noise(s/260)>0.22?1:0.15; return (0.25+0.75*noise(s/9))*syl*phrase;};
+
+// Beats: each bar's flow switches on in reading order and keeps going; the last beat is all three together.
+const BEATS=['average','typist','talking'], BT=2.0;
+window.beats={}; BEATS.forEach((n,i)=>{window.beats[n]=i*BT; bars.find(b=>b.id===n).on=i*BT;});
+window.beats.race=BEATS.length*BT;
+const D=BEATS.length*BT+6;
+
+window.width=1280; window.height=520;
+window.duration=D;
+window.seek=function(t){
+  for(const b of bars){
+    const run=t-b.on, head=run*b.speed, cur=t>=b.on&&t<b.on+BT;
+    b.r.setAttribute('stroke-width',cur?4:2);
+    if(b.kind==='keys'){
+      const top=Math.floor(head/KPER), cy=b.y+BH/2;
+      b.items.forEach((it,i)=>{const k=top-i, x=head-k*KPER;     // key k entered k*KPER/speed s after the start
+        const vis=run>=0&&k>=0&&x>=0&&x<=b.w-KEY-8;
+        if(!vis){it.g.setAttribute('opacity',0);return;}
+        const press=Math.max(0,1-x/30);                             // pressed as it enters, then rises
+        const px=X0+4+x, py=cy-KEY/2+press*3;
+        it.cap.setAttribute('x',px);it.cap.setAttribute('y',py);
+        it.cap.setAttribute('fill',press>0?'#5b616b':'#2a313d');
+        it.ch.setAttribute('x',px+KEY/2);it.ch.setAttribute('y',py+KEY/2+6);it.ch.textContent=TEXT[k%TEXT.length];
+        it.g.setAttribute('opacity',Math.min(1,x/10,(b.w-KEY-8-x)/14));});
+    } else {
+      const cy=b.y+BH/2, H=BH/2-10;
+      b.items.forEach((c,i)=>{const x=8+i*COL, s=head-x;           // s: how long ago this slice was spoken, in px
+        const h=(run>=0&&s>=0)?Math.max(2,amp(s)*H*2):2;
+        c.setAttribute('y',cy-h/2);c.setAttribute('height',h);});
+    }
+  }
+};
+window.seek(0);
+</script>
+</body></html>

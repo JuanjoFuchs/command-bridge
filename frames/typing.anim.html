@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- A prompt typed at 65 wpm with real mistakes, Enter, a short thinking beat, then a wall of AI text streaming out.
+     Every pixel is a pure function of t. -->
+<style>
+  html, body { margin: 0; background: #0d1117; }
+  #t1-root { position: relative; width: 1600px; height: 880px; overflow: hidden; background: #0d1117;
+    font-family: "Cascadia Mono", "Cascadia Code", Consolas, "DejaVu Sans Mono", monospace; color: #c9d1d9; }
+  #t1-window { position: absolute; left: 64px; top: 40px; width: 1472px; height: 800px; border-radius: 12px;
+    background: #161b22; border: 1px solid #30363d; box-shadow: 0 24px 64px rgba(0,0,0,.45); }
+  #t1-bar { height: 44px; border-bottom: 1px solid #30363d; display: flex; align-items: center; padding: 0 20px; gap: 10px; }
+  .t1-dot { width: 14px; height: 14px; border-radius: 50%; background: #30363d; }
+  #t1-title { margin-left: 16px; font-size: 20px; color: #8b949e; }
+  #t1-body { position: absolute; left: 40px; right: 40px; top: 72px; bottom: 24px; }
+  #t1-prompt { font-size: 32px; line-height: 44px; white-space: pre-wrap; color: #e6edf3; }
+  #t1-prompt .t1-gt { color: #58a6ff; }
+  #t1-cursor { display: inline-block; width: 3px; height: 36px; vertical-align: -7px; background: #58a6ff; margin: 0 -1px 0 -2px; }
+  #t1-think { margin-top: 12px; font-size: 22px; line-height: 28px; color: #8b949e; height: 28px; }
+  #t1-think .t1-spark { color: #58a6ff; }
+  /* a dense wall edge to edge: every line wraps at the terminal's full width, and the box ends on a whole line */
+  #t1-blurb { margin-top: 10px; height: 570px; overflow: hidden; font-size: 12px; line-height: 15px; white-space: pre-wrap;
+    word-break: break-word; color: #c9d1d9; }
+</style>
+</head>
+<body>
+<div id="t1-root">
+  <div id="t1-window">
+    <div id="t1-bar"><span class="t1-dot"></span><span class="t1-dot"></span><span class="t1-dot"></span><span id="t1-title">agent — terminal</span></div>
+    <div id="t1-body">
+      <div id="t1-prompt"><span class="t1-gt">&gt; </span><span id="t1-before"></span><span id="t1-cursor"></span><span id="t1-after"></span></div>
+      <div id="t1-think"></div>
+      <div id="t1-blurb"></div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var PROMPT = "Add retries with exponential backoff to the payment client, and write tests for the edge cases.";
+  var BLURB = [
+    "I'll add retry logic with exponential backoff to the payment client, then cover the edge cases with tests. First I'll read the client, its error types and the existing tests to see how failures surface today, which calls are safe to repeat, and whether the client already carries idempotency keys, because a retried charge without one could bill the customer twice. Then I'll add a small, separately tested retry module instead of threading loops through every call site, so the policy lives in one place and the refund, capture and payout clients can share it later.",
+    "● Read src/payments/client.ts (214 lines)      ● Read src/payments/errors.ts (61 lines)      ● Read tests/payments/client.test.ts (188 lines)      ● Read src/payments/http.ts (97 lines)      ● Grep \"idempotency\" (12 matches in 4 files)",
+    "  The client already sends an Idempotency-Key header on charge() and capture(), generated per call, but refund() builds a new key on every request, so a retried refund would not be deduplicated by the provider; I'll fix that by creating the key once per logical call and passing it into every attempt. Errors come back as PaymentError with a status and an optional retryAfter header that nothing reads yet; network resets surface as a plain Error from fetch, which I'll map to a transient PaymentError so the retry rule sees them.",
+    "",
+    "● Update src/payments/retry.ts (new file, 74 lines)",
+    "    export interface RetryPolicy { attempts: number; baseMs: number; capMs: number; retryOn: (e: PaymentError) => boolean }",
+    "    export const DEFAULT_RETRY: RetryPolicy = { attempts: 5, baseMs: 200, capMs: 5_000, retryOn: isTransient };",
+    "    export function backoff(attempt: number, p: RetryPolicy, rand = Math.random): number {",
+    "      const exp = Math.min(p.capMs, p.baseMs * 2 ** (attempt - 1));",
+    "      return Math.floor(rand() * exp);                     // full jitter: clients that failed together don't retry together",
+    "    }",
+    "    export async function withRetry<T>(op: (attempt: number) => Promise<T>, p = DEFAULT_RETRY, clock = realClock): Promise<T> {",
+    "      const causes: PaymentError[] = [];",
+    "      for (let attempt = 1; attempt <= p.attempts; attempt++) {",
+    "        try { return await op(attempt); }",
+    "        catch (e) {",
+    "          const err = PaymentError.from(e); causes.push(err);",
+    "          if (!p.retryOn(err) || attempt === p.attempts || clock.pastDeadline()) throw new RetryExhausted(causes);",
+    "          await clock.sleep(err.retryAfterMs ?? backoff(attempt, p));   // the server's Retry-After wins over our own backoff",
+    "        }",
+    "      }",
+    "      throw new RetryExhausted(causes);",
+    "    }",
+    "",
+    "● Update src/payments/client.ts (+18 -6): charge(), refund() and capture() go through withRetry, keeping one idempotency key per call",
+    "● Update src/payments/errors.ts (+22): isTransient(): network errors, 429, 502, 503, 504; never a 4xx decline; RetryExhausted keeps every cause",
+    "● Write tests/payments/retry.test.ts (9 tests, fake clock, no real waits)",
+    "    ✓ succeeds on the third attempt after two 503s                 ✓ backoff doubles from 200 ms and caps at 5 s, within jitter bounds",
+    "    ✓ gives up after 5 attempts with all five causes                ✓ never retries a 400 or a declined card",
+    "    ✓ a Retry-After of 2 s wins over its own backoff                ✓ stops early once the request deadline is spent",
+    "    ✓ the same idempotency key on every attempt of one charge       ✓ a network reset mid-request is retried",
+    "    ✓ concurrent charges retry at different times (jitter)",
+    "",
+    "● Bash npm test -- payments",
+    "    Test Files  4 passed (4)      Tests  41 passed (41)      Duration  1.92s",
+    "",
+    "Done. Payments now retry transient failures up to 5 times with capped, jittered backoff, honor the provider's Retry-After header when it sends one, stop as soon as the request's own deadline is spent, and never double-charge, because every attempt of one logical call reuses the same idempotency key, including refunds, which previously minted a new key per request. Non-transient failures such as a declined card, a 400 validation error or an authentication failure fail at once, exactly as before, so nothing that used to fail fast now waits. The retry history travels on RetryExhausted, so the logs show every attempt's status, delay and cause when a payment finally gives up. Two follow-ups I'd suggest: apply the same policy to the payout client, which has its own copy of the HTTP layer and no retries at all, and add a metric for retries per call so a provider outage shows up on the dashboard before customers notice. Want me to do either next?"
+  ].join("\n");
+
+  // The keystrokes at 65 wpm: the text in pieces, with two typos caught and backed
+  // out, and one left in ("tets"), then fixed in place: the cursor walks back with the arrow keys, the missing letter goes in,
+  // End jumps back, Enter. Each key's gap comes from a seeded generator (the same every load: the page owns the clock)
+  function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  var r = rng(65), keys = [];
+  function type(s) { for (var k = 0; k < s.length; k++) keys.push({ op: "ch", ch: s[k], w: (0.6 + 0.8 * r()) * (s[k - 1] === " " ? 1.35 : 1) * (",.".indexOf(s[k - 1]) >= 0 ? 1.9 : 1) }); }
+  function notice(w) { keys.push({ op: "wait", w: w }); }
+  function back(n) { for (var k = 0; k < n; k++) keys.push({ op: "bs", w: 0.7 }); }
+  type("Add retries with exponen"); type("it"); notice(2.4); back(2);                 // caught: "exponenit"
+  type("tial backoff to the paym"); type("ne"); notice(2.2); back(2);                 // caught: "paymne"
+  type("ent client, and write te"); type("ts for the edge cases.");                   // left: "tets"
+  notice(3.2);
+  var LEFT_N = " for the edge cases.".length + 2;                                       // back to between "te" and "ts"
+  for (var k = 0; k < LEFT_N; k++) keys.push({ op: "left", w: 0.32 });
+  notice(0.6); type("s"); notice(0.9); keys.push({ op: "end", w: 0.6 });
+
+  var CPS = 65 * 5 / 60, TYPE_S = PROMPT.length / CPS, total = 0;
+  for (k = 0; k < keys.length; k++) total += keys[k].w;
+  var at = [], acc = 0.6;
+  for (k = 0; k < keys.length; k++) { acc += keys[k].w / total * TYPE_S; at.push(acc); }
+  var T_ENTER = acc + 0.6, T_THINK = T_ENTER + 0.25, T_BLURB = T_THINK + 1.8, POUR_CPS = 3200;
+  var T_HOLD = T_BLURB + BLURB.length / POUR_CPS, D = T_HOLD + 7;
+
+  // the buffer after the first n keys: its text and where the cursor stands
+  function buffer(n) {
+    var s = "", c = 0;
+    for (var i = 0; i < n; i++) {
+      var e = keys[i];
+      if (e.op === "ch") { s = s.slice(0, c) + e.ch + s.slice(c); c++; }
+      else if (e.op === "bs") { if (c > 0) { s = s.slice(0, c - 1) + s.slice(c); c--; } }
+      else if (e.op === "left") c = Math.max(0, c - 1);
+      else if (e.op === "end") c = s.length;
+    }
+    return { s: s, c: c };
+  }
+  var final = buffer(keys.length).s;
+  if (final !== PROMPT) throw new Error("the keystrokes type '" + final + "', not the prompt");
+
+  window.width = 1600; window.height = 880; window.duration = Math.round(D * 10) / 10;
+  window.beats = { typing: 0, enter: Math.round(T_ENTER * 100) / 100, thinking: Math.round(T_THINK * 100) / 100,
+    blurb: Math.round(T_BLURB * 100) / 100, hold: Math.round(T_HOLD * 100) / 100 };
+
+  var before = document.getElementById("t1-before"), after = document.getElementById("t1-after"), cursor = document.getElementById("t1-cursor");
+  var think = document.getElementById("t1-think"), blurb = document.getElementById("t1-blurb");
+  window.seek = function (t) {
+    t = Math.max(0, Math.min(window.duration, +t || 0));
+    var n = 0;
+    while (n < at.length && at[n] <= t) n++;
+    var b = buffer(n);
+    before.textContent = b.s.slice(0, b.c);
+    after.textContent = b.s.slice(b.c);
+    // the cursor: solid while keys fall, blinking while it waits; gone once the answer starts
+    var busy = n > 0 && n < at.length && t - at[n - 1] < 0.5;
+    cursor.style.visibility = t >= T_BLURB ? "hidden" : (busy || Math.floor(t * 2) % 2 === 0 ? "visible" : "hidden");
+    if (t < T_THINK) think.innerHTML = "";
+    else if (t < T_BLURB) {
+      var dots = ".".repeat(1 + Math.floor((t - T_THINK) * 3) % 3);
+      think.innerHTML = '<span class="t1-spark">✻</span> Thinking' + dots;
+    } else think.innerHTML = '<span class="t1-spark">✻</span> Thought for ' + (T_BLURB - T_THINK).toFixed(1) + " s";
+    blurb.textContent = t < T_BLURB ? "" : BLURB.slice(0, Math.floor((t - T_BLURB) * POUR_CPS));
+  };
+  window.seek(0);
+})();
+</script>
+</body>
+</html>

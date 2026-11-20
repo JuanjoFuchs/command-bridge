@@ -1,0 +1,363 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>stack-v3</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0d1015; }
+  #v3-stage { display: block; width: 100%; height: auto; }
+  .v3-sans  { font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; }
+  .v3-mono  { font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace; }
+</style>
+</head>
+<body>
+<svg id="v3-stage" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 880" width="1600" height="880"></svg>
+<script>
+(function () {
+  "use strict";
+  // The diagram is static and fully legible at every t. No box ever glows or dims.
+  // The only motion: arrow markers stream constantly along every link at one steady speed,
+  // each pointing the way it travels. Every route enters and leaves the Bridge server (the hub).
+  // A beat only makes ITS OWN links' markers brighter and a little denser.
+  var NS = "http://www.w3.org/2000/svg";
+  var svg = document.getElementById("v3-stage");
+
+  // One beat per stop. A [point:#id] cannot reach inside an .anim.html iframe; only
+  // <anim>:<beat> can, so each stop is a beat: point talk-04-stack:mic lights the mic's badge and edge. The eight
+  // story beats keep their times (0-20 s); the stops follow, 2.5 s each. 48 * 47.5 = 2280 = 57 * 40: still seamless.
+  var D = 47.5;
+  window.width = 1600;
+  window.height = 880;
+  window.duration = D;
+  var STOPS = ["mic", "server", "smart-turn", "titanet", "parakeet", "turn-log", "cli", "terminal", "canvas-files",
+               "kokoro", "speaker"];
+  var BEATS = [
+    ["speaks", 0.0], ["turn-done", 2.5], ["its-him", 5.0], ["transcribed", 7.5],
+    ["agent-works", 10.0], ["answers", 12.5], ["speaks-back", 15.0], ["whole-picture", 17.5]
+  ].concat(STOPS.map(function (s, i) { return [s, 20.0 + 2.5 * i]; }));
+  window.beats = {};
+  BEATS.forEach(function (b) { window.beats[b[0]] = b[1]; });
+
+  // flow: speed * duration is an exact multiple of the spacing, so the loop never jumps
+  var V = 48, SP = 40;        // 48 * 20 = 960 = 24 * 40 (dense = 20, also exact)
+
+  var C = {
+    paper: "#0d1015", ink: "#e8ecf2", muted: "#8c97a8", soft: "#c3cad4", line: "#3b4655",
+    link: "#6b7686", cardStroke: "#2e3744", accent: "#46c8d8", core: "#c8f6fb"
+  };
+
+  function easeOut(x) { return 1 - Math.pow(1 - x, 3); }
+  function clamp(x, a, b) { return x < a ? a : (x > b ? b : x); }
+  function prog(t, a, b) { return clamp((t - a) / (b - a), 0, 1); }
+  function f(n) { return Math.round(n * 100) / 100; }
+  function mod(a, n) { return ((a % n) + n) % n; }
+  function hex(c) { return [parseInt(c.substr(1, 2), 16), parseInt(c.substr(3, 2), 16), parseInt(c.substr(5, 2), 16)]; }
+  function mix(a, b, k) {
+    var A = hex(a), B = hex(b);
+    return "rgb(" + Math.round(A[0] + (B[0] - A[0]) * k) + "," + Math.round(A[1] + (B[1] - A[1]) * k) + "," + Math.round(A[2] + (B[2] - A[2]) * k) + ")";
+  }
+  function el(tag, attrs, parent) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    (parent || svg).appendChild(e);
+    return e;
+  }
+  function txt(s, attrs, parent) { var e = el("text", attrs, parent); e.textContent = s; return e; }
+
+  // ---- defs ----
+  var defs = el("defs", {});
+  var g1 = el("linearGradient", { id: "v3-grad-slab", x1: "0", y1: "0", x2: "0", y2: "1" }, defs);
+  el("stop", { offset: "0", "stop-color": "#1a2029" }, g1);
+  el("stop", { offset: "1", "stop-color": "#131820" }, g1);
+  var g2 = el("linearGradient", { id: "v3-grad-card", x1: "0", y1: "0", x2: "0", y2: "1" }, defs);
+  el("stop", { offset: "0", "stop-color": "#212934" }, g2);
+  el("stop", { offset: "1", "stop-color": "#1a2029" }, g2);
+  var g3 = el("radialGradient", { id: "v3-grad-light", cx: "0.5", cy: "0", r: "0.9" }, defs);
+  el("stop", { offset: "0", "stop-color": "#46c8d8", "stop-opacity": "0.07" }, g3);
+  el("stop", { offset: "1", "stop-color": "#46c8d8", "stop-opacity": "0" }, g3);
+  var fb = el("filter", { id: "v3-blur-soft", x: "-20%", y: "-20%", width: "140%", height: "160%" }, defs);
+  el("feGaussianBlur", { stdDeviation: "12" }, fb);
+  var fg = el("filter", { id: "v3-blur-glow", x: "-20%", y: "-40%", width: "140%", height: "180%" }, defs);
+  el("feGaussianBlur", { stdDeviation: "5" }, fg);
+
+  el("rect", { x: 0, y: 0, width: 1600, height: 880, fill: C.paper });
+  el("rect", { x: 0, y: 0, width: 1600, height: 880, fill: "url(#v3-grad-light)" });
+
+  // ---- layer labels (left column) ----
+  [["SURFACES", 92], ["AGENTS", 220], ["FILES", 396], ["SERVER", 536], ["HARDWARE", 752]].forEach(function (L) {
+    txt(L[0], { id: "v3-label-" + L[0].toLowerCase(), x: 32, y: L[1], "class": "v3-sans", "font-size": 22, "letter-spacing": "2", "font-weight": 600, fill: C.muted });
+  });
+  txt("Claude Code", { id: "v3-label-claude-code", x: 32, y: 248, "class": "v3-sans", "font-size": 22, fill: C.muted });
+  txt("in herdr panes", { id: "v3-label-herdr", x: 32, y: 274, "class": "v3-sans", "font-size": 22, fill: C.muted });
+
+  // ---- slabs (the stack, bottom to top) ----
+  var slabs = [
+    { id: "v3-cpu", x: 256, y: 640, w: 640, h: 208, title: "CPU" },
+    { id: "v3-gpu", x: 928, y: 640, w: 640, h: 208, title: "GPU · CUDA" },
+    { id: "v3-server", x: 256, y: 480, w: 1312, h: 96, server: true },
+    { id: "v3-files", x: 256, y: 336, w: 1312, h: 104 },
+    { id: "v3-agents", x: 256, y: 176, w: 1312, h: 120 },
+    { id: "v3-surfaces", x: 256, y: 32, w: 1312, h: 104 }
+  ];
+  var server = {};   // the hub's slab and name: the "server" stop lights them (it has no number badge)
+  slabs.forEach(function (S) {
+    el("rect", { x: S.x + 8, y: S.y + 16, width: S.w - 16, height: S.h, rx: 12, fill: "#000", opacity: 0.45, filter: "url(#v3-blur-soft)" });
+    el("rect", { x: S.x, y: S.y + 8, width: S.w, height: S.h, rx: 12, fill: "#0a0d12", stroke: "#1b212a" });
+    if (S.server) server.glow = el("rect", { x: S.x, y: S.y, width: S.w, height: S.h, rx: 12, fill: "none", stroke: C.accent, "stroke-width": 8, opacity: 0, filter: "url(#v3-blur-glow)" });
+    var r = el("rect", { id: S.id, x: S.x, y: S.y, width: S.w, height: S.h, rx: 12, fill: "url(#v3-grad-slab)", stroke: S.server ? "#4a5565" : "#262e3a", "stroke-width": S.server ? 2 : 1.5 });
+    el("line", { x1: S.x + 12, y1: S.y + 1, x2: S.x + S.w - 12, y2: S.y + 1, stroke: "#ffffff", "stroke-opacity": 0.06 });
+    if (S.title) txt(S.title, { id: S.id + "-title", x: S.x + 32, y: S.y + 188, "class": "v3-sans", "font-size": 22, "letter-spacing": "2", "font-weight": 600, fill: C.muted });
+    if (S.server) { server.rect = r; server.name = txt("Bridge server", { id: "v3-server-name", x: 688, y: 538, "text-anchor": "middle", "class": "v3-sans", "font-size": 30, "font-weight": 600, fill: C.ink }); }
+  });
+
+  // ---- links: geometry (orthogonal, rounded elbows) ----
+  function buildRoute(pts, r) {
+    var dense = [pts[0].slice()], dpath = "M" + pts[0][0] + " " + pts[0][1];
+    for (var i = 1; i < pts.length - 1; i++) {
+      var p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+      var l1 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]), l2 = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+      var rr = Math.min(r, l1 / 2, l2 / 2);
+      var a = [p1[0] - (p1[0] - p0[0]) / l1 * rr, p1[1] - (p1[1] - p0[1]) / l1 * rr];
+      var b = [p1[0] + (p2[0] - p1[0]) / l2 * rr, p1[1] + (p2[1] - p1[1]) / l2 * rr];
+      dense.push(a);
+      dpath += " L" + f(a[0]) + " " + f(a[1]) + " Q" + p1[0] + " " + p1[1] + " " + f(b[0]) + " " + f(b[1]);
+      for (var k = 1; k <= 8; k++) {
+        var u = k / 8, w0 = (1 - u) * (1 - u), w1 = 2 * u * (1 - u), w2 = u * u;
+        dense.push([w0 * a[0] + w1 * p1[0] + w2 * b[0], w0 * a[1] + w1 * p1[1] + w2 * b[1]]);
+      }
+    }
+    var z = pts[pts.length - 1];
+    dense.push(z.slice());
+    dpath += " L" + z[0] + " " + z[1];
+    var cum = [0];
+    for (var j = 1; j < dense.length; j++) cum.push(cum[j - 1] + Math.hypot(dense[j][0] - dense[j - 1][0], dense[j][1] - dense[j - 1][1]));
+    var pl = pts[pts.length - 2];
+    var L = Math.hypot(z[0] - pl[0], z[1] - pl[1]);
+    return { pts: dense, cum: cum, total: cum[cum.length - 1], d: dpath, end: z, dir: [(z[0] - pl[0]) / L, (z[1] - pl[1]) / L] };
+  }
+  function pointAt(R, d) {
+    d = clamp(d, 0, R.total);
+    for (var i = 1; i < R.cum.length; i++) {
+      if (R.cum[i] >= d) {
+        var seg = R.cum[i] - R.cum[i - 1], u = seg > 0 ? (d - R.cum[i - 1]) / seg : 0;
+        return [R.pts[i - 1][0] + (R.pts[i][0] - R.pts[i - 1][0]) * u, R.pts[i - 1][1] + (R.pts[i][1] - R.pts[i - 1][1]) * u];
+      }
+    }
+    return R.pts[R.pts.length - 1];
+  }
+  function arrowD(R) {
+    var x = R.end[0], y = R.end[1], dx = R.dir[0], dy = R.dir[1];
+    var bx = x - dx * 8, by = y - dy * 8, px = -dy * 4, py = dx * 4;
+    return "M" + x + " " + y + " L" + f(bx + px) + " " + f(by + py) + " L" + f(bx - px) + " " + f(by - py) + " Z";
+  }
+
+  // Server edges: top y 480, bottom y 576. Hardware card tops y 656.
+  // kind: "turn" = his turn (solid triangles), "answer" = the answer (open chevrons)
+  // beats: the beat whose segment brightens this link
+  // One path in step order: 1 mic -> server -> 2 -> 3 -> 4 -> server -> 5 -> 6 -> 7 -> 8,
+  // then (from the terminal) say -> 6 -> server -> 9 -> server -> 10 speaker.
+  var links = [
+    { id: "v3-link-mic", kind: "turn", beats: ["speaks"], pts: [[320, 124], [320, 480]] },
+    { id: "v3-link-to-smart-turn", kind: "turn", beats: ["speaks"], pts: [[416, 576], [416, 656]] },
+    { id: "v3-link-to-titanet", kind: "turn", beats: ["turn-done"], pts: [[552, 724], [616, 724]] },
+    { id: "v3-link-to-parakeet", kind: "turn", beats: ["its-him"], pts: [[880, 724], [960, 724]] },
+    { id: "v3-link-from-parakeet", kind: "turn", beats: ["transcribed"], pts: [[1100, 656], [1100, 576]] },
+    { id: "v3-link-to-turn-log", kind: "turn", beats: ["transcribed"], pts: [[560, 480], [560, 424]] },
+    { id: "v3-link-to-cli", kind: "turn", beats: ["agent-works"], pts: [[560, 352], [560, 280]] },
+    { id: "v3-link-watch", kind: "turn", beats: ["agent-works"], pts: [[880, 220], [928, 220]] },
+    { id: "v3-link-draws", kind: "answer", beats: ["answers"], pts: [[1008, 280], [1008, 352]] },
+    { id: "v3-link-say", kind: "answer", beats: ["speaks-back"], pts: [[928, 252], [880, 252]] },
+    { id: "v3-link-cli-to-server", kind: "answer", beats: ["speaks-back"], pts: [[816, 280], [816, 480]] },
+    { id: "v3-link-to-kokoro", kind: "answer", beats: ["speaks-back"], pts: [[1400, 576], [1400, 656]] },
+    { id: "v3-link-from-kokoro", kind: "answer", beats: ["speaks-back"], pts: [[1424, 656], [1424, 576]] },
+    { id: "v3-link-to-speaker", kind: "answer", beats: ["speaks-back"], pts: [[1504, 480], [1504, 124]] }
+  ];
+  var lineLayer = el("g", {}), dotLayer = el("g", {});
+  function makeMarker(kind) {
+    if (kind === "answer") return el("path", { d: "M-3 -6 L4 0 L-3 6", fill: "none", stroke: C.accent, "stroke-width": 2.5, "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0 }, dotLayer);
+    return el("path", { d: "M6 0 L-5 -6 L-5 6 Z", fill: C.accent, opacity: 0 }, dotLayer);
+  }
+  links.forEach(function (k) {
+    k.geo = buildRoute(k.pts, 12);
+    el("path", { id: k.id, d: k.geo.d, fill: "none", stroke: C.link, "stroke-width": 2, "stroke-linejoin": "round" }, lineLayer);
+    el("path", { id: k.id + "-arrow", d: arrowD(k.geo), fill: C.link }, lineLayer);
+    k.len = k.geo.total - 14;   // markers stop short of the arrowhead
+    var n = Math.floor(k.len / SP) + 2;
+    k.base = []; k.extra = [];
+    for (var i = 0; i < n; i++) { k.base.push(makeMarker(k.kind)); k.extra.push(makeMarker(k.kind)); }
+  });
+
+  // ---- cards (never change) ----
+  var cards = [
+    { id: "v3-page", x: 288, y: 44, w: 1248, h: 80, lines: [["mic", 344, 94, "s"], ["Browser", 456, 96, "t"], ["on the laptop or the phone", 584, 96, "s"], ["speaker", 1472, 94, "se"]], badge: [1, 408, 84], badge2: [10, 1360, 84] },
+    { id: "v3-cli", x: 384, y: 192, w: 496, h: 88, lines: [["command-bridge CLI", 408, 230, "m"], ["watch · say", 408, 264, "s"]], badge: [6, 728, 228] },
+    { id: "v3-terminal-1", x: 928, y: 192, w: 160, h: 88, lines: [], term: true, badge: [7, 1064, 252] },
+    { id: "v3-terminal-2", x: 1104, y: 192, w: 160, h: 88, lines: [], term: true },
+    { id: "v3-terminal-3", x: 1280, y: 192, w: 160, h: 88, lines: [], term: true },
+    { id: "v3-turn-log", x: 384, y: 352, w: 304, h: 72, lines: [["Turn log", 408, 398, "t"]], badge: [5, 656, 388] },
+    { id: "v3-canvas-files", x: 928, y: 352, w: 512, h: 72, lines: [["Canvas files", 1040, 398, "t"]], badge: [8, 1408, 388] },
+    { id: "v3-smart-turn", x: 288, y: 656, w: 264, h: 136, lines: [["Turn end", 312, 716, "t"], ["Smart Turn", 312, 764, "m"]], badge: [2] },
+    { id: "v3-titanet", x: 616, y: 656, w: 264, h: 136, lines: [["Voiceprint", 640, 716, "t"], ["TitaNet", 640, 764, "m"]], badge: [3] },
+    { id: "v3-parakeet", x: 960, y: 656, w: 280, h: 136, lines: [["Transcribes", 984, 716, "t"], ["Parakeet", 984, 764, "m"]], badge: [4] },
+    { id: "v3-kokoro", x: 1272, y: 656, w: 280, h: 136, lines: [["Speaks", 1296, 716, "t"], ["Kokoro", 1296, 764, "m"]], badge: [9] }
+  ];
+  var cardLayer = el("g", {});
+  var byId = {};
+  cards.forEach(function (c) {
+    byId[c.id] = c;
+    c.g = el("g", {}, cardLayer);
+    el("rect", { x: c.x, y: c.y + 4, width: c.w, height: c.h, rx: 8, fill: "#0b0e13" }, c.g);
+    c.glow = el("rect", { x: c.x, y: c.y, width: c.w, height: c.h, rx: 8, fill: "none", stroke: C.accent, "stroke-width": 8, opacity: 0, filter: "url(#v3-blur-glow)" }, c.g);
+    c.rect = el("rect", { id: c.id, x: c.x, y: c.y, width: c.w, height: c.h, rx: 8, fill: c.term ? "#0f1318" : "url(#v3-grad-card)", stroke: C.cardStroke, "stroke-width": 1.5 }, c.g);
+    c.tint = el("rect", { x: c.x, y: c.y, width: c.w, height: c.h, rx: 8, fill: C.accent, opacity: 0 }, c.g);   // under its text
+    c.badges = {};
+    if (c.term) {
+      // a small terminal window: title bar, prompt, a couple of faint lines
+      el("rect", { x: c.x + 1, y: c.y + 1, width: c.w - 2, height: 16, rx: 7, fill: "#232a34" }, c.g);
+      [12, 24, 36].forEach(function (dx) { el("circle", { cx: c.x + dx, cy: c.y + 9, r: 3, fill: "#4a5565" }, c.g); });
+      txt(">_", { x: c.x + 16, y: c.y + 64, "class": "v3-mono", "font-size": 26, fill: C.soft }, c.g);
+      el("rect", { x: c.x + 64, y: c.y + 40, width: 48, height: 4, rx: 2, fill: C.line }, c.g);
+      el("rect", { x: c.x + 64, y: c.y + 56, width: 32, height: 4, rx: 2, fill: C.line }, c.g);
+    }
+    c.lines.forEach(function (L) {
+      var a = { x: L[1], y: L[2] };
+      if (L[3] === "t") { a["class"] = "v3-sans"; a["font-size"] = 28; a["font-weight"] = 600; a.fill = C.ink; }
+      else if (L[3] === "m") { a["class"] = "v3-mono"; a["font-size"] = 26; a.fill = "#cfd6e0"; }
+      else { a["class"] = "v3-sans"; a["font-size"] = 22; a.fill = C.muted; if (L[3] === "se") a["text-anchor"] = "end"; }
+      txt(L[0], a, c.g);
+    });
+    [c.badge, c.badge2].forEach(function (B, j) {
+      if (!B) return;
+      var bx = B.length > 1 ? B[1] : c.x + c.w - 32, by = B.length > 1 ? B[2] : c.y + 32;
+      c.badges[B[0]] = {
+        circle: el("circle", { id: c.id + (j ? "-step-" + B[0] : "-step"), cx: bx, cy: by, r: 16, fill: C.paper, stroke: C.accent, "stroke-width": 2 }, c.g),
+        text: txt(String(B[0]), { x: bx, y: by + 7, "text-anchor": "middle", "class": "v3-sans", "font-size": 20, "font-weight": 600, fill: C.accent }, c.g)
+      };
+    });
+  });
+
+  // browser: mic (left end, where the turn leaves) and speaker (right end, where the answer arrives)
+  var page = byId["v3-page"];
+  var micIcon = [el("rect", { id: "v3-mic", x: 312, y: 60, width: 16, height: 24, rx: 8, fill: "none", stroke: C.soft, "stroke-width": 2 }, page.g),
+                 el("path", { d: "M306 76 Q306 94 320 94 Q334 94 334 76 M320 94 L320 104", fill: "none", stroke: C.soft, "stroke-width": 2, "stroke-linecap": "round" }, page.g)];
+  var speakerIcon = [el("path", { id: "v3-speaker", d: "M1488 76 L1496 76 L1508 64 L1508 104 L1496 92 L1488 92 Z", fill: "none", stroke: C.soft, "stroke-width": 2, "stroke-linejoin": "round" }, page.g),
+                     el("path", { d: "M1516 76 Q1522 84 1516 92", fill: "none", stroke: C.soft, "stroke-width": 2, "stroke-linecap": "round" }, page.g)];
+  // The mic and speaker ends of the Browser bar get boxes of their own, so their stops light a whole box like every
+  // other stop. Invisible until their beat; drawn under the bar's text.
+  function endBox(id, x, w) {
+    var y = page.y + 8, h = page.h - 16, under = page.rect.nextSibling;
+    var b = {
+      glow: el("rect", { x: x, y: y, width: w, height: h, rx: 8, fill: "none", stroke: C.accent, "stroke-width": 8, opacity: 0, filter: "url(#v3-blur-glow)" }, page.g),
+      tint: el("rect", { x: x, y: y, width: w, height: h, rx: 8, fill: C.accent, opacity: 0 }, page.g),
+      edge: el("rect", { id: id, x: x, y: y, width: w, height: h, rx: 8, fill: "none", stroke: C.accent, "stroke-width": 4, opacity: 0 }, page.g)
+    };
+    [b.glow, b.tint, b.edge].forEach(function (e) { page.g.insertBefore(e, under); });
+    return b;
+  }
+  var micBox = endBox("v3-mic-box", 296, 144), speakerBox = endBox("v3-speaker-box", 1336, 192);
+
+  // canvas files as small frames
+  var cv = byId["v3-canvas-files"];
+  [1256, 1288, 1320].forEach(function (x) {
+    el("rect", { x: x, y: 372, width: 24, height: 32, rx: 3, fill: "none", stroke: "#4a5565", "stroke-width": 1.5 }, cv.g);
+  });
+
+  // ---- the stops: what each lights (its number badge, its box edge or icon) and the links that touch it ----
+  var STOP = {
+    "mic":          { card: "v3-page", badge: 1, icon: micIcon, box: false, end: micBox, links: ["v3-link-mic"] },
+    "server":       { server: true, links: ["v3-link-mic", "v3-link-to-smart-turn", "v3-link-from-parakeet", "v3-link-to-turn-log",
+                                            "v3-link-cli-to-server", "v3-link-to-kokoro", "v3-link-from-kokoro", "v3-link-to-speaker"] },
+    "smart-turn":   { card: "v3-smart-turn", badge: 2, links: ["v3-link-to-smart-turn", "v3-link-to-titanet"] },
+    "titanet":      { card: "v3-titanet", badge: 3, links: ["v3-link-to-titanet", "v3-link-to-parakeet"] },
+    "parakeet":     { card: "v3-parakeet", badge: 4, links: ["v3-link-to-parakeet", "v3-link-from-parakeet"] },
+    "turn-log":     { card: "v3-turn-log", badge: 5, links: ["v3-link-to-turn-log", "v3-link-to-cli"] },
+    "cli":          { card: "v3-cli", badge: 6, links: ["v3-link-to-cli", "v3-link-watch", "v3-link-say", "v3-link-cli-to-server"] },
+    "terminal":     { card: "v3-terminal-1", badge: 7, links: ["v3-link-watch", "v3-link-say", "v3-link-draws"] },
+    "canvas-files": { card: "v3-canvas-files", badge: 8, links: ["v3-link-draws"] },
+    "kokoro":       { card: "v3-kokoro", badge: 9, links: ["v3-link-to-kokoro", "v3-link-from-kokoro"] },
+    "speaker":      { card: "v3-page", badge: 10, icon: speakerIcon, box: false, end: speakerBox, links: ["v3-link-to-speaker"] }
+  };
+  links.forEach(function (k) {
+    STOPS.forEach(function (s) { if (STOP[s].links.indexOf(k.id) >= 0) k.beats.push(s); });
+  });
+  function lightBadge(B, a) {
+    if (!B) return;
+    B.circle.setAttribute("fill", mix(C.paper, C.accent, a));
+    B.circle.setAttribute("r", f(16 + 6 * a));
+    B.circle.setAttribute("stroke", mix(C.accent, C.core, a));
+    B.text.setAttribute("fill", mix(C.accent, C.paper, a));
+  }
+  function lightStops(t) {
+    STOPS.forEach(function (s) {
+      var a = beatAmt(t, s), S = STOP[s];
+      // One strength for every stop, small box or large: a 4 px accent edge, a full glow and a faint tint.
+      if (S.server) {
+        server.rect.setAttribute("stroke", mix("#4a5565", C.accent, a));
+        server.rect.setAttribute("stroke-width", f(2 + 2 * a));
+        server.glow.setAttribute("opacity", f(0.9 * a));
+        server.name.setAttribute("fill", mix(C.ink, C.core, a));
+        return;
+      }
+      var c = byId[S.card];
+      lightBadge(c.badges[S.badge], a);
+      if (S.icon) S.icon.forEach(function (e) { e.setAttribute("stroke", mix(C.soft, C.accent, a)); e.setAttribute("stroke-width", f(2 + 1.5 * a)); });
+      if (S.end) {
+        S.end.glow.setAttribute("opacity", f(0.9 * a));
+        S.end.tint.setAttribute("opacity", f(0.12 * a));
+        S.end.edge.setAttribute("opacity", f(a));
+      }
+      if (S.box !== false) {
+        c.rect.setAttribute("stroke", mix(C.cardStroke, C.accent, a));
+        c.rect.setAttribute("stroke-width", f(1.5 + 2.5 * a));
+        c.glow.setAttribute("opacity", f(0.9 * a));
+        c.tint.setAttribute("opacity", f(0.12 * a));
+      }
+    });
+  }
+
+  // ---- emphasis: a beat brightens its own links from its start to the next beat ----
+  function beatAmt(t, name) {
+    for (var i = 0; i < BEATS.length; i++) if (BEATS[i][0] === name) {
+      // (the last beat eases back over the loop's final second, so the wrap to 0 has no step)
+      var last = i + 1 >= BEATS.length, b0 = BEATS[i][1], b1 = last ? D - 1.0 : BEATS[i + 1][1], rel = last ? 0.9 : 0.3;
+      return easeOut(prog(t, b0, b0 + 0.3)) * (1 - easeOut(prog(t, b1, b1 + rel)));
+    }
+    return 0;
+  }
+
+  function place(m, kind, G, d, op, col) {
+    var p = pointAt(G, d), a = pointAt(G, d - 1), b = pointAt(G, d + 1);
+    var ang = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
+    m.setAttribute("transform", "translate(" + f(p[0]) + " " + f(p[1]) + ") rotate(" + f(ang) + ")");
+    m.setAttribute("opacity", f(op));
+    if (kind === "answer") m.setAttribute("stroke", col); else m.setAttribute("fill", col);
+  }
+
+  // ---- seek: only the marker streams change, a pure function of t ----
+  window.seek = function (t) {
+    t = clamp(+t || 0, 0, D);
+    lightStops(t);
+    var whole = 0.5 * beatAmt(t, "whole-picture");   // whole picture: every link equal
+    links.forEach(function (k) {
+      var e = whole;
+      k.beats.forEach(function (n) { e = Math.max(e, beatAmt(t, n)); });
+      var phase = mod(V * t, SP);
+      var col = mix(C.accent, C.core, e);
+      var op = 0.55 + 0.45 * e;
+      for (var i = 0; i < k.base.length; i++) {
+        var d = phase + i * SP;
+        var fade = d < k.len ? clamp(d / 10, 0, 1) * clamp((k.len - d) / 10, 0, 1) : 0;
+        place(k.base[i], k.kind, k.geo, Math.min(d, k.len), op * fade, col);
+        // denser: in-between markers, present only while the link is emphasised
+        var d2 = mod(phase + SP / 2, SP) + i * SP;
+        var fade2 = d2 < k.len ? clamp(d2 / 10, 0, 1) * clamp((k.len - d2) / 10, 0, 1) : 0;
+        place(k.extra[i], k.kind, k.geo, Math.min(d2, k.len), op * fade2 * e, col);
+      }
+    });
+  };
+
+  window.seek(0);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- One real voice turn, measured from Command Bridge's timing log and the agent's session log, in seconds from the
+     turn landing. Everything is on screen from frame 0; the only motion is the playhead. -->
+<style>
+  html, body { margin: 0; background: #0d1117; }
+  #tl-root { position: relative; width: 1600px; height: 880px; overflow: hidden; background: #0d1117;
+    font-family: "Segoe UI", "Inter", system-ui, sans-serif; color: #c9d1d9; }
+  #tl-root svg { position: absolute; left: 0; top: 0; }
+  .tl-h1 { font-size: 40px; font-weight: 600; fill: #e6edf3; }
+  .tl-sub { font-size: 22px; fill: #8b949e; }
+  .tl-row { font-size: 24px; font-weight: 600; fill: #e6edf3; }
+  .tl-rowsum { font-size: 20px; fill: #8b949e; }
+  /* a halo in the page colour, so the playhead passes behind the words where it rests */
+  .tl-lab, .tl-sec, .tl-clock { paint-order: stroke; stroke: #0d1117; stroke-width: 8px; stroke-linejoin: round; }
+  .tl-lab { font-size: 20px; fill: #c9d1d9; }
+  .tl-sec { font-size: 20px; fill: #8b949e; }
+  .tl-tick { font-size: 20px; fill: #6e7681; }
+  .tl-big { font-size: 44px; font-weight: 700; fill: #f0883e; }
+  .tl-bigsub { font-size: 24px; fill: #e6edf3; }
+  .tl-clock { font-size: 22px; font-weight: 700; fill: #f0883e; }
+  .tl-src { font-size: 20px; fill: #6e7681; }
+</style>
+</head>
+<body>
+<div id="tl-root"><svg id="tl-svg" width="1600" height="880" viewBox="0 0 1600 880"></svg></div>
+<script>
+(function () {
+  // The turn, in seconds from its landing. kind: the row; lab: generic words; lv: label level below the bar (0 or 1).
+  // The reply's first word is inferred from when the clip ended minus its length, not stamped.
+  var END = 78.9, HEARD = 69.8;
+  var SPANS = [
+    { k: "read", a: 0, b: 0.9, lab: "hears you" },
+    { k: "think", a: 0.9, b: 5.3 },
+    { k: "run", a: 5.3, b: 9.6, lab: "checks the data" },
+    { k: "think", a: 9.6, b: 18.2 },
+    { k: "edit", a: 18.2, b: 23.1, lab: "4 code edits" },
+    { k: "think", a: 23.1, b: 26.0 },
+    { k: "run", a: 26.0, b: 30.3, lab: "renders a preview" },
+    { k: "think", a: 30.3, b: 32.5 },
+    { k: "read", a: 32.5, b: 32.6, lab: "looks at it" },
+    { k: "think", a: 32.6, b: 39.5 },
+    { k: "run", a: 39.5, b: 63.6, lab: "builds the firmware" },
+    { k: "reply", a: 63.6, b: 68.0, lab: "writes the answer", lv: 0 },
+    { k: "reply", a: 68.0, b: 69.8, lab: "makes the voice", lv: 1 },
+    { k: "reply", a: 69.8, b: 78.9, lab: "speaks", lv: 0, hot: true },
+  ];
+  var ROWS = [
+    { k: "read", name: "Reading" }, { k: "think", name: "Thinking" }, { k: "run", name: "Running" },
+    { k: "edit", name: "Coding" }, { k: "reply", name: "Replying" },
+  ];
+  var FILL = { read: "#4d5b70", think: "#3a4250", run: "#6c7d96", edit: "#8a99b0", reply: "#a7b4c7" };
+
+  // GEOMETRY: a time axis from X0 to X1, rows ROW_H apart from ROW_Y
+  var X0 = 300, X1 = 1540, PX = (X1 - X0) / 80, ROW_Y = 192, ROW_H = 104, BAR_H = 40;
+  var xOf = function (s) { return X0 + s * PX; };
+  var NS = "http://www.w3.org/2000/svg", svg = document.getElementById("tl-svg");
+  function el(tag, attrs, text) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    svg.appendChild(e); return e;
+  }
+  var f1 = function (v) { return (Math.round(v * 10) / 10).toFixed(1); };
+
+  el("text", { x: 64, y: 62, "class": "tl-h1" }, "One voice turn, measured");
+  el("text", { x: 64, y: 98, "class": "tl-sub" }, "A real turn: your words land, the agent works alone, then answers out loud");
+
+  // the seconds axis and its grid
+  for (var s = 0; s <= 80; s += 10) {
+    el("line", { x1: xOf(s), y1: ROW_Y - 14, x2: xOf(s), y2: ROW_Y + ROWS.length * ROW_H - 30, stroke: "#21262d", "stroke-width": 1 });
+    el("text", { x: xOf(s), y: ROW_Y - 22, "class": "tl-tick", "text-anchor": "middle" }, s + " s");
+  }
+  // the rows: name, its total, its spans with their seconds
+  ROWS.forEach(function (r, i) {
+    var y = ROW_Y + i * ROW_H, mine = SPANS.filter(function (x) { return x.k === r.k; });
+    var sum = mine.reduce(function (t, x) { return t + (x.b - x.a); }, 0);
+    el("text", { x: 64, y: y + 28, "class": "tl-row" }, r.name);
+    el("text", { x: 64, y: y + 54, "class": "tl-rowsum" }, f1(sum) + " s");
+    mine.forEach(function (x) {
+      var w = Math.max(4, (x.b - x.a) * PX), cx = xOf(x.a) + (x.b - x.a) * PX / 2;
+      el("rect", { x: xOf(x.a), y: y, width: w, height: BAR_H, rx: 4, fill: x.hot ? "#f0883e" : FILL[x.k] });
+      var dur = f1(x.b - x.a) + " s";
+      if (r.k === "think") { if (x.b - x.a >= 2) el("text", { x: cx, y: y + BAR_H + 26, "class": "tl-sec", "text-anchor": "middle" }, dur); return; }
+      if (r.k === "reply") {
+        // four spans side by side: the outer two below the bar (the first ending at its right edge, the last starting at its
+        // left), the inner two above it, each on a leader from its bar
+        var t = x.lab + "  " + dur, hot = x.hot ? { style: "fill:#f0883e;font-weight:700" } : {};
+        if (x.lv === 1 || x.lv === 2) {
+          var ty = x.lv === 1 ? y - 40 : y - 12;
+          el("line", { x1: cx, y1: y, x2: cx, y2: ty + 6, stroke: "#6e7681", "stroke-width": 1 });
+          el("text", { x: x.lv === 1 ? cx - 6 : cx + 6, y: ty, "class": "tl-lab", "text-anchor": x.lv === 1 ? "end" : "start" }, t);
+        } else if (x.hot) el("text", Object.assign({ x: xOf(x.a), y: y + BAR_H + 26, "class": "tl-lab", "text-anchor": "start" }, hot), t);
+        else el("text", { x: xOf(x.b), y: y + BAR_H + 26, "class": "tl-lab", "text-anchor": "end" }, t);
+        return;
+      }
+      el("text", { x: cx, y: y + BAR_H + 24, "class": "tl-lab", "text-anchor": "middle" }, x.lab);
+      el("text", { x: cx, y: y + BAR_H + 46, "class": "tl-sec", "text-anchor": "middle" }, dur);
+    });
+  });
+
+  // THE WAIT: from his turn to the first word he hears
+  var by = ROW_Y + ROWS.length * ROW_H + 8;
+  el("path", { d: "M" + xOf(0) + " " + (by - 10) + " V" + by + " H" + xOf(HEARD) + " V" + (by - 10), fill: "none", stroke: "#f0883e", "stroke-width": 3 });
+  el("text", { x: xOf(0), y: by + 52, "class": "tl-big" }, "~70 s");
+  el("text", { x: xOf(0) + 150, y: by + 50, "class": "tl-bigsub" }, "you wait before you hear a word, while one agent works");
+  el("text", { x: xOf(0), y: by + 88, "class": "tl-src" },
+    "One real turn: " + f1(END) + " s from your words to the end of its answer. Times from the voice tool's log and the agent's own tool calls.");
+  el("text", { x: xOf(0), y: by + 116, "class": "tl-src" }, "First word estimated from when the clip ended, minus its length.");
+
+  // THE PLAYHEAD, the only thing that moves
+  // (under every bar and label, so the words stay readable where it rests at the end)
+  var head = el("line", { x1: X0, y1: ROW_Y - 8, x2: X0, y2: by - 14, stroke: "#f0883e", "stroke-width": 3, opacity: 0.85 });
+  svg.insertBefore(head, svg.firstChild);
+  var clock = el("text", { x: X0, y: ROW_Y - 48, "class": "tl-clock", "text-anchor": "middle" }, "0.0 s");
+
+  var SWEEP = 16, HOLD = 3;   // 78.9 s of the turn at about five times speed, then it rests on the end
+  var at = function (s) { return Math.round(s / END * SWEEP * 100) / 100; };
+  window.width = 1600; window.height = 880; window.duration = SWEEP + HOLD;
+  window.beats = { turn: 0, data: at(5.3), code: at(18.2), preview: at(26.0), build: at(39.5), answer: at(63.6), speaks: at(HEARD), end: SWEEP };
+  window.seek = function (t) {
+    t = Math.max(0, Math.min(window.duration, +t || 0));
+    var s = Math.min(END, t / SWEEP * END), x = xOf(s);
+    head.setAttribute("x1", x); head.setAttribute("x2", x);
+    clock.setAttribute("x", Math.min(X1 - 30, Math.max(X0 + 30, x)));
+    clock.textContent = f1(s) + " s";
+  };
+  window.seek(0);
+})();
+</script>
+</body>
+</html>
