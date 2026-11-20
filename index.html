@@ -29,8 +29,8 @@
 <main>
 <div class="wrap hero">
   <div>
-    <h1>Talk to your coding agents, and see what they mean.</h1>
-    <p>Command Bridge gives your agents a voice and a canvas. You speak; they answer out loud and draw the answer while they explain it. It runs on your own machine, with no account and no speech API.</p>
+    <h1>A CLI tool that gives your coding agents a voice and a canvas</h1>
+    <p>You speak; they answer out loud and draw the answer while they explain it. It runs on your machine with local voice models, so there's no cost per minute of voice.</p>
     <div class="actions">
       <a class="btn primary" href="https://github.com/JuanjoFuchs/command-bridge">Get it on GitHub</a>
       <a class="btn" href="#how">See how it works</a>
@@ -38,9 +38,10 @@
   </div>
   <figure style="margin:0">
     <video src="demo.mp4" poster="demo-thumb.png" controls muted playsinline preload="metadata"></video>
-    <figcaption>Talking to a team of Claude Code agents: the roster, the board, and an agent pointing at a diagram as it explains it.</figcaption>
+    <figcaption>Talking to a team of Claude Code agents.</figcaption>
   </figure>
   <div class="handoff">
+    <h2 class="handoff-title">Tell your agent to install it</h2>
     <p class="handoff-line"><code>Read https://command-bridge.juanjofuchs.com/<wbr>install.md and follow it to install and start Command Bridge for me.</code><button type="button" class="copy">Copy</button></p>
     <small>Paste it into Claude Code, Codex, or any agent that can run commands. It installs everything, starts the server and gives you the link to open.</small>
   </div>
@@ -49,13 +50,13 @@
 <section id="how">
   <div class="wrap">
     <h2>Why I built it</h2>
-    <p class="lede">I'm exploring ways to increase the bandwidth between me and my AI agents.</p>
+    <p class="lede">I'm exploring ways to increase the communication bandwidth between me and my AI agents.</p>
 
     <div class="step">
       <div class="n" aria-hidden="true">1</div>
       <div>
         <h3>Typing is slow</h3>
-        <p>Most of my day with my agents went into typing requests to them.</p>
+        <p>When I had to type every request to an agent, I kept my explanations short and just typed out specific instructions instead of the whole context.</p>
       </div>
       <div class="stage">
         <div class="frame" data-src="frames/typing.anim.html" data-title="Typing a request to an agent and reading the reply"></div>
@@ -67,7 +68,7 @@
       <div class="n" aria-hidden="true">2</div>
       <div>
         <h3>Talking is three times faster</h3>
-        <p>Dictation let me explain my reasoning instead of abbreviating it, and the results got closer to what I imagined.</p>
+        <p>Dictation let me explain the problem I was trying to solve, with my reasoning behind it. It allowed me to increase the amount of intent I shared with my agents, and the results I got from them got much closer to what I had in mind.</p>
       </div>
       <div class="stage">
         <div class="frame" data-src="frames/speeds.anim.html" data-title="Words per minute: typing against talking"></div>
@@ -78,8 +79,8 @@
     <div class="step">
       <div class="n" aria-hidden="true">3</div>
       <div>
-        <h3>Reading is the bottleneck</h3>
-        <p>Reading a huge wall of text back is very slow. What if I could hear it and see what it means? <a href="https://juanjofuchs.com/blog/intent-per-minute">Intent and understanding per minute</a></p>
+        <h3><a class="step-link" href="https://juanjofuchs.com/blog/intent-per-minute">Increasing the bandwidth with our agents</a></h3>
+        <p>How much intent can we convey to our agents and how much understanding can we get back from them? Reading a huge wall of text back is slow. What if I could have the agent explain it to me live, using its voice and showing me what it means?</p>
       </div>
       <div class="stage">
         <div class="frame" data-src="frames/bandwidth.anim.html" data-title="Intent per minute against understanding per minute"></div>
@@ -91,28 +92,12 @@
       <div class="n" aria-hidden="true">4</div>
       <div>
         <h3>So I built Command Bridge</h3>
-        <p>Each agent keeps working in its own terminal. Command Bridge carries my voice to it, and its voice and drawings back to my laptop or my phone. The agent points at the part it is talking about. <a href="https://juanjofuchs.com/blog/deixis">The agent points</a></p>
+        <p>It's a CLI tool and local voice models that let my agents transcribe my speech, and, using just command-line tools, <a href="https://juanjofuchs.com/blog/deixis">draw, point at things and talk to me</a>.</p>
       </div>
       <div class="stage">
         <div class="frame" data-src="frames/stack.anim.html" data-title="How Command Bridge works, part by part"></div>
         <button class="replay" type="button">Replay</button>
       </div>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="wrap">
-    <h2>One voice, a whole team</h2>
-    <p class="lede">I talk to one agent, my chief of staff. The others work under it and brief it, so a dozen agents never talk over each other. <a href="https://juanjofuchs.com/blog/chief-of-staff">I let my AI agent manage my attention</a></p>
-    <div class="stage" style="margin-bottom:3rem">
-      <div class="frame" data-src="frames/team.anim.html" data-title="The chief of staff and the agents under it"></div>
-      <button class="replay" type="button">Replay</button>
-    </div>
-    <p class="lede">A voice turn is measured end to end, so I can see where the waiting goes. <a href="https://juanjofuchs.com/blog/fast-voice">From 15 seconds to under 1</a></p>
-    <div class="stage">
-      <div class="frame" data-src="frames/turn-timeline.anim.html" data-title="One voice turn, measured"></div>
-      <button class="replay" type="button">Replay</button>
     </div>
   </div>
 </section>

@@ -48,6 +48,7 @@ img, video { max-width: 100%; display: block; }
 /* The handoff: one sentence for your agent, across the full width under the hero. It wraps rather than
    scrolls, so a phone shows all of it; the copy button is the way to take it. */
 .handoff { grid-column: 1 / -1; }
+.handoff-title { font: 600 1.25rem/1.3 var(--cond); margin: 0 0 0.75rem; letter-spacing: 0; }
 .handoff small { display: block; color: var(--quiet); font-size: 0.88rem; margin-top: 0.6rem; }
 /* max-width: none, and the margin, beat the hero's and the close's paragraph rules: this line is never a 30rem column. */
 .hero .handoff-line, .get-it .handoff-line { display: flex; align-items: stretch; max-width: none; margin: 0; background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; }
@@ -67,6 +68,9 @@ h2 { font: 600 clamp(1.7rem, 2.8vw, 2.3rem)/1.15 var(--cond); margin: 0 0 1rem; 
 .step h3 { font: 600 1.45rem/1.25 var(--cond); margin: 0.25rem 0 0.5rem; }
 .step p { margin: 0 0 1.25rem; max-width: var(--measure); color: var(--quiet); }
 .step p a { white-space: nowrap; }
+/* A step whose headline is the post it came from: reads as a heading, underlines as a link. */
+.step-link { color: var(--text); text-decoration: underline; text-decoration-color: var(--teal); text-decoration-thickness: 2px; }
+.step-link:hover { color: var(--teal); }
 .stage { grid-column: 2; position: relative; }
 
 .frame { position: relative; width: 100%; overflow: hidden; border-radius: 8px; border: 1px solid var(--rule); background: var(--ground); }
